@@ -47,26 +47,32 @@ class CrystalBallFitter:
     1-peak fit via scipy.curve_fit  OR
     multi-peak fit via lmfit.Model(v_crystalball)
     """
-    def __init__(self, file_path: str, cutdown: int, cutup: int):
-        self.file_path = file_path
-        self.cutdown    = cutdown
+    def __init__(self, df: pd.DataFrame, cutdown: float=None, cutup: float=None):
+        """
+        df must have columns ['counts','energy'].
+        cutdown, cutup define the ROI in energy (keV).
+        """
+        self.df_full   = df.copy()
+        self.cutdown   = cutdown
         self.cutup     = cutup
+        self.df_roi    = None
+        self.fitres    = None    # FitCbResult
+        self.multi_res = None    # lmfit.ModelResult
 
-        self.df_full  = None
-        self.df_roi   = None
-        self.fitres   = None    # FitCbResult
-        self.multi_res= None    # lmfit.ModelResult
-
-    def load(self):
-        df = load_mca_data(self.file_path)
-        df.index.name = 'channel'
-        self.df_full = df
-        return df
-
-    def select_roi(self):
-        if self.df_full is None:
-            raise RuntimeError("Call .load() first")
-        m = (self.df_full.index >= self.cutdown) & (self.df_full.index <= self.cutup)
+    def select_roi(self, cutdown: float=None, cutup: float=None):
+        """        Select a region of interest (ROI) in the data.
+        :param cutdown: Lower bound of the ROI (default: self.cutdown)
+        :param cutup: Upper bound of the ROI (default: self.cutup)
+        :return: DataFrame containing the selected ROI
+        """
+        if cutdown is not None:
+            self.cutdown = cutdown
+        if cutup is not None:
+            self.cutup = cutup
+        if self.df_full is None or 'energy' not in self.df_full.columns:
+            raise RuntimeError("df_full must be provided with an 'energy' column")
+        m = ((self.df_full['energy'] >= self.cutdown) &
+             (self.df_full['energy'] <= self.cutup))
         self.df_roi = self.df_full.loc[m].copy()
         return self.df_roi
 
@@ -75,7 +81,7 @@ class CrystalBallFitter:
     def fit(self, p0=None, bounds=None):
         if self.df_roi is None:
             raise RuntimeError("Call .select_roi() first")
-        x = self.df_roi.index.values
+        x = self.df_roi['energy'].values
         y = self.df_roi['counts'].values.astype(float)
         y /= y.max()
 
@@ -91,13 +97,42 @@ class CrystalBallFitter:
         if self.df_roi is None or self.fitres is None:
             raise RuntimeError("Need .select_roi() and .fit() first")
         ax = ax or plt.gca()
-        x = self.df_roi.index.values
+        x = self.df_roi['energy'].values
         y = self.df_roi['counts'].values.astype(float);  y /= y.max()
 
         ax.plot(x, y, 'b-', label='Data (norm)')
         ax.plot(x, _cb_pdf(x, *self.fitres.popt), 'r--', label='1-peak fit')
-        ax.set(xlabel='Channel', ylabel='Normalized Counts',
-               title=f'ROI {self.cutdown}–{self.cutup}')
+        ax.set(xlabel='Energy (keV)', ylabel='Normalized Counts',
+               title=f'ROI {self.cutdown:.1f}–{self.cutup:.1f} keV')
+        ax.legend()
+        return ax
+    
+    # --- single‐peak sampling -----------------------------------------------
+
+    def generate_samples(self, N=50_000, seed=None):
+        """Inverse‐transform sample N points from the fitted distribution."""
+        if self.fitres is None:
+            raise RuntimeError("Call .fit() before sampling")
+        rng = np.random.default_rng(seed)
+        u = rng.uniform(1e-9, 1-1e-9, N)
+        return self.fitres.distribution.ppf(u)
+
+    def plot_samples(self, samples, ax=None, bins=200):
+        """Histogram the samples vs. the fitted PDF in the ROI."""
+        if self.fitres is None:
+            raise RuntimeError("Call .fit() before plotting samples")
+        ax = ax or plt.gca()
+        bin_edges = np.linspace(self.cutdown, self.cutup, bins+1)
+        # scale weights so hist * bin_width ≈ A
+        bin_width = (self.cutup - self.cutdown)/bins
+        weights = np.full_like(samples, fill_value=self.fitres.A/(len(samples)*bin_width))
+
+        ax.hist(samples, bins=bin_edges, weights=weights,
+                alpha=0.4, label='Samples (weighted)')
+        xs = np.linspace(self.cutdown, self.cutup, 500)
+        ax.plot(xs, self.fitres.A * self.fitres.distribution.pdf(xs),
+                'r-', lw=2, label='Fitted PDF')
+        ax.set(xlabel='Channel', ylabel='Counts', title='Crystal Ball Samples')
         ax.legend()
         return ax
 
@@ -113,7 +148,7 @@ class CrystalBallFitter:
         """
         if self.df_roi is None:
             raise RuntimeError("Call .load() and .select_roi() first")
-        x = self.df_roi.index.values
+        x = self.df_roi['energy'].values
         y = self.df_roi['counts'].values.astype(float);  y /= y.max()
 
         # build composite lmfit model
@@ -156,7 +191,7 @@ class CrystalBallFitter:
         if self.df_roi is None or self.multi_res is None:
             raise RuntimeError("Need .select_roi() and .fit_multi() first")
         ax = ax or plt.gca()
-        x = self.df_roi.index.values
+        x = self.df_roi['energy'].values
         y = self.df_roi['counts'].values.astype(float);  y /= y.max()
 
         ax.plot(x, y, 'k-', label='Data')
