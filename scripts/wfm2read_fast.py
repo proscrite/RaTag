@@ -1,4 +1,4 @@
-# Python 3.9 compatible version of wfm2read (complete)
+# Python 3.9 compatible version of wfm2read (complete, fixed to read full waveform)
 import os
 import struct
 import numpy as np
@@ -140,19 +140,18 @@ def wfm2read(filename, datapoints=None, step=1, startind=0):
 
         nop_all = (info['postcharge_start_offset'] - info['data_start_offset']) // info['num_bytes_per_point']
         nop = nop_all - startind
-        if datapoints is not None:
-            if datapoints < 1 or int(datapoints) != datapoints:
-                datapoints = int(nop // step)
+        if datapoints is None:
+            datapoints = int(nop // step)
+        else:
             if datapoints > nop:
-                print(f"Requested {datapoints}, but only {nop} possible. Using {nop}.")
-            else:
-                nop = datapoints
+                datapoints = int(nop // step)
 
+        print(f"Reading {datapoints} data points from {filename} starting at index {startind} with step {step}")
         values = array.array(data_format)
-        values.frombytes(fid.read(struct.calcsize(data_format)*nop))
+        values.frombytes(fid.read(struct.calcsize(data_format) * datapoints))
         values = np.array(values)
 
-        t = info['id1']['dim_offset'] + info['id1']['dim_scale'] * np.arange(startind, startind + nop * step, step)
+        t = info['id1']['dim_offset'] + info['id1']['dim_scale'] * np.arange(startind, startind + datapoints * step, step)
         y = info['ed1']['dim_offset'] + info['ed1']['dim_scale'] * values
 
         ind_over = np.where(values == info['ed1']['over_range'])[0]
@@ -162,14 +161,13 @@ def wfm2read(filename, datapoints=None, step=1, startind=0):
         info['tunit'] = info['id1']['units']
         info['yres'] = info['ed1']['dim_resolution']
         info['samplingrate'] = 1 / info['id1']['dim_scale']
-        info['nop'] = nop
+        info['nop'] = datapoints
 
-        peak = np.max(y)
-        return y, t, peak, info, ind_over, ind_under
+        return y, t, info, ind_over, ind_under
 
 if __name__ == "__main__":
     file_wfm = sys.argv[1]
-    y, t, peak, info, ind_over, ind_under = wfm2read(file_wfm)
+    y, t, info, ind_over, ind_under = wfm2read(file_wfm)
     plt.plot(t, y)
     plt.xlabel(info['tunit'])
     plt.ylabel(info['yunit'])
