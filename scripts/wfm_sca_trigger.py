@@ -115,6 +115,9 @@ def main():
     trig_v = trig_v / (2*np.max(trig_v))
 
     files = sorted(glob.glob(os.path.join(args.data_dir, 'RUN*.wfm')))
+
+    print(f"Matched {len(files)} files in {args.data_dir}")
+    input("Continue?\n")
     records = [process_file(f, trig_t, trig_v) for f in files]
 
     df = pd.DataFrame(records)
