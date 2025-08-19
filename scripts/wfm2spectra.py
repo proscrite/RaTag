@@ -15,7 +15,7 @@ def get_peak_volts(file_path):
     """
     y, t, info, ind_over, ind_under = wfm2read(file_path, step=0.001)
 
-    peaks, props = find_peaks(y, height=1, distance=1, prominence=1)
+    peaks, props = find_peaks(y, height=1, distance=1000, prominence=1)
     volts = y[peaks]
     return volts
 
