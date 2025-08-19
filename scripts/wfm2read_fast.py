@@ -56,7 +56,7 @@ def get_idim(fid, byteorder, wfm_version):
     dim['trig_delay'] = rd_unpack(fid,'d',byteorder)
     return dim
 
-def wfm2read(filename, datapoints=None, step=1, startind=0):
+def wfm2read(filename, datapoints=None, step=1, startind=0, verbose=False):
     if not filename.endswith('.wfm') or not os.path.exists(filename):
         raise FileNotFoundError(f"Invalid file name: {filename}")
 
@@ -146,7 +146,8 @@ def wfm2read(filename, datapoints=None, step=1, startind=0):
             if datapoints > nop:
                 datapoints = int(nop // step)
 
-        print(f"Reading {datapoints} data points from {filename} starting at index {startind} with step {step}")
+        if verbose:
+            print(f"Reading {datapoints} data points from {filename} starting at index {startind} with step {step}")
         values = array.array(data_format)
         values.frombytes(fid.read(struct.calcsize(data_format) * datapoints))
         values = np.array(values)
