@@ -4,7 +4,8 @@ import argparse
 
 def fix_name_extensions(folder, pattern):
     count = 0
-    for i, fname in enumerate(os.listdir(folder)):
+    
+    for i, fname in enumerate(sorted(os.listdir(folder))):
         path = os.path.join(folder, fname)
         if os.path.isfile(path):
             if pattern is not None:
