@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from glob import glob
 from scipy.optimize import curve_fit
+from scipy.signal import find_peaks
 import re
 from RaTag.scripts.wfm2read_fast import wfm2read  # type: ignore
 
@@ -13,17 +14,58 @@ def extract_voltage_pairs(base_dir, pattern=None):
     """Extract (anode_voltage, gate_voltage) pairs from subdirectory names."""
     voltage_pairs = []
     if pattern is None:
-        pattern = 'FieldScan_1GSsec_EL{}_Gate{}'
+        pattern = 'FieldScan_1GSsec_Anode{}_Gate{}'
     subdirs = sorted(os.listdir(base_dir))
     for subdir in subdirs:
         try:
             gate_voltage = int(re.search(r'Gate(\d+)', subdir).group(1))
-            anode_voltage = int(re.search(r'EL(\d+)', subdir).group(1))
+            anode_voltage = int(re.search(r'Anode(\d+)', subdir).group(1))
             # print(f"Anode voltage : {anode_voltage}, Gate voltage : {gate_voltage}")
             voltage_pairs.append((anode_voltage, gate_voltage))
         except AttributeError:
             continue
     return np.array(voltage_pairs)
+
+def compute_average_waveform(files, bs_t_window=(-1.5e-5, -1.0e-5), threshold_bs=0.05):
+    w = wfm2read(files[0], verbose=False)
+    t, V = w[1], -w[0]
+
+    V_avg = np.zeros_like(V)
+
+    for f in files:
+        t, V = load_waveform(f)
+
+        # 1) Reject on "too large signal in baseline window"
+        baseline_mask = (t > bs_t_window[0]) & (t < bs_t_window[1])
+        V_w = V[baseline_mask]
+        if (V_w > threshold_bs).sum() > 5:
+            continue
+        
+        if V.shape != V_avg.shape:
+            print(f'Warning: waveform in {f} has different shape. Skipping.')
+            continue
+        V_avg += V
+    V_avg /= len(files)
+    return V_avg, t
+
+def compute_drift_time(t, V, height_S1=0.001):
+    
+    indS1 = find_peaks(V[t < 0], height=height_S1, distance=200)[0]
+
+    if len(indS1) > 1:
+        indS1 = indS1[np.argmax(V[indS1])]
+    else:
+        indS1 = indS1[0]
+
+    indS2 = find_peaks(V[t > 0], height=V[indS1], distance=500)[0]
+
+    if len(indS2) > 1:
+        indS2 = indS2[np.argmin(t[indS2])]
+    else:
+        indS2 = indS2[0]
+    indS2 += len(V[t < 0])
+    return t[indS2] - t[indS1], indS1, indS2
+
 
 def get_fields(voltage_pairs, EL_gap=0.8, drift_gap=1.4):
     """Calculate electric fields from voltage pairs and gaps."""
@@ -112,51 +154,6 @@ def drop_voltage_pairs(voltage_pairs, to_drop):
         filtered = [pair for pair in voltage_pairs if tuple(pair) not in to_drop]
         return np.array(filtered)
 
-class S2AreaExtractor:
-    """Class to extract S2 areas from waveform files.
-    1) Reject on "too large signal in baseline window"
-    2) Baseline-subtract
-    3) Integrate S2
-    """
-    def __init__(self, files, threshold_bs=0.05, integ_window=(0.5e-5, 1.5e-5), bs_t_window=(-1.5e-5, -1.0e-5), bs_v_window=None):
-        """Initialize with waveform files and parameters.
-        Args:
-            files (list): List of waveform file paths.
-            integ_window (tuple): Time window for S2 integration.
-            threshold_bs (float): Threshold for baseline rejection.
-            bs_t_window (tuple): Time window for baseline subtraction.
-            bs_v_window (tuple): Voltage window for baseline subtraction.
-        """
-        self.files = files
-        self.integ_window = integ_window
-        self.threshold_bs = threshold_bs
-        self.bs_t_window = bs_t_window
-        self.bs_v_window = bs_v_window
-
-    def extract_areas(self):
-        """Extract S2 areas from waveform files.
-        Returns:
-            np.array: Array of extracted S2 areas.
-        """
-        areas = []
-        for f in self.files:
-            t, V = load_waveform(f)
-
-            # 1) Reject on "too large signal in baseline window"
-            baseline_mask = (t > self.bs_t_window[0]) & (t < self.bs_t_window[1])
-            V_w = V[baseline_mask]
-            if (V_w > self.threshold_bs).sum() > 5:
-                continue
-
-            # 2) Baseline-subtract
-            V_corr = subtract_baseline(t, V, self.bs_t_window, self.bs_v_window)
-
-            # 3) Integrate S2
-            area = integrate_s2(t, V_corr, self.integ_window[0], self.integ_window[1])
-            areas.append(area)
-
-        return np.array(areas)
-
 class GaussianFitter:
     """Class to fit Gaussian to histogram data.
     1) Fit Gaussian to histogram data.
@@ -217,8 +214,159 @@ class GaussianFitter:
         std_error = np.sqrt(self.pcov[1, 1])
         ci95 = 1.96 * std_error
         return mean, ci95
+    
+class S2Window:
+    def __init__(self, path_subdir, batch_size=20, pattern='/*.wfm'):
+        self.path_subdir = path_subdir
+        self.batch_size = batch_size
+        self.pattern = pattern
+        self.error_count = 0
+        
+    def batch_files(self):
+        n_all_files = len(glob(self.path_subdir+self.pattern))
+        files_batch = [sorted(glob(self.path_subdir+self.pattern))[self.batch_size*i:self.batch_size*(i+1)] for i in range(n_all_files//self.batch_size)]
+        return files_batch
+    
+    def compute_average_batch(self, fi):
+        v_avg, t_avg = compute_average_waveform(fi)
+        v_avg = subtract_baseline(t_avg, v_avg, (-1.5e-5, -1.0e-5))
+        t_avg = t_avg
+        return v_avg, t_avg
+    
+    def find_s1(self, t, V, height_S1=0.001, min_distance=200):
+        indS1 = find_peaks(V[t < 0], height=height_S1, distance=min_distance)[0]
+        if len(indS1) > 1:
+            indS1 = indS1[np.argmax(V[indS1])]
+        else:
+            indS1 = indS1[0]
+        return indS1
 
-  
+    def find_s2_start(self, t, V, indS1, height_frac=0.8, min_distance=50):
+        indS2 = find_peaks(V[t > 0], height=V[indS1]*height_frac, distance=min_distance)[0]
+        if len(indS2) > 1:
+            indS2 = indS2[np.argmin(t[indS2])]
+        else:
+            indS2 = indS2[0]
+        indS2 += len(V[t < 0])
+        return indS2
+
+    def find_s2_width(self, t, V, indS1, height_frac=0.8, min_distance=50):
+        indS2 = self.find_s2_start(t, V, indS1, height_frac, min_distance)
+        indS2_end = find_peaks(V[t > 0], height=V[indS1]*height_frac, distance=min_distance)[0] + len(V[t < 0])
+        indS2_end = indS2_end[np.where(np.diff(indS2_end) < 4000)[0]]
+        if len(indS2_end) == 0:
+            raise ValueError("No valid S2 end found within max distance")
+        indS2_end = indS2_end[-1]
+        if indS2_end >= len(t):
+            raise ValueError("S2 window exceeds waveform length")
+        return indS2, indS2_end
+    
+    def compute_average_s2_window(self):
+        
+        files_batch = self.batch_files()
+        s1_times = []
+        s2_starts = []
+        s2_ends = []
+        
+        for fi in files_batch:
+            v_avg, t_avg = self.compute_average_batch(fi)
+            try:
+                indS1 = self.find_s1(t_avg, v_avg)
+                indS2, indS2_end = self.find_s2_width(t_avg, v_avg, indS1)
+            except (IndexError, ValueError):
+                self.error_count += 1
+                continue
+            s1_times.append(t_avg[indS1])
+            s2_starts.append(t_avg[indS2])
+            s2_ends.append(t_avg[indS2_end])
+        self.s1_avg = np.mean(s1_times)
+        self.s2_start_avg = np.mean(s2_starts)
+        self.s2_end_avg = np.mean(s2_ends)
+        self.duration = self.s2_end_avg - self.s2_start_avg
+        return self.s1_avg, self.s2_start_avg, self.s2_end_avg, self.duration
+    
+    def compute_average_s2_start(self):
+        files_batch = self.batch_files()
+        s1_times = []
+        s2_starts = []
+        
+        for fi in files_batch:
+            v_avg, t_avg = self.compute_average_batch(fi)
+            try:
+                indS1 = self.find_s1(t_avg, v_avg)
+                indS2 = self.find_s2_start(t_avg, v_avg, indS1)
+            except (IndexError, ValueError):
+                self.error_count += 1
+                continue
+            s1_times.append(t_avg[indS1])
+            s2_starts.append(t_avg[indS2])
+        self.s1_avg = np.mean(s1_times)
+        self.s2_start_avg = np.mean(s2_starts)
+        return self.s1_avg, self.s2_start_avg
+    
+    def plot_avg_values(self):
+        allFiles = sorted(glob(self.path_subdir+self.pattern))
+        v_avg, t_avg = compute_average_waveform(allFiles[:self.batch_size])
+        v_avg = subtract_baseline(t_avg, v_avg, (-1.5e-5, -1.0e-5))
+        t_avg = t_avg * 1e6
+        if not hasattr(self, 's1_avg') or not hasattr(self, 's2_start_avg'):
+            raise AttributeError("Average S1 and S2 start times not computed. Run compute_average_s2_start() or compute_average_s2_window() first.")
+        plt.plot(t_avg, v_avg)
+        plt.axvline(self.s1_avg*1e6, color='r', linestyle='--', label='Avg S1 time')
+        plt.axvline(self.s2_start_avg*1e6, color='g', linestyle='--', label='Avg S2 start')
+        if hasattr(self, 'duration'):
+            plt.axvline(self.s2_start_avg*1e6 + self.duration*1e6, color='m', linestyle='--', label='Avg S2 end time')
+        # plt.axvline(self.s1_avg*1e6 + (self.s2_start_avg - self.s1_avg)*1e6, color='b', linestyle='--', label='Avg drift time (S2 start)')
+        plt.gca().set(xlabel='Time (us)', ylabel='Voltage (V)', title='Average waveform with average S1 and S2 times')
+        plt.legend()
+
+class S2AreaExtractor:
+    """Class to extract S2 areas from waveform files.
+    1) Reject on "too large signal in baseline window"
+    2) Baseline-subtract
+    3) Integrate S2
+    """
+    def __init__(self, files, threshold_bs=0.05, s2_start=1e-6, s2_duration=2e-5, bs_t_window=(-1.5e-5, -1.0e-5), bs_v_window=None):
+        """Initialize with waveform files and parameters.
+        Args:
+            files (list): List of waveform file paths.
+            s2_start (float): Time start of S2 window.
+            s2_duration (float): Duration of S2 window. (Fixed for a Field Scan)
+            threshold_bs (float): Threshold for baseline rejection.
+            bs_t_window (tuple): Time window for baseline subtraction.
+            bs_v_window (tuple): Voltage window for baseline subtraction.
+        """
+        self.files = files
+        self.s2_start = s2_start
+        self.s2_duration = s2_duration
+        self.threshold_bs = threshold_bs
+        self.bs_t_window = bs_t_window
+        self.bs_v_window = bs_v_window
+
+    def extract_areas(self):
+        """Extract S2 areas from waveform files.
+        Returns:
+            np.array: Array of extracted S2 areas.
+        """
+        areas = []
+        for f in self.files:
+            t, V = load_waveform(f)
+
+            # 1) Reject on "too large signal in baseline window"
+            baseline_mask = (t > self.bs_t_window[0]) & (t < self.bs_t_window[1])
+            V_w = V[baseline_mask]
+            if (V_w > self.threshold_bs).sum() > 5:
+                continue
+
+            # 2) Baseline-subtract
+            V_corr = subtract_baseline(t, V, self.bs_t_window, self.bs_v_window)
+
+            # 3) Integrate S2
+            area = integrate_s2(t, V_corr, self.s2_start, self.s2_start + self.s2_duration)
+            areas.append(area)
+
+        return np.array(areas)
+
 class FieldScanAnalyzer:
     """Class to analyze field scan data.
     1) Extract voltage pairs from subdirectory names.
@@ -229,7 +377,7 @@ class FieldScanAnalyzer:
     6) Plot histograms.
     """
     def __init__(self, base_dir, pattern=None, to_drop = None, n_files=None,
-                 areaExtractor=S2AreaExtractor, fitter=GaussianFitter,
+                areaExtractor=S2AreaExtractor, fitter=GaussianFitter, WindowS2=S2Window,
                 hist_cuts=(-5, 120), nbins=120, EL_gap=0.8, drift_gap=1.4):
         """Initialize with base directory and parameters.
         Args:
@@ -251,7 +399,8 @@ class FieldScanAnalyzer:
         
         self.areaExtractor = areaExtractor
         self.fitter = fitter
-        
+        self.WindowS2 = WindowS2
+
         self.EL_gap = EL_gap
         self.drift_gap = drift_gap
         self.setup()
@@ -269,6 +418,14 @@ class FieldScanAnalyzer:
         self.E_dr_dict, self.E_el_dict = dict(zip(self.v_gate, self.E_drift)), dict(zip(self.v_gate, self.E_el))
         self.voltage_over_lim = check_fields(self.voltage_pairs, self.E_el, self.E_drift)
 
+    def find_s2(self, path):
+        """Find average S2 start time in a given subdirectory."""
+        s2_window_finder = self.WindowS2(path)
+        batches = s2_window_finder.batch_files()
+        print(f'Found {len(batches)} batches of files in {path}')
+        s1_avg, s2_start_avg = s2_window_finder.compute_average_s2_start()
+        return s1_avg, s2_start_avg
+
     def analyze(self):
         """Analyze field scan data and plot histograms."""
         hist_lowcut, hist_upcut = self.hist_cuts
@@ -282,7 +439,11 @@ class FieldScanAnalyzer:
             if self.n_files is not None:
                 files = files[:self.n_files]
             print(f'Integrating {len(files)} files for EL {anode_v} V, Gate {gate_v} V')
-            extractor = self.areaExtractor(files)
+
+            _, s2_start = self.find_s2(os.path.join(self.base_dir, self.pattern.format(anode_v, gate_v)))
+            print(f'Found S2 start at {s2_start*1e6:.2f} us for EL {anode_v} V, Gate {gate_v} V')
+            
+            extractor = self.areaExtractor(files, s2_start=s2_start)
             arr_areas = extractor.extract_areas()
             s2_areas[gate_v] = arr_areas
             s2_areas_cuts[gate_v] = apply_hist_cuts(arr_areas, hist_lowcut, hist_upcut)
@@ -338,20 +499,20 @@ class FieldScanAnalyzer:
         self.fit_results_p2 = fit_results_p2
         return fit_results_p1, fit_results_p2
     
-    
-    def plot_s2_vs_field(self, ax=None):
+    def plot_s2_vs_field(self):
 
         """Plot fit results of Gaussian fits to histograms of S2 areas."""
-        if ax is None:
-            ax = plt.gca()
+        fig, ax = plt.subplots(2, figsize=(8, 10), sharex=True)
             
         mean_p1, ci95_p1 = zip(*self.fit_results_p1.values())
         mean_p2, ci95_p2 = zip(*self.fit_results_p2.values())
         E_d = [self.E_dr_dict[v] for v in self.fit_results_p1.keys()]
-        ax.errorbar(E_d, mean_p1, yerr=ci95_p1, fmt='o', color='blue', capsize=10, capthick=2, label='High S2 area peak')
-        ax.errorbar(E_d, mean_p2, yerr=ci95_p2, fmt='o', color='orange', capsize=10, capthick=2, label='Low S2 area peak')
+        ax[0].errorbar(E_d, mean_p1, yerr=ci95_p1, fmt='o', color='blue', capsize=10, capthick=2, label='High S2 area peak')
+        ax[1].errorbar(E_d, mean_p2, yerr=ci95_p2, fmt='o', color='orange', capsize=10, capthick=2, label='Low S2 area peak')
 
-        ax.legend()
-        ax.set(xlabel='$E_{drift}$ (V/cm)', ylabel='Mean S2 Area (mV$\cdot$us)', 
+        for a in ax:
+            a.legend()
+            a.set(xlabel='$E_{drift}$ (V/cm)', ylabel='Mean S2 Area (mV$\cdot$us)', 
                 title='Mean S2 Area vs $E_{drift}$ (95% CI)')
         return ax
+
