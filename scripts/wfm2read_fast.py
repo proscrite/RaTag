@@ -140,11 +140,18 @@ def wfm2read(filename, datapoints=None, step=1, startind=0, verbose=False):
 
         nop_all = (info['postcharge_start_offset'] - info['data_start_offset']) // info['num_bytes_per_point']
         nop = nop_all - startind
-        if datapoints is None:
-            datapoints = int(nop // step)
-        else:
-            if datapoints > nop:
-                datapoints = int(nop // step)
+        Nframes = info['N']
+        pts_per_frame = nop_all if Nframes > 0 else nop_all
+
+        print(f'len V = {nop_all}, Nframes = {Nframes}, pts_per_frame = {pts_per_frame}')
+        if  Nframes > 1:
+            # interpret fractional step as "read all frames"
+            datapoints = nop_all * Nframes
+        # if datapoints is None:
+        #     datapoints = int(nop // step)
+        # else:
+        #     if datapoints > nop:
+        #         datapoints = int(nop // step)
 
         if verbose:
             print(f"Reading {datapoints} data points from {filename} starting at index {startind} with step {step}")
@@ -154,6 +161,12 @@ def wfm2read(filename, datapoints=None, step=1, startind=0, verbose=False):
 
         t = info['id1']['dim_offset'] + info['id1']['dim_scale'] * np.arange(startind, startind + datapoints * step, step)
         y = info['ed1']['dim_offset'] + info['ed1']['dim_scale'] * values
+        
+        if Nframes > 1:
+            points_per_frame = datapoints // Nframes
+            print(f"Reshaping V to ({Nframes}, {points_per_frame})")
+            y = y.reshape((Nframes, -1))
+            t = t[:points_per_frame]
 
         ind_over = np.where(values == info['ed1']['over_range'])[0]
         ind_under = np.where(values <= -info['ed1']['over_range'])[0]
