@@ -9,20 +9,11 @@ import numpy as np
 from .waveforms import PMTWaveform
 from .transport import compute_reduced_field, redfield_to_speed
 from .dataIO import parse_subdir_name, parse_filename, load_wfm
-from .cuts import make_time_amplitude_cut, make_baseline_cut
+from .cuts import make_time_amplitude_cut, RejectionLog
 
 # -------------------------------
 # Dataclasses for measurement sets
 # -------------------------------
-
-@dataclass(frozen=True)
-class RejectionLog:
-    cut_name: str
-    cut_fn: Callable[[PMTWaveform], bool]
-    passed: List[int]
-    rejected: List[int]
-    reason: str = ""
-
 
 @dataclass(frozen=True)
 class SetPmt:
@@ -144,7 +135,7 @@ def set_transport_properties(set_pmt: SetPmt,
     # drift time = L / v
     if not drift_length or drift_length <= 0:
         raise ValueError("drift_length must be positive")
-    time_drift = drift_length * 10 / speed if speed else None
+    time_drift = drift_length * 10 / speed * 1e-6 if speed else None
 
     # diffusion coefficient (model-dependent)
     # diffusion = transport.redfield_to_diffusion(set_pmt.red_drift_field)
@@ -292,17 +283,29 @@ def apply_cut(set_pmt: SetPmt,
         RejectionLog with passed/rejected indices.
     """
     passed, rejected = [], []
-    for i, wf in enumerate(set_pmt.iter_waveforms()):
-        if cut_fn(wf):
-            passed.append(i)
-        else:
-            rejected.append(i)
+    for idx, wf in enumerate(set_pmt.iter_waveforms()):
+        ok, _, _ = cut_fn(wf)
+        (passed if ok else rejected).append(idx)
+    return RejectionLog(cut_name, cut_fn, passed, rejected)
 
-    return RejectionLog(cut_name=cut_name,
-                        passed=passed,
-                        rejected=rejected,
-                        cut_fn=cut_fn,
-                        reason=reason)
+def filter_set(set_pmt: SetPmt, logs: Union[RejectionLog, List[RejectionLog]]) -> SetPmt:
+    """
+    Return a new SetPmt containing only filenames that passed the cut(s).
+    Accepts a single RejectionLog or a list of them.
+    If a list is given, waveforms must pass ALL cuts to be included.
+    """
+    if isinstance(logs, RejectionLog):
+        passed = set(logs.passed)
+    else:  # list of logs
+        passed_sets = [set(log.passed) for log in logs]
+        passed = set.intersection(*passed_sets) if passed_sets else set()
+
+    new_files = [fn for idx, fn in enumerate(set_pmt.filenames) if idx in passed]
+    return replace(set_pmt, filenames=new_files)
+
+# def filter_set(set_pmt: SetPmt, log: RejectionLog) -> SetPmt:
+#     keep = [set_pmt.filenames[i] for i in log.passed]
+#     return replace(set_pmt, filenames=keep)
 
 def combine_logs(logs: List[RejectionLog]) -> RejectionLog:
     if not logs:
@@ -343,21 +346,6 @@ def combine_logs(logs: List[RejectionLog]) -> RejectionLog:
 #         apply_cut(set_pmt, post_s2, "post_s2", "No noise after S2"),
 #     ]
 #     return logs
-
-def filter_set(set_pmt: SetPmt, logs: Union[RejectionLog, List[RejectionLog]]) -> SetPmt:
-    """
-    Return a new SetPmt containing only filenames that passed the cut(s).
-    Accepts a single RejectionLog or a list of them.
-    If a list is given, waveforms must pass ALL cuts to be included.
-    """
-    if isinstance(logs, RejectionLog):
-        passed = set(logs.passed)
-    else:  # list of logs
-        passed_sets = [set(log.passed) for log in logs]
-        passed = set.intersection(*passed_sets) if passed_sets else set()
-
-    new_files = [fn for idx, fn in enumerate(set_pmt.filenames) if idx in passed]
-    return replace(set_pmt, filenames=new_files)
 
 
 # -------------------------------
