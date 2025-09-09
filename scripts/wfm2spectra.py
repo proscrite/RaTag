@@ -48,6 +48,15 @@ def compute_analog_path(path):
         peaks = analyse_analog_file(file)
         all_peaks.append(peaks)
     return np.concatenate(all_peaks)
+def get_baseline(V, t):
+    """Estimate the baseline of the waveform."""
+    return np.mean(V[:200])
+
+def alpha_peak(file):
+    wf = wfm2read(file)
+    V, t = wf[0], wf[1]
+    bs = get_baseline(V, t)
+    return V.max() - bs
 
 if __name__ == "__main__":
     
