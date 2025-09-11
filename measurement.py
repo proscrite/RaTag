@@ -1,96 +1,23 @@
 from dataclasses import dataclass, field, replace
 import itertools
-from typing import Iterator, Callable, List, Union
+from typing import Iterator, Callable, List, Union, Dict, Any, Optional
 from pathlib import Path
+import itertools
 from functools import reduce
 from scipy.signal import find_peaks
 import numpy as np
 
 from .waveforms import PMTWaveform
 from .transport import compute_reduced_field, redfield_to_speed
-from .dataIO import parse_subdir_name, parse_filename, load_wfm
-from .cuts import make_time_amplitude_cut, RejectionLog
-
-# -------------------------------
-# Dataclasses for measurement sets
-# -------------------------------
-
-@dataclass(frozen=True)
-class SetPmt:
-
-    # --- Provenance / housekeeping ---
-    source_dir: Path
-    filenames: list[str]     # lazy list of filenames (not waveforms!)
-    metadata: dict
-
-    # --- Physics context ---
-    drift_field: float = None        # V/cm
-    EL_field: float = None           # V/cm
-    red_drift_field: float = None    # reduced drift field (Td)
-    red_EL_field: float = None       # reduced EL field (Td)
-    speed_drift: float  = None              # mm/us
-    time_drift: float  = None               # us
-    diffusion_coefficient: float = None    # mm/√cm 
-
-    # --- Cuts bookkeeping ---
-    rejection_log: list["RejectionLog"] = field(default_factory=list)
-
-    def __len__(self):
-        return len(self.filenames)
-    
-    # --- Lazy loader ---
-    def iter_waveforms(self) -> Iterator["PMTWaveform"]:
-        """Yield PMTWaveform objects lazily, one by one."""
-        
-        for fn in self.filenames:
-            yield load_wfm(self.source_dir / fn)
-
-    # --- Example operations ---
-    def apply_cuts(self, cut_func: Callable[["PMTWaveform"], bool]) -> None:
-        """
-        Apply a cut function lazily across waveforms.
-        The cut function returns True if waveform passes, False otherwise.
-        Updates rejection_log with rejected indices.
-        """
-        rejected = []
-        for i, wf in enumerate(self.iter_waveforms()):
-            if not cut_func(wf):
-                rejected.append(i)
-        self.rejection_log.append(RejectionLog(
-            cut_name=cut_func.__name__,
-            rejected_indices=rejected,
-            reason=f"Cut applied: {cut_func.__doc__ or ''}"
-        ))
-
-    def integrate_s2(self, integrator: Callable[["PMTWaveform"], float]) -> list[float]:
-        """
-        Compute S2 integrals for all waveforms, lazily.
-        Returns a list of integrals (one per waveform).
-        """
-        return [integrator(wf) for wf in self.iter_waveforms()]
-
-    # --- Static constructor ---
-    @staticmethod
-    def from_directory(path: str) -> "SetPmt":
-        """
-        Parse folder name and contained files to build SetPmt.
-        Does NOT load waveforms, only stores filenames.
-        """
-        path = Path(path)
-        # Example: FieldScan_5GSsec_Anode3000_Gate1600
-
-        md = parse_subdir_name(path.name)
-        
-        # Filenames: RUN2_21082025_Gate70_Anode2470_P3_0006[_ch1].wfm
-        filenames = [f.name for f in path.glob("*.wfm")]
-
-        return SetPmt(source_dir=path, filenames=filenames, metadata=md)
-    
+from .dataIO import load_wfm
+from .cuts import make_time_amplitude_cut
+from .transformations import s2_area_pipeline
+from .datatypes import SetPmt, RejectionLog
 # -------------------------------
 # Functions to construct SetPmt
 # -------------------------------
 
-def set_fields(set_pmt: SetPmt, drift_length: float, EL_gap: float,
+def set_fields(set_pmt: SetPmt, drift_gap: float, el_gap: float,
                gas_density: float = None) -> SetPmt:
     """
     Pure transformer: return a new SetPmt with drift/EL fields and (optionally) reduced fields.
@@ -98,8 +25,8 @@ def set_fields(set_pmt: SetPmt, drift_length: float, EL_gap: float,
     v_gate = set_pmt.metadata.get("gate")
     v_anode = set_pmt.metadata.get("anode")
 
-    drift_field = v_gate / drift_length if v_gate is not None else None
-    EL_field = (v_anode - v_gate) / EL_gap if v_anode is not None and v_gate is not None else None
+    drift_field = v_gate / drift_gap if v_gate is not None else None
+    EL_field = (v_anode - v_gate) / el_gap if v_anode is not None and v_gate is not None else None
 
     red_drift = None
     red_EL = None
@@ -114,7 +41,7 @@ def set_fields(set_pmt: SetPmt, drift_length: float, EL_gap: float,
                    red_EL_field=red_EL)
 
 def set_transport_properties(set_pmt: SetPmt,
-                             drift_length: float,
+                             drift_gap: float,
                              transport) -> SetPmt:
     """
     Given a SetPmt and geometry + transport model,
@@ -122,7 +49,7 @@ def set_transport_properties(set_pmt: SetPmt,
     and diffusion coefficient filled in.
     Args:
         set_pmt: input SetPmt with red_drift_field set
-        drift_length: drift length in cm
+        drift_gap: drift length in cm
         transport: module with transport functions (e.g. RaTag.transport)
     Returns: a new SetPmt with transport properties set.
     """
@@ -133,9 +60,9 @@ def set_transport_properties(set_pmt: SetPmt,
     speed = redfield_to_speed(set_pmt.red_drift_field)  # mm/us
 
     # drift time = L / v
-    if not drift_length or drift_length <= 0:
-        raise ValueError("drift_length must be positive")
-    time_drift = drift_length * 10 / speed * 1e-6 if speed else None
+    if not drift_gap or drift_gap <= 0:
+        raise ValueError("drift_gap must be positive")
+    time_drift = drift_gap * 10 / speed * 1e-6 if speed else None
 
     # diffusion coefficient (model-dependent)
     # diffusion = transport.redfield_to_diffusion(set_pmt.red_drift_field)
@@ -178,12 +105,15 @@ def find_s1_in_avg(t, V, height_S1=0.001, min_distance=200):
 
 
 def estimate_s1_from_batches(set_pmt: SetPmt,
+                             n_batches: int = 5,
                              batch_size: int = 20,
                              height_S1=0.001,
                              min_distance=200) -> SetPmt:
-    """Estimate average S1 time by analyzing averaged batches of waveforms."""
+    """Estimate average S1 time by analyzing up to n_batches of averaged waveforms."""
     s1_times = []
-    for batch in batch_filenames(set_pmt.filenames, batch_size):
+    batch_iter = batch_filenames(set_pmt.filenames, batch_size)
+
+    for batch in itertools.islice(batch_iter, n_batches):
         t, V = average_waveform([set_pmt.source_dir / fn for fn in batch])
         idx = find_s1_in_avg(t, V, height_S1, min_distance)
         if idx is not None:
@@ -197,6 +127,7 @@ def estimate_s1_from_batches(set_pmt: SetPmt,
 
     new_meta = {**set_pmt.metadata, "t_s1": t_s1_mean, "t_s1_std": t_s1_std}
     return replace(set_pmt, metadata=new_meta)
+
 
 def estimate_s2_window_from_batches(set_pmt: SetPmt,
                                     batch_size: int = 20,
@@ -325,7 +256,54 @@ def combine_logs(logs: List[RejectionLog]) -> RejectionLog:
         cut_fn=combined_cut,
         reason="Passed all cuts"
     )
+# -----------------------------------------------
+# S2 area integration pipeline
+# -----------------------------------------------
 
+def integrate_set_s2(
+    set_pmt: SetPmt,
+    t_window: tuple[float, float],
+    n_pedestal: int = 200,
+    ma_window: int = 10,
+    threshold: float = 0.02,
+    dt: float = 2e-4,
+) -> np.ndarray:
+    """
+    Apply the S2 area pipeline to all waveforms in a set.
+
+    Args:
+        set_pmt: Measurement set (lazy list of waveforms).
+        t_window: (t_start, t_end) defining S2 window in seconds.
+        n_pedestal: number of samples to average for pedestal subtraction.
+        ma_window: moving average window length (samples).
+        threshold: threshold for clipping voltages above baseline.
+        dt: time step [s] for Riemann integration.
+
+    Returns:
+        np.ndarray: Array of integrated S2 areas (one per waveform).
+    """
+    results = []
+    for wf in set_pmt.iter_waveforms():
+        try:
+            area = s2_area_pipeline(
+                wf,
+                t_window=t_window,
+                n_pedestal=n_pedestal,
+                ma_window=ma_window,
+                threshold=threshold,
+                dt=dt,
+            )
+            results.append(area)
+        except Exception as e:
+            # Optionally, handle bad waveforms gracefully
+            # (e.g., append np.nan to keep indexing aligned)
+            results.append(np.nan)
+    return np.array(results)
+
+def store_s2area(set_pmt: SetPmt, s2: S2Areas) -> None:
+    """Store areas in .npy file inside the set's directory."""
+    path = set_pmt.source_dir / "s2_areas.npy"
+    np.save(path, s2.areas)
 
 # For reference, previous version of evaluate_cuts:
 

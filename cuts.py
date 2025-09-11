@@ -6,14 +6,6 @@ from .waveforms import Waveform, PMTWaveform, SiliconWaveform
 import matplotlib.pyplot as plt
 from scipy.signal import find_peaks, peak_widths
 
-@dataclass(frozen=True)
-class RejectionLog:
-    cut_name: str
-    cut_fn: Callable[[Any], tuple[bool, np.ndarray, np.ndarray]]  # wf -> (bool, t_pass, V_pass)
-    passed: list[int]
-    rejected: list[int]
-    reason: str = ""
-
 # -------------------------------
 # Cut factories
 # -------------------------------
@@ -45,7 +37,8 @@ def make_smoothed_vertical_cut(vmin: float, t_start: float, t_end: float, smooth
     def cut_fn(wf):
         s2_mask = (wf.t >= t_start) & (wf.t <= t_end)
         V_s2 = wf.v[s2_mask]
+        t_s2 = wf.t[s2_mask]
         V_smooth = moving_average(V_s2, smooth_window)
-        ok = V_smooth[V_smooth > vmin]
-        return ok, wf.t[ok], wf.v[ok]
+        ok = V_smooth >= vmin
+        return ok.any(), t_s2[ok], V_smooth[ok]
     return cut_fn

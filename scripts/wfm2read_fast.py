@@ -145,7 +145,6 @@ def wfm2read(filename, datapoints=None, step=1, startind=0, verbose=False):
 
         
         if  Nframes > 1:
-            # interpret fractional step as "read all frames"
             datapoints = nop_all * Nframes
         
         elif datapoints is None:

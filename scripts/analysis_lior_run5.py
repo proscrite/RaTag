@@ -14,8 +14,8 @@ area_vec = []
 plot_switch = 0
 
 dir_base = "/Users/pabloherrero/sabat/RaTagging/scope_data/waveforms/RUN5_EL2375Vcm_5GSsec/"
-fname_base = dir_base + "FieldScan_5GSsec_Anode1950V_Gate50V/"
-# fname_base = dir_base + "FieldScan_5GSsec_Anode2000V_Gate100V/"
+# fname_base = dir_base + "FieldScan_5GSsec_Anode1950V_Gate50V/"
+fname_base = dir_base + "FieldScan_5GSsec_Anode2000V_Gate100V/"
 # fname_base = dir_base + "FieldScan_5GSsec_Anode2100V_Gate200V/"
 # fname_base = dir_base + "FieldScan_5GSsec_Anode2500V_Gate600V/"
 # fname_base = dir_base + "FieldScan_5GSsec_Anode3000V_Gate1100V/"
@@ -54,10 +54,10 @@ for Nfile, file in enumerate(sorted(glob(fname_base + "*.wfm"))):
     # --- Define S2 window ---
         # Wide S2 window
     # --------------
-    t1 = 1.5e4; # gate 50 V, anode 1950 V 
-    t2 = 3.5e4; # gate 50 V, anode 1950 V 
-    # t1 = 1.1e4; # gate 100V, anode 2000 V
-    # t2 = 1.8e4; # gate 100V, anode 2000 V
+    # t1 = 1.5e4; # gate 50 V, anode 1950 V 
+    # t2 = 3.5e4; # gate 50 V, anode 1950 V 
+    t1 = 1.1e4; # gate 100V, anode 2000 V
+    t2 = 1.8e4; # gate 100V, anode 2000 V
     # t1 = 1.0e4; # gate 200 V, anode 2100 V (filename says "Gate400")
     # t2 = 1.6e4; # gate 200 V, anode 2100 V (filename says "Gate400")
     # t1 = 0.8e4; # gate 600V, anode 2500 V
