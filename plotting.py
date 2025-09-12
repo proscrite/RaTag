@@ -4,9 +4,7 @@ import numpy as np
 import ipywidgets as widgets
 from IPython.display import display
 
-from .runs import Run
-from .waveforms import PMTWaveform
-from .datatypes import SetPmt, RejectionLog, S2Areas
+from .datatypes import PMTWaveform, SetPmt, RejectionLog, S2Areas, Run
 from .dataIO import load_wfm
 
 def plot_waveform_with_cuts(wf: PMTWaveform, set_pmt: SetPmt,

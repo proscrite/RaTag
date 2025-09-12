@@ -1,7 +1,6 @@
 import numpy as np
 from .config import DRIFT_VELOCITY_PARAMS
 from typing import Sequence
-from scipy.signal import find_peaks, peak_widths
 # -------------------------------
 # Drift velocity models
 # -------------------------------
