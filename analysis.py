@@ -4,6 +4,7 @@ import numpy as np
 from lmfit.models import GaussianModel # type: ignore
 import matplotlib.pyplot as plt # type: ignore
 
+from .dataIO import iter_waveforms
 from .datatypes import SetPmt, S2Areas, Run
 from .transformations import s2_area_pipeline
 from .config import IntegrationConfig, FitConfig
@@ -31,13 +32,13 @@ def integrate_set_s2(set_pmt: SetPmt,
     """
     areas = []
 
-    for idx, wf in enumerate(set_pmt.iter_waveforms()):
+    for idx, wf in enumerate(iter_waveforms(set_pmt)):
         try:
             area = s2_area_pipeline(wf, t_window,
                                     n_pedestal=n_pedestal,
                                     ma_window=ma_window,
                                     threshold=threshold,
-                                    dt=wf.t[1] - wf.t[0])
+                                    dt=dt)
             areas.append(area)
         except Exception as e:
             # Optionally, handle bad waveforms gracefully
@@ -62,7 +63,7 @@ def integrate_set_s2(set_pmt: SetPmt,
 # -------------------------------------------------
 # Run-level integration
 # -------------------------------------------------
-def integrate_run_s2(run: Run, ts2_tol = 2.7e-6,
+def integrate_run_s2(run: Run, ts2_tol = 2.7,
                      config: IntegrationConfig = IntegrationConfig() ) -> Dict[str, S2Areas]:
     """
     Integrate S2 areas for all sets in a Run.
@@ -81,10 +82,10 @@ def integrate_run_s2(run: Run, ts2_tol = 2.7e-6,
         if "t_s1" not in set_pmt.metadata or set_pmt.time_drift is None:
             raise ValueError(f"Set {set_pmt.source_dir} missing t_s1 or time_drift")
 
-        t_s1 = set_pmt.metadata["t_s1"]   # s
-        t_drift = set_pmt.time_drift      # s
-        t_start = (t_s1 + t_drift + ts2_tol) * 1e6  # µs
-        t_end = t_start + run.width_s2 * 1e6  # µs
+        t_s1 = set_pmt.metadata["t_s1"]   # µs
+        t_drift = set_pmt.time_drift      # µs
+        t_start = t_s1 + t_drift + ts2_tol
+        t_end = t_start + run.width_s2  
         t_window = (t_start, t_end) 
 
         print(f"Processing set {set_pmt.source_dir} with t_window: {t_window}")
