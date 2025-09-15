@@ -1,6 +1,30 @@
 import numpy as np
-from .config import DRIFT_VELOCITY_PARAMS
 from typing import Sequence
+from dataclasses import replace
+from .datatypes import Run
+from .config import DRIFT_VELOCITY_PARAMS
+
+# -------------------------------
+# Gas properties
+# -------------------------------
+
+k_B = 1.380649e-23  # Boltzmann constant, J/K
+
+def gas_density_cm3(pressure_bar: float, temperature_K: float) -> float:
+    """Return gas number density in cm^-3 from P [bar], T [K]."""
+    P_Pa = pressure_bar * 1e5
+    n_m3 = P_Pa / (k_B * temperature_K)
+    return n_m3 * 1e-6  # cm^-3
+
+def gas_density_N(n_cm3: float) -> float:
+    """Convert number density in cm^-3 to N [atoms/cm^3]."""
+    return n_cm3 * 6.022e23  # Convert to atoms/cm^3 using Avogadro's number
+
+def with_gas_density(run: Run) -> Run:
+    gd = gas_density_cm3(run.pressure, run.temperature)
+    return replace(run, gas_density=gd)
+
+
 # -------------------------------
 # Drift velocity models
 # -------------------------------
@@ -13,11 +37,11 @@ def transport_saturation(rE: float, p0: float, p1: float, p2: float, p3: float) 
     """
     return p0 * (1.0 - np.exp(-p1 * rE)) + (p2 * rE) / (1.0 + p3 * rE)
 
-def compute_reduced_field(field: float, gas_density: float = 4.91e19 ) -> float:
-    """Compute reduced field E/n [V/cm^-2].
-    Default gas_density corresponds to 2 bar at room temperature.
+def compute_reduced_field(field_Vpcm: float, density_cm3: float) -> float:
     """
-    return field / gas_density * 1e17  # Convert to V/cm^2
+    Compute reduced field [V·cm²].
+    """
+    return field_Vpcm / density_cm3
 
 
 def redfield_to_speed(rE: float, params: dict = DRIFT_VELOCITY_PARAMS) -> float:   # This will be renamed as this fit only applies to mid-range reduced fields
