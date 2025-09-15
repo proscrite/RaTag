@@ -1,9 +1,9 @@
 import numpy as np
 from pathlib import Path
-from typing import Union
+from typing import Union, Iterator
 import re
 
-from .datatypes import Waveform, SetPmt, S2Areas
+from .datatypes import Waveform, SetPmt, S2Areas, PMTWaveform
 
 from RaTag.scripts.wfm2read_fast import wfm2read # type: ignore
 PathLike = Union[str, Path]
@@ -13,6 +13,13 @@ def load_wfm(path: PathLike) -> Waveform:
     wfm = wfm2read(str(path))
     t, v = wfm[1], -wfm[0]  # Invert signal polarity
     return Waveform(t, v, source=str(path))
+
+# --- Lazy loader ---
+def iter_waveforms(set_pmt: SetPmt) -> Iterator[PMTWaveform]:
+    """Yield PMTWaveform objects lazily, one by one."""
+    
+    for fn in set_pmt.filenames:
+        yield load_wfm(set_pmt.source_dir / fn)
 
 def parse_subdir_name(name: str) -> dict:
     """

@@ -2,7 +2,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Optional, Iterator, Any, List
 import numpy as np
-from .dataIO import load_wfm, parse_subdir_name
 
 from typing import Optional
 import matplotlib.pyplot as plt     # type: ignore[import]
@@ -94,13 +93,7 @@ class SetPmt:
 
     def __len__(self):
         return len(self.filenames)
-    
-    # --- Lazy loader ---
-    def iter_waveforms(self) -> Iterator["PMTWaveform"]:
-        """Yield PMTWaveform objects lazily, one by one."""
-        
-        for fn in self.filenames:
-            yield load_wfm(self.source_dir / fn)
+
 
 # -------------------------------
 # Dataclasses for runs
@@ -120,7 +113,7 @@ class Run:
     sets: List[SetPmt] = None
 
     # Orchestrate cut params here
-    bs_window: tuple[float, float] = (-1.5e-5, -1.0e-5)
+    gas_density: Optional[float] = None  # cm^-3, to be filled in
     width_s2: float = 1.1 # in µs
     t_s1: float = 0.0  # can be refined by batch analysis
 
@@ -144,7 +137,7 @@ class S2Areas:
     fit_result: Any = None
 
     def __repr__(self) -> str:
-        return f"S2Areas(source_dir={self.set_id}, n_areas={len(self.areas)}, method={self.method})"
+        return f"S2Areas(source_dir={self.source_dir.name}, n_areas={len(self.areas)}, method={self.method})"
 
 
 # -------------------------------

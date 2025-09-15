@@ -116,7 +116,7 @@ def plot_hist_fit(s2: S2Areas, nbins=100, bin_cuts=(0, 5), ax=None):
     n, bins, patches = ax.hist(area_vec, bins=nbins, alpha=0.6, color='g', label="Data")
     ax.set_xlabel("S2 Area (mV·µs)")
     ax.set_ylabel("Counts")
-    ax.set_title(f"S2 Area Histogram for Set {s2.set_id}")
+    ax.set_title(f"S2 Area Histogram for Set {s2.source_dir.name}")
     ax.grid(True)
 
     if s2.fit_success and s2.fit_result:

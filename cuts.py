@@ -1,7 +1,8 @@
 # RaTag/cuts.py
 import numpy as np
 from typing import Callable, List, Union
-from dataclasses import replace, reduce
+from dataclasses import replace
+from functools import reduce
 from .datatypes import PMTWaveform, SetPmt, RejectionLog
 
 # -------------------------------
