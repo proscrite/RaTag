@@ -10,7 +10,7 @@ from .datatypes import SetPmt, Run
 from .units import *
 from .transport import compute_reduced_field, redfield_to_speed
 from .transformations import batch_filenames, average_waveform, find_s1_in_avg
-
+from .plotting import plot_s1_time_distribution
 # ------------------------
 # --- Set constructors ---
 # ------------------------
@@ -92,12 +92,16 @@ def set_transport_properties(set_pmt: SetPmt,
                    diffusion_coefficient=diffusion)
 
 
-def estimate_s1_from_batches(set_pmt: SetPmt,
+def _find_s1_in_batches(set_pmt: SetPmt,
                              n_batches: int = 5,
                              batch_size: int = 20,
-                             height_S1=0.001,
-                             min_distance=200) -> SetPmt:
-    """Estimate average S1 time by analyzing up to n_batches of averaged waveforms."""
+                             height_S1: float = 0.001,
+                             min_distance: int = 200) -> List[float]:
+    """Helper function to find S1 times in batches of waveforms.
+    
+    Returns:
+        List of S1 peak times in microseconds
+    """
     s1_times = []
     batch_iter = batch_filenames(set_pmt.filenames, batch_size)
 
@@ -111,9 +115,27 @@ def estimate_s1_from_batches(set_pmt: SetPmt,
 
     if not s1_times:
         raise ValueError("No S1 peaks found in batches")
+        
+    return s1_times
+    
+
+def estimate_s1_from_batches(set_pmt: SetPmt,
+                           n_batches: int = 5,
+                           batch_size: int = 20,
+                           height_S1: float = 0.001,
+                           min_distance: int = 200,
+                           flag_plot: bool = True) -> SetPmt:
+    """Estimate average S1 time by analyzing batches and optionally plot distribution."""
+    s1_times = _find_s1_in_batches(
+        set_pmt, n_batches, batch_size, height_S1, min_distance
+    )
+
+    if flag_plot:
+        plot_s1_time_distribution(s1_times, 
+            f"S1 Peak Times Distribution - {set_pmt.source_dir.name}")
 
     t_s1_mean = round(np.mean(s1_times), 3)
-    t_s1_std  = round(np.std(s1_times), 3)
+    t_s1_std = round(np.std(s1_times), 3)
 
     new_meta = {**set_pmt.metadata, "t_s1": t_s1_mean, "t_s1_std": t_s1_std}
     return replace(set_pmt, metadata=new_meta)
