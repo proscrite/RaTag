@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 # -------------------------------
 # General analysis thresholds
 # -------------------------------
@@ -19,3 +20,17 @@ DRIFT_VELOCITY_PARAMS = {
 
 # Optionally: define common drift fields to evaluate
 DRIFT_FIELDS = [35, 50, 70, 107, 142, 178, 214, 250, 285, 321, 357, 428]  # V/cm
+
+@dataclass(frozen=True)
+class IntegrationConfig:
+    n_pedestal: int = 2000
+    ma_window: int = 9
+    threshold: float = 0.8
+    dt: float = 2e-4   # default unless overridden by wf spacing
+
+
+@dataclass(frozen=True)
+class FitConfig:
+    bin_cuts: tuple[float, float] = (0, 4)
+    nbins: int = 100
+    exclude_index: int = 1

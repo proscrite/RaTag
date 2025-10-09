@@ -7,14 +7,19 @@ import matplotlib.pyplot as plt
 # from .wfm2read_fast import wfm2read
 from RaTag.scripts.wfm2read_fast import wfm2read
 
-def get_peak_volts(y):
+def get_peak_volts(V):
     """
     Function to read all waveform files in a directory and extract peaks.
     :param file_path: Path to the directory containing waveform files.
     :return: List of peaks found in the waveform files.
     """
-    peaks, props = find_peaks(y, height=1, distance=1000, prominence=1)
-    volts = y[peaks]
+    peaks, props = find_peaks(V, height=1, distance=1000, prominence=1)
+    
+    if len(peaks) >1:
+        # Keep only the highest peak
+        highest_peak_index = np.argmax(props['peak_heights'])
+        peaks = [peaks[highest_peak_index]]
+    volts = V[peaks]
     return volts
 
 def histogram_voltages(volts):
@@ -25,7 +30,25 @@ def histogram_voltages(volts):
     plt.title('Histogram of Peaks from Waveform Files')
     plt.show()
 
-def get_baseline(V, npoints = 200):
+def analyse_analog_file(file):
+    wf = wfm2read(file, verbose=False)
+    V, t = wf[0], wf[1]  # in mV and ns
+    peaks = []
+    if len(V.shape) > 1:
+        for v in V:
+            peaks.append(alpha_peaks(v))
+    else:
+        peaks.append(alpha_peaks(V))
+    return np.array(peaks)
+
+def compute_analog_path(path):
+    files = sorted(glob(path + '/*.wfm') )
+    all_peaks = []
+    for file in files:
+        peaks = analyse_analog_file(file)
+        all_peaks.append(peaks)
+    return np.concatenate(all_peaks)
+def get_baseline(V, t):
     """Estimate the baseline of the waveform."""
     return np.mean(V[:npoints])
 

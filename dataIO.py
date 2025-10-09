@@ -1,8 +1,10 @@
 import numpy as np
 from pathlib import Path
-from typing import Union
+from typing import Union, Iterator
 import re
-from .waveforms import Waveform, PMTWaveform, SiliconWaveform
+
+from .datatypes import Waveform, SetPmt, S2Areas, PMTWaveform
+
 from RaTag.scripts.wfm2read_fast import wfm2read # type: ignore
 PathLike = Union[str, Path]
 
@@ -11,6 +13,13 @@ def load_wfm(path: PathLike) -> Waveform:
     wfm = wfm2read(str(path))
     t, v = wfm[1], -wfm[0]  # Invert signal polarity
     return Waveform(t, v, source=str(path))
+
+# --- Lazy loader ---
+def iter_waveforms(set_pmt: SetPmt) -> Iterator[PMTWaveform]:
+    """Yield PMTWaveform objects lazily, one by one."""
+    
+    for fn in set_pmt.filenames:
+        yield load_wfm(set_pmt.source_dir / fn)
 
 def parse_subdir_name(name: str) -> dict:
     """
@@ -50,19 +59,18 @@ def parse_filename(fname: str) -> dict:
             out["channel"] = int(m.group(2))
     return out
 
+def store_s2area(s2: S2Areas) -> None:
+    """Store areas in .npy file inside the set's directory."""
+    path = s2.source_dir / "s2_areas.npy"
+    np.save(path, s2.areas)
 
-# def save_npy(wf: Waveform, path: PathLike) -> None:
-#     """Save waveform as .npy with two columns (t, v)."""
-#     arr = np.column_stack([wf.t, wf.v])
-#     np.save(path, arr)
-
-# def load_txt(path: PathLike) -> Waveform:
-#     """Load waveform from a text file with columns t v."""
-#     arr = np.loadtxt(path)
-#     t, v = arr[:,0], arr[:,1]
-#     return Waveform(t, v, source=str(path))
-
-# def save_txt(wf: Waveform, path: PathLike) -> None:
-#     """Save waveform as ASCII text."""
-#     arr = np.column_stack([wf.t, wf.v])
-#     np.savetxt(path, arr)
+def load_s2area(set_pmt: SetPmt) -> S2Areas:
+    """Load areas from .npy file inside the set's directory."""
+    path = set_pmt.source_dir / "s2_areas.npy"
+    areas = np.load(path)
+    return S2Areas(
+        set_id=set_pmt.source_dir.name,
+        areas=areas,
+        method="loaded_from_npy",
+        params={"set_metadata": set_pmt.metadata}
+    )

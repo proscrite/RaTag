@@ -1,11 +1,14 @@
 import matplotlib.pyplot as plt # type: ignore
 import time
+import numpy as np
 import ipywidgets as widgets
 from IPython.display import display
+from typing import List
+from pathlib import Path
 
-from .waveforms import PMTWaveform
-from .measurement import SetPmt, RejectionLog
-from .dataIO import load_wfm
+from .datatypes import PMTWaveform, SetPmt, RejectionLog, S2Areas, Run
+from .dataIO import load_wfm, iter_waveforms
+from .units import s_to_us, V_to_mV
 
 def plot_waveform_with_cuts(wf: PMTWaveform, set_pmt: SetPmt,
                             width_s2: float):
@@ -19,57 +22,164 @@ def plot_waveform_with_cuts(wf: PMTWaveform, set_pmt: SetPmt,
     post_s2_window = (s2_window[1], t_end)
 
     plt.plot(t, V)
+    # wf.plot()
     plt.axvline(drift_window[0], color="k", label="S1")
     plt.axvline(drift_window[1], color="m", label="S2 start")
     plt.axvline(s2_window[1], color="r", label="S2 end")
     plt.legend()
 
 def plot_cut_results(wf: PMTWaveform, set_pmt: SetPmt, logs: list[RejectionLog],
-                     wf_index: int, width_s2: float, ax = None):
+                     width_s2: float, ax=None):
     if ax is None:
-        ax = plt.gca()
-    t, V = wf.t, wf.v
-    t_s1 = set_pmt.metadata["t_s1"]
-    t_drift = set_pmt.time_drift / 1e6  # µs→s
-    t_end = wf.t[-1]
+        fig, ax = plt.subplots()
 
-    drift_window = (t_s1, t_s1 + t_drift)
-    s2_window = (drift_window[1], drift_window[1] + width_s2)
-    post_s2_window = (s2_window[1], t_end)
+    # t, V = wf.t, wf.v
+    wf_index = getattr(wf, "index", None)
+    ax.set(title=f"Waveform {wf_index}",
+           xlabel="Time (s)", ylabel="Signal (V)")
+    # ax.plot(t, V, color="0.6")
+    wf.plot()
+    for log in logs:
+        ok, tsel, Vsel = log.cut_fn(wf)
+        color = "g" if ok else "r"
+        ax.plot(tsel, Vsel, color, label=f"{log.cut_name} {'PASS' if ok else 'FAIL'}")
 
-    # Map logs into a dict: cut_name -> passed?
-    cut_results = {log.cut_name: wf_index in log.passed for log in logs}
-
-    # base trace
-    ax.plot(t, V, label=f"Waveform {wf_index}")
-
-    # drift region
-    drift_seg = (t > drift_window[0]) & (t < drift_window[1])
-    ax.plot(t[drift_seg], V[drift_seg],
-             "g" if cut_results["drift_region"] else "r", lw=2)
-
-    # post-S2 region
-    post_seg = t > s2_window[1]
-    ax.plot(t[post_seg], V[post_seg],
-             "g" if cut_results["post_s2"] else "r", lw=2, )
-
-    # # baseline (before S1)
-    # base_seg = (t > set_pmt.metadata["baseline_window"][0]) & (t < set_pmt.metadata["baseline_window"][1])
-    # ax.plot(t[base_seg], V[base_seg],
-    #          "g" if cut_results["baseline"] else "r", lw=2)
-
-    # vertical markers
-    ax.axvline(drift_window[0], color="k", label="S1")
-    ax.axvline(drift_window[1], color="m", label="S2 start")
-    ax.axvline(s2_window[1], color="r", label="S2 end")
+    # markers for S1 / S2
+    t_s1 = set_pmt.metadata.get("t_s1")
+    t_drift = set_pmt.time_drift
+    if t_s1 and t_drift:
+        s2_start = t_s1 + t_drift
+        s2_end = s2_start + width_s2
+        ax.axvline(t_s1, color="k", ls="--", label="S1")
+        ax.axvline(s2_start, color="m", ls="--", label="S2 start")
+        ax.axvline(s2_end, color="r", ls="--", label="S2 end")
 
     ax.legend()
+    return ax
+
+def plot_winS2_wf(wf: PMTWaveform, t_s1: float, time_drift: float, width_s2: float,  ts2_tol: float = 0, ax=None):
+    """Plot waveform with S1 and S2 window markers.
+    Args:
+        wf: PMTWaveform to plot.
+        t_s1: S1 time in µs.
+        time_drift: Drift time in µs.
+        width_s2: Width of S2 window in µs.
+        ts2_tol: Optional tolerance to add to S2 start time in µs.
+        ax: Optional matplotlib Axes to plot on."""
+    if ax is None:
+        fig, ax = plt.subplots()
+
+    t, V = wf.t, wf.v
+    t = s_to_us(t)  # convert to µs
+    V = V_to_mV(V)  # convert to mV
+    wf_index = Path(wf.source).name.replace(".wfm", "").replace("Wfm", "")
+    ax.set(title=f"Waveform {wf_index}",
+           xlabel="Time (µs)", ylabel="Signal (mV)")
+    ax.plot(t, V)
+
+    s2_start = t_s1 + time_drift + ts2_tol
+    s2_end = s2_start + width_s2
+    ax.axvline(t_s1, color="k", ls="--", label="S1", lw=0.5, zorder=-1)
+    ax.axvline(s2_start, color="m", ls="--", lw=0.5, zorder=-1 )
+    ax.axvline(s2_end, color="r", ls="--" , lw=0.5, zorder=-1)
+    # ymin, ymax = ax.get_ylim()
+    ax.fill_betweenx(ax.get_ylim(), s2_start, s2_end, color='m', alpha=0.3, label="S2 window")
+    ax.legend()
+
+def make_interactive(plot_fn):
+    """Decorator that adds interactive scrolling to a waveform plotting function.
+    
+    The wrapped function must take a waveform as its first argument and return
+    a matplotlib axes object.
+    """
+    def wrapper(set_pmt: SetPmt, *args, fix_axes=True, **kwargs):
+        files = list(set_pmt.filenames)
+        xlim = None
+
+        def _plot(idx):
+            fig, ax = plt.subplots()
+            wf = load_wfm(set_pmt.source_dir / files[idx])
+            plot_fn(set_pmt, wf, *args, **kwargs, ax=ax)
+
+            if fix_axes:
+                nonlocal xlim
+                if xlim is None:
+                    xlim = ax.get_xlim()
+                else:
+                    ax.set_xlim(xlim)
+            ax.relim()
+            ax.autoscale(axis="y")
+            plt.gcf().canvas.draw()
+
+        slider = widgets.IntSlider(
+            min=0, 
+            max=len(files)-1,
+            step=1,
+            value=0,
+            description='Waveform:'
+        )
+        out = widgets.interactive_output(_plot, {"idx": slider})
+        display(slider, out)
+        
+    return wrapper
+
+# Now we can decorate plot_winS2_wf to make it interactive
+@make_interactive
+def scroll_winS2(set_pmt: SetPmt, wf: PMTWaveform, width_s2: float, ts2_tol: float = 0, ax=None):
+    """Interactive version of plot_winS2_wf."""
+
+    t_s1 = set_pmt.metadata.get("t_s1")
+    time_drift = set_pmt.time_drift
+
+    if t_s1 is None:
+        raise ValueError("t_s1 must be provided either as argument or in set metadata")
+    if time_drift is None:
+        raise ValueError("time_drift must be provided either as argument or in set")
+    
+    return plot_winS2_wf(wf, t_s1, time_drift, width_s2, ts2_tol, ax)
+
+
+
+def plot_run_winS2(run: Run, ts2_tol: float = 0, scroll: bool = False):
+    """Plot S1/S2 windows for one waveform from each set in a run."""
+    if not scroll:
+        n_sets = len(run.sets)
+        fig, axes = plt.subplots(n_sets, 1, figsize=(10, 4*n_sets))
+        if n_sets == 1:
+            axes = [axes]
+    else:
+        fig, axes = None, []
+
+    def _plot_adapter(set_pmt: SetPmt, wf: PMTWaveform, width_s2: float, ts2_tol: float, ax=None):
+        t_s1 = set_pmt.metadata.get("t_s1")
+        time_drift = set_pmt.time_drift
+        return plot_winS2_wf(wf, t_s1, time_drift, width_s2, ts2_tol, ax)
+
+    decorated_fn = make_interactive(_plot_adapter) if scroll else _plot_adapter
+
+    for idx, set_pmt in enumerate(run.sets):
+        try:
+            if scroll:
+                # do NOT pass wf — the decorator will supply it
+                decorated_fn(set_pmt, width_s2=run.width_s2, ts2_tol=ts2_tol)
+            else:
+                wf = load_wfm(set_pmt.source_dir / set_pmt.filenames[0])
+                decorated_fn(set_pmt, wf, run.width_s2, ts2_tol, ax=axes[idx])
+
+                axes[idx].set_title(f"Set {set_pmt.source_dir.name}")
+        except Exception as e:
+            if not scroll:
+                axes[idx].text(0.5, 0.5, f"Error: {str(e)}", ha='center', va='center')
+
+    if not scroll:
+        plt.tight_layout()
+    return fig, axes
 
 
 #### Manual iteration version
 def iter_plot_waveforms(set_pmt: SetPmt, logs: list[RejectionLog], width_s2: float):
-    for idx, wf in enumerate(set_pmt.iter_waveforms()):
-        plot_cut_results(wf, set_pmt, logs, width_s2, wf_index=idx)
+    for idx, wf in enumerate(iter_waveforms(set_pmt)):
+        plot_cut_results(wf, set_pmt, logs, width_s2)
         yield
 
 # Use: next(gen)  # plot first
@@ -81,10 +191,11 @@ def iter_plot_waveforms(set_pmt: SetPmt, logs: list[RejectionLog], width_s2: flo
 def scroll_waveforms(set_pmt: SetPmt, logs: list[RejectionLog], width_s2: float):
     files = list(set_pmt.filenames)
     def _plot(idx):
+        fig, ax = plt.subplots()
         wf = load_wfm(set_pmt.source_dir / files[idx])
-        plot_cut_results(wf, set_pmt, logs, 
-                         width_s2 = width_s2, wf_index=idx)
-        ax = plt.gca()
+        plot_cut_results(wf, set_pmt, logs, ax=ax,
+                         width_s2 = width_s2);
+        # ax = plt.gca()
         ax.set_xlim(-1.7e-5, 5e-5)
         ax.relim()
         ax.autoscale(axis="y")     # auto y-scale
@@ -102,6 +213,67 @@ def slideshow(set_pmt: SetPmt, logs: list[RejectionLog], width_s2: float, delay=
         ax = plt.gca()
     for idx, wf in enumerate(set_pmt.iter_waveforms()):
         ax.clear()
+        print(f"Waveform {idx+1}/{len(set_pmt.filenames)}")
         plot_cut_results(wf, set_pmt, logs=logs, 
-                         width_s2=width_s2, wf_index=idx, ax=ax)
-        plt.pause(delay)
+                         width_s2=width_s2, ax=ax)
+        plt.draw()
+        time.sleep(delay)
+        plt.pause(0.01)  # allow GUI to update
+
+
+# --------------------------------
+# Histogram + Gaussian fit
+# --------------------------------
+
+def plot_hist_fit(s2: S2Areas, nbins=100, bin_cuts=(0, 5), ax=None):
+    if ax is None:
+        fig, ax = plt.subplots()
+
+    area_vec = s2.areas[(s2.areas > bin_cuts[0]) & (s2.areas < bin_cuts[1])]
+    if len(area_vec) == 0:
+        ax.text(0.5, 0.5, "No data in range", ha='center', va='center')
+        return ax
+
+    n, bins, patches = ax.hist(area_vec, bins=nbins, alpha=0.6, color='g', label="Data")
+    ax.set_xlabel("S2 Area (mV·µs)")
+    ax.set_ylabel("Counts")
+    ax.set_title(f"S2 Area Histogram for Set {s2.source_dir.name}")
+    ax.grid(True)
+
+    if s2.fit_success and s2.fit_result:
+        x = np.linspace(bin_cuts[0], bin_cuts[1], 1000)
+        y = s2.fit_result.eval(x=x)  # Use stored fit result to evaluate
+        ax.plot(x, y, 'r-', label="Gaussian Fit")
+        ax.axvline(s2.mean, color='b', ls='--', 
+                  label=f"Mean: {s2.mean:.1f} ± {s2.ci95:.1f}")
+        ax.legend()
+    else:
+        ax.text(0.5, 0.9, "Fit failed or not performed", 
+                ha='center', va='center', transform=ax.transAxes)
+
+    return ax
+
+def plot_s2_vs_drift(run: Run, fitted: dict[str, S2Areas]):
+    drift_fields = [s.drift_field for s in run.sets]
+    means = [fitted[s.source_dir.name].mean for s in run.sets]
+    ci95s = [fitted[s.source_dir.name].ci95 for s in run.sets]
+
+    plt.errorbar(drift_fields, means, yerr=ci95s,
+                 fmt='o', capsize=5)
+    plt.gca().set(xlabel="Drift field (V/cm)", ylabel ="Mean S2 area (mV·µs)", 
+                  title =f"Run {run.run_id} — Mean S2 Area vs Drift Field")
+    plt.grid(True)
+
+def plot_s1_time_distribution(s1_times: List[float], 
+                            title: str = "S1 Peak Times Distribution"):
+    """Plot histogram of S1 peak times with mean and std."""
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(len(s1_times)), s1_times, 'o')
+    plt.axhline(np.mean(s1_times), color='r', linestyle='--', 
+                label=f'Mean: {np.mean(s1_times):.3f} ± {np.std(s1_times):.3f} μs')
+    plt.fill_betweenx((np.mean(s1_times) - np.std(s1_times), np.mean(s1_times) + np.std(s1_times)), 0, len(s1_times),
+                     color='g', alpha=0.2)
+
+    plt.gca().set(xlabel='Waveform Index', ylabel='S1 Peak Time (μs)', title=title)
+    plt.legend()

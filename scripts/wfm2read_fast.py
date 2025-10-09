@@ -143,15 +143,15 @@ def wfm2read(filename, datapoints=None, step=1, startind=0, verbose=False):
         Nframes = info['N']
         pts_per_frame = nop_all if Nframes > 0 else nop_all
 
-        # print(f'len V = {nop_all}, Nframes = {Nframes}, pts_per_frame = {pts_per_frame}')
+        
         if  Nframes > 1:
-            # interpret fractional step as "read all frames"
             datapoints = nop_all * Nframes
-        # if datapoints is None:
-        #     datapoints = int(nop // step)
-        # else:
-        #     if datapoints > nop:
-        #         datapoints = int(nop // step)
+        
+        elif datapoints is None:
+            datapoints = int(nop // step)
+        else:
+            if datapoints > nop:
+                datapoints = int(nop // step)
 
         if verbose:
             print(f"Reading {datapoints} data points from {filename} starting at index {startind} with step {step}")

@@ -3,7 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from glob import glob
 from scipy.optimize import curve_fit
-from scipy.signal import find_peaks
+
+from scipy.signal import find_peaks, peak_widths
 import re
 from RaTag.scripts.wfm2read_fast import wfm2read  # type: ignore
 
@@ -515,4 +516,3 @@ class FieldScanAnalyzer:
             a.set(xlabel='$E_{drift}$ (V/cm)', ylabel='Mean S2 Area (mV$\cdot$us)', 
                 title='Mean S2 Area vs $E_{drift}$ (95% CI)')
         return ax
-
