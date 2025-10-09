@@ -143,7 +143,7 @@ def wfm2read(filename, datapoints=None, step=1, startind=0, verbose=False):
         Nframes = info['N']
         pts_per_frame = nop_all if Nframes > 0 else nop_all
 
-        print(f'len V = {nop_all}, Nframes = {Nframes}, pts_per_frame = {pts_per_frame}')
+        # print(f'len V = {nop_all}, Nframes = {Nframes}, pts_per_frame = {pts_per_frame}')
         if  Nframes > 1:
             # interpret fractional step as "read all frames"
             datapoints = nop_all * Nframes
@@ -164,7 +164,7 @@ def wfm2read(filename, datapoints=None, step=1, startind=0, verbose=False):
         
         if Nframes > 1:
             points_per_frame = datapoints // Nframes
-            print(f"Reshaping V to ({Nframes}, {points_per_frame})")
+            # print(f"Reshaping V to ({Nframes}, {points_per_frame})")
             y = y.reshape((Nframes, -1))
             t = t[:points_per_frame]
 
