@@ -1,150 +1,198 @@
 from scipy.signal import find_peaks, peak_widths
+from pathlib import Path
+import numpy as np
+import matplotlib.pyplot as plt
+from typing import Callable, List, Dict
+from .datatypes import PMTWaveform, SetPmt, Run, XRayEvent, XRayResults
+from .config import IntegrationConfig
+from .dataIO import iter_waveforms, store_xray_results
+from .units import s_to_us, V_to_mV
+from .transformations import *
+
 # -----
 # --- Signal classification functions for single waveforms
 
-def detect_s2_candidates(V, t, baseline_region=None, peak_thresh_factor=5):
-    # V: 1D array, t in microseconds per sample
-    if baseline_region is None:
-        # pick a baseline region early in V (or compute global)
-        baseline = V[:int(0.2*len(V))]
-    else:
-        baseline = V[baseline_region[0]:baseline_region[1]]
-    b_mean = baseline.mean()
-    b_std  = baseline.std()
-    thresh = b_mean + peak_thresh_factor * b_std
+def excessive_s2_check(wf: PMTWaveform, s2_start: float, bs_threshold: float, max_area_s2: float = 1e5, debug: bool = False ) -> tuple[bool, str]:
+    """Check if waveform baseline before S2 is acceptable."""
+    Vs2 = wf.v[wf.t >= s2_start]
+    if Vs2[Vs2 > bs_threshold].sum() > max_area_s2:
+        if debug:
+            print(f'Area above baseline before S2: {Vs2[Vs2 > bs_threshold].sum():.2e} (max allowed {max_area_s2})')
+        return False, "excessive S2 signal above baseline"
+    return True, "ok"
 
-    peaks, props = find_peaks(V, height=thresh, distance=3)  # distance in samples
-    heights = props['peak_heights']
-    widths_res = peak_widths(V, peaks, rel_height=0.5)
-    # widths_res[0] is width in samples
-    s2_list = []
-    for i, p in enumerate(peaks):
-        start = int(max(0, p - widths_res[0][i]*1.2))
-        end   = int(min(len(V)-1, p + widths_res[0][i]*1.2))
-        q = V[start:end].sum() * t   # integrated charge (V*us)
-        width_us = widths_res[0][i] * t
-        s2_list.append({'peak_index':p, 'amp':heights[i], 'start':start, 'end':end, 'width_us':width_us, 'charge':q})
-    return s2_list, b_mean, b_std
-
-def classify_event_v1(V, t, s2_list, s2_start_idx, s1_idx, params=None, flag_plot=False):
-    # params: dict of thresholds
-    if params is None:
-        params = {}
+def separation_check(wf: PMTWaveform, t_s1: float, s2_start: float,
+                     min_s2_sep: float, min_s1_sep: float) -> tuple[bool, str]:
+    """Check if waveform has sufficient separation between S1 and S2."""
+    t_thresh = wf.t[wf.v > 0] if np.any(wf.v > 0) else None
+    if t_thresh is None:
+        return False, "no signal above baseline"
     
-    after_s1 = [s for s in s2_list if s['peak_index'] > s1_idx]
-    if not after_s1: return False, "no S2 after S1"
-    # identify main S2: the first peak after s2_start_idx
-    after_drift = [s for s in after_s1 if s2_start_idx is None or s['peak_index'] > s2_start_idx]
-    if not after_drift: return False, "no S2 after S1"
-    main = max(after_drift, key=lambda s: s['charge'].sum()) # earliest main
-    # find early S2: any S2 between S1 and main
-    early_candidates = [s for s in after_s1 if s['peak_index'] < s2_start_idx]
-    # early_candidates = [s for s in s2_list if s['peak_index'] < main['peak_index']]  # Alternatively, consider all before main
-
-    if not early_candidates:
-        return False, "no early S2"
-    # early = max(early_candidates, key=lambda s: s['charge'].sum())  # largest early # No, this only works if the peaks are well joined
-    early = max(early_candidates, key=lambda s: s['end'])  # latest early
-    # compute inter-window metrics
-    inter_start = early['end']
-    inter_end   = s2_start_idx
-    # if inter_end <= inter_start:
-    #     return False, "overlapping pulses"   # Irrelevant, this can never happen with the new definition of early
-    print(f"Early S2 at {t[early['peak_index']]:.2f} us, main S2 at {t[main['peak_index']]:.2f} us")
-    inter = V[inter_start:inter_end]
-    if not inter.size:
-        return False, "no inter-window samples"
-    print(f"Inter-window: {t[inter_start]:.2f} to {t[inter_end]:.2f} us")
-    rms = inter.std()
-    maxabs = np.max(inter)
-    first_peak_drift = after_s1[0]
-    width_xray = t[inter_start] - t[first_peak_drift['start']]
-
-    # thresholds (tune on data)
-    RMS_thresh = params.get('RMS_thresh', 3 * np.std(V[:100])) 
-    MAXabs_thresh = params.get('MAXabs_thresh', np.max(V[:100]) + 2 * np.std(V[:100]))
-
-    width_thresh = params.get('width_thresh_us', 8.0) # example
-    if flag_plot:
-        
-        plt.figure()
-        t_early_candidates = [t[s['peak_index']] for s in early_candidates]
-        v_early_candidates = [V[s['peak_index']] for s in early_candidates]
-        t_after_drift = [t[s['peak_index']] for s in after_drift]
-        v_after_drift = [V[s['peak_index']] for s in after_drift]
-
-        plt.plot(t_after_drift, v_after_drift, 'ro', label='after drift candidates')
-        plt.plot(t_early_candidates, v_early_candidates, 'mo', label='early S2 candidates')
-        plt.plot(t, V, label="Waveform")
-        plt.axvline(t[s1_idx], color='k', label="S1")
-        plt.axvline(t[first_peak_drift['peak_index']], color='r', label="First after S1")
-        # plt.axvline(t[early['peak_index']], color='g', label="Early S2")
-        # plt.axvline(t[main['peak_index']], color='r', label="Main S2")
-        plt.axvline(t[inter_start], color='m', ls='--', label="Inter start")
-        plt.axvline(t[inter_end], color='m', ls='--', label="Inter end")
-        plt.gcf().legend()
-
-    # apply cuts
-    if rms >  RMS_thresh: return False, f"inter RMS too large {rms:.3e}"
-    if maxabs >  MAXabs_thresh: return False, f"inter maxabs too large {maxabs:.3e}"
+    t_pre_s2 = s2_start - t_thresh[-1]
+    t_post_s1 = t_thresh[0] - t_s1
     
-    if width_xray > width_thresh: return False, "early pulse too wide"
-    
-    # multiplicity check
-    # n_extra_peaks = sum(1 for s in s2_list if s['peak_index']>inter_start and s['peak_index']<inter_end)
-    # if n_extra_peaks > 0:
-    #     return False, "extra peaks in inter-window"
-    return True, "passed cuts"
+    if not (t_pre_s2 > min_s2_sep and t_post_s1 > min_s1_sep):
+        return False, f"insufficient separation (t_pre_s2={t_pre_s2:.2f}), (t_post_s1={t_post_s1:.2f})"
+    return True, "ok"
 
-def classify_event_v2(V, t, t_s1, s2_start, bs_threshold=5e-4,
-                       min_s2_sep=3.0, min_s1_sep = 2.0, flag_plot=False):
-    """Classify event based on inter-window noise between S1 and S2.
-    Args:
-        V: waveform values (1D array)
-        t: time values (1D array, same length as V), in microseconds
-        t_s1: time of S1 pulse (float, in microseconds)
-        t_s2_start: time of start of S2 pulse (float, in microseconds)
-        bs_threshold: baseline threshold to consider signal significant (float)
-        min_t_inter: minimum required inter-window time (float, in microseconds)
-        flag_plot: if True, generate diagnostic plot (bool)
-    Returns:
-        (bool, str): (True, reason) if event passes, (False, reason) if rejected
+def xray_event_pipeline(wf: PMTWaveform,
+                        t_s1: float,
+                        s2_start: float,
+                        bs_threshold: float = 0.5,
+                        max_area_s2: float = 1e5,
+                        min_s2_sep: float = 1.0,
+                        min_s1_sep: float = 0.5,
+                        n_pedestal: int = 200,
+                        ma_window: int = 10,
+                        dt: float = 2e-4,
+                        integrator: Callable[[PMTWaveform, float], np.ndarray] = integrate_trapz,
+                        debug: bool = False
+                        ) -> XRayEvent:
+    """Classify X-ray-like events in a waveform."""
+    wf_id = Path(wf.source).stem
+
+    # --- shared preprocessing ---
+    wf = t_in_us(wf)
+    wf = v_in_mV(wf)
+    wf = subtract_pedestal(wf, n_points=n_pedestal)
+    # --- baseline check ---
+    passed, reason = excessive_s2_check(wf, s2_start, bs_threshold, max_area_s2=max_area_s2, debug=debug)
+    if not passed:
+        return XRayEvent(wf_id=wf_id, accepted=False, reason=reason)
+    
+    wf = extract_window(wf, t_s1, s2_start)
+    wf = moving_average(wf, window=ma_window)
+    wf = threshold_clip(wf, threshold=bs_threshold)
+    # return wf
+
+    # --- MAIN FEATURE: separation check ---
+    passed, reason = separation_check(wf, t_s1, s2_start, min_s2_sep, min_s1_sep)
+    if not passed:
+        return XRayEvent(wf_id=wf_id, accepted=False, reason=reason)
+    
+    # --- integrate area ---
+    area = float(integrator(wf, dt=dt))
+    area = np.array(area)
+    area = area.flatten()
+
+    return XRayEvent(wf_id=wf_id, accepted=True, reason="ok", area=area)
+
+# -----
+# --- Set-level S1 estimation and X-ray classification
+# -------------------------------------------------
+def classify_xrays_set(set_pmt: SetPmt,
+                       t_s1: float,
+                       s2_start: float,
+                       bs_threshold: float = 0.5,
+                       max_area_s2: float = 1e5,
+                       min_s2_sep: float = 1.0,
+                       min_s1_sep: float = 0.5,
+                       n_pedestal: int = 200,
+                       ma_window: int = 10,
+                       dt: float = 2e-4,
+                       integrator: Callable[[PMTWaveform, float], np.ndarray] = integrate_trapz,
+                       ) -> XRayResults:
     """
-    
-    Vdrift = V[(t > t_s1) & (t < s2_start)]
-    tdrift = t[(t > t_s1) & (t < s2_start)]
+    Apply the X-ray event pipeline to all waveforms in a set.
 
-    Vdrift_bs = Vdrift[Vdrift > bs_threshold]
-    tdrift_bs = tdrift[Vdrift > bs_threshold]
-    if len(tdrift_bs) == 0:
-        # print("False: No drift samples above baseline")
-        return False, "no drift samples above baseline", (tdrift, Vdrift)
+    Args:
+        set_pmt: Measurement set (lazy list of waveforms).
+        t_s1: S1 time [µs].
+        s2_start: expected S2 start [µs].
+        bs_threshold: baseline threshold [mV].
+        min_s2_sep: minimum required separation before S2 [µs].
+        min_s1_sep: minimum required separation after S1 [µs].
+        n_pedestal: number of samples for pedestal subtraction.
+        ma_window: moving average window length (samples).
+        dt: integration timestep [µs].
+        integrator: function to perform integration (default trapezoidal).
 
-    Vs2 = V[t >= s2_start]
-    Vs2_bs = Vs2[Vs2 > bs_threshold]
-    # print(f"S2 signal above baseline: {Vs2_bs.sum():.3e}")
-    if Vs2_bs.sum() > 1e5:
-        # print('Detected alpha-like S2 signal above baseline, possible S1 in drift')
-        return False, "excessive S2 signal above baseline", (tdrift, Vdrift)
-    
-    # time before S2
-    t_pre_s2 = s2_start - tdrift_bs[-1]
-    t_post_s1 = tdrift_bs[0] - t_s1
-    if flag_plot:
-        plt.figure()
-        plt.plot(t, V, label="Waveform")
-        plt.axvline(t_s1, color='k', label="S1")
-        plt.axvline(s2_start, color='r', label="S2 start")
-        plt.plot(tdrift_bs, Vdrift_bs, lw=2, label="Drift above baseline")
-        # plt.axvline(tdrift_bs[-1], color='m', ls='--', label="Last drift above baseline")
-        plt.gcf().legend()
-        plt.title(f"t_pre_s2 = {t_pre_s2:.2f} us")
+    Returns:
+        XRayResults with classification results for each waveform.
+    """
+    events: list[XRayEvent] = []
 
-    if (t_pre_s2 > min_s2_sep) & (t_post_s1 > min_s1_sep):
-        # print('Ok')
-        return True, f"t_pre_s2 = {t_pre_s2:.2f} us > {min_s2_sep} us", (tdrift, Vdrift)
-    else:
-        # print(f"False: t_pre_s2 = {t_pre_s2:.2f} us <= {min_t_pre_s2} us")
-        return False, f"t_pre_s2 = {t_pre_s2:.2f} us <= {min_s2_sep} us", (tdrift, Vdrift)
+    for idx, wf in enumerate(iter_waveforms(set_pmt)):
+        try:
+            event = xray_event_pipeline(
+                wf,
+                t_s1=t_s1,
+                s2_start=s2_start,
+                bs_threshold=bs_threshold,
+                max_area_s2=max_area_s2,
+                min_s2_sep=min_s2_sep,
+                min_s1_sep=min_s1_sep,
+                n_pedestal=n_pedestal,
+                ma_window=ma_window,
+                dt=dt,
+                integrator=integrator,
+            )
+            events.append(event)
+        except Exception as e:
+            # Mark waveform as failed classification
+            events.append(XRayEvent(
+                wf_id=str(idx),
+                accepted=False,
+                reason=f"error: {e}",
+            ))
 
-    
+    xresults = XRayResults(
+        set_id=set_pmt.source_dir,
+        events=events,
+        params={
+            "t_s1": t_s1,
+            "s2_start": s2_start,
+            "bs_threshold": bs_threshold,
+            "min_s2_sep": min_s2_sep,
+            "min_s1_sep": min_s1_sep,
+            "n_pedestal": n_pedestal,
+            "ma_window": ma_window,
+            "dt": dt,
+            "integrator": integrator.__name__,
+            "set_metadata": set_pmt.metadata,
+        }
+    )
+    store_xray_results(xresults)
+    return xresults
+# -------------------------------------------------
+# ---- Run-level x-ray integration 
+# -------------------------------------------------
+
+def classify_xrays_run(run: Run, ts2_tol = -2.7, range_sets: slice = None,
+                     config: IntegrationConfig = IntegrationConfig() ) -> Dict[str, XRayResults]:
+    """
+    Classify X-ray events for all sets in a Run.
+    Args:
+        run: Run object with measurements populated.
+        range_sets: slice to select subset of sets to process.
+        kwargs: passed to classify_xrays_set.
+    Returns:
+        Dict mapping set_id -> XRayResults.
+    """
+    results = {}
+    sets_to_process = run.sets[range_sets] if range_sets is not None else run.sets
+
+    for set_pmt in sets_to_process:
+        # Preconditions: set must already have t_s1 and time_drift
+        if "t_s1" not in set_pmt.metadata or set_pmt.time_drift is None:
+            raise ValueError(f"Set {set_pmt.source_dir} missing t_s1 or time_drift")
+
+        t_s1 = set_pmt.metadata["t_s1"]   # µs
+        t_drift = set_pmt.time_drift      # µs
+        t_start = t_s1 + t_drift + ts2_tol # ad-hoc offset
+        # t_end = t_start + run.width_s2   # Not needed in the x-ray pipeline here
+
+        print(f"Processing x-rays in set {set_pmt.source_dir} in drift window: {(t_s1, t_start)}")
+
+
+        
+        results[set_pmt.source_dir.name] = classify_xrays_set(set_pmt, t_s1=t_s1, s2_start=t_start,
+                                                             bs_threshold=config.bs_threshold,
+                                                             max_area_s2=config.max_area_s2,
+                                                             min_s2_sep=config.min_s2_sep,
+                                                             min_s1_sep=config.min_s1_sep,
+                                                             n_pedestal=config.n_pedestal,
+                                                            ma_window=config.ma_window,
+                                                             dt=config.dt,
+                                                             integrator=config.integrator)
+    return results
