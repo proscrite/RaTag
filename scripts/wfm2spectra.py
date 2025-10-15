@@ -48,7 +48,8 @@ def compute_analog_path(path):
         peaks = analyse_analog_file(file)
         all_peaks.append(peaks)
     return np.concatenate(all_peaks)
-def get_baseline(V, t):
+
+def get_baseline(V):
     """Estimate the baseline of the waveform."""
     return np.mean(V[:200])
 
@@ -57,6 +58,39 @@ def alpha_peak(file):
     V, t = wf[0], wf[1]
     bs = get_baseline(V, t)
     return V.max() - bs
+
+def process_alpha_waveforms(path_sca: str) -> np.ndarray:
+    """
+    Process a list of waveform files and extract peak voltages.
+    
+    Parameters:
+    -----------
+    path_sca : str
+        Path to the directory containing waveform files
+
+    Returns:
+    --------
+    numpy.ndarray
+        Array of peak voltages (baseline subtracted)
+    """
+    peak_volts = []
+    
+    file_list = sorted(glob(path_sca + '/*.wfm'))
+    for f in file_list:
+        wf = wfm2read(f, verbose=False)
+        V, t = wf[0], wf[1]
+        
+        if len(V.shape) > 1:
+            # Multiple waveforms in the file
+            for v in V:
+                bs = get_baseline(v)
+                peak = v.max() - bs
+                peak_volts.append(peak)
+        else:
+            # Single waveform in the file
+            peak_volts.append(alpha_peak(f))
+    
+    return np.array(peak_volts)
 
 if __name__ == "__main__":
     
