@@ -51,13 +51,24 @@ def compute_analog_path(path):
 
 def get_baseline(V):
     """Estimate the baseline of the waveform."""
-    return np.mean(V[:200])
+    return np.mean(V[:npoints])
 
-def alpha_peak(file):
+def alpha_peak(V, npoints_bs = 200):
+    bs = get_baseline(V, npoints_bs)
+    V = V - bs
+    return V.max() / 1.058
+
+def analyze_file_source(file):
     wf = wfm2read(file)
     V, t = wf[0], wf[1]
-    bs = get_baseline(V, t)
-    return V.max() - bs
+    peaks = []
+    if len(V.shape) > 1:
+        for v in V:
+            peaks.append(alpha_peak(v))
+    else:   
+        peaks.append(alpha_peak(V))
+    peaks = np.array(peaks)
+    return peaks
 
 def process_alpha_waveforms(path_sca: str) -> np.ndarray:
     """
