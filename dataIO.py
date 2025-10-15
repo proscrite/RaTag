@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Union, Iterator
 import re
 
-from .datatypes import Waveform, SetPmt, S2Areas, PMTWaveform
+from .datatypes import Waveform, SetPmt, S2Areas, PMTWaveform, XRayResults
 
 from RaTag.scripts.wfm2read_fast import wfm2read # type: ignore
 PathLike = Union[str, Path]
@@ -12,7 +12,13 @@ def load_wfm(path: PathLike) -> Waveform:
     """Load waveform from a .wfm file storing (t, -v)."""
     wfm = wfm2read(str(path))
     t, v = wfm[1], -wfm[0]  # Invert signal polarity
-    return Waveform(t, v, source=str(path))
+    if len(v.shape) > 1:  # FastFrame format
+        ff = True
+        nframes = v.shape[0]
+    else:
+        ff = False
+        nframes = 1
+    return Waveform(t, v, source=str(path), ff=ff, nframes=nframes)
 
 # --- Lazy loader ---
 def iter_waveforms(set_pmt: SetPmt) -> Iterator[PMTWaveform]:
@@ -69,8 +75,14 @@ def load_s2area(set_pmt: SetPmt) -> S2Areas:
     path = set_pmt.source_dir / "s2_areas.npy"
     areas = np.load(path)
     return S2Areas(
-        set_id=set_pmt.source_dir.name,
+        source_dir=set_pmt.source_dir,
         areas=areas,
         method="loaded_from_npy",
         params={"set_metadata": set_pmt.metadata}
     )
+
+def store_xray_results(xr: XRayResults, path: PathLike = None) -> None:
+    """Store XRayResults in .npy file inside the set's directory."""
+    if path is None:
+        path = xr.set_id / "xray_results.npy"
+    np.save(path, xr)

@@ -1,4 +1,9 @@
+import numpy as np
 from dataclasses import dataclass
+from typing import Callable
+from .transformations import integrate_trapz
+from .datatypes import PMTWaveform
+
 # -------------------------------
 # General analysis thresholds
 # -------------------------------
@@ -23,10 +28,14 @@ DRIFT_FIELDS = [35, 50, 70, 107, 142, 178, 214, 250, 285, 321, 357, 428]  # V/cm
 
 @dataclass(frozen=True)
 class IntegrationConfig:
-    n_pedestal: int = 2000
-    ma_window: int = 9
-    threshold: float = 0.8
-    dt: float = 2e-4   # default unless overridden by wf spacing
+    bs_threshold: float = 0.8          # (mV)  -- min baseline voltage to consider
+    max_area_s2: float = 1e5          # (mV·µs) -- max area for S2 window
+    min_s2_sep: float = 1.0           # (µs)   -- min separation before S2
+    min_s1_sep: float = 1.0           # (µs)   -- min separation after S1
+    n_pedestal: int = 2000            # number of pre-trigger samples for pedestal
+    ma_window: int = 9                # moving average window length (samples)
+    dt: float = 2e-4                  # default unless overridden by wf spacing
+    integrator: Callable[[PMTWaveform, float], np.ndarray] = integrate_trapz
 
 
 @dataclass(frozen=True)

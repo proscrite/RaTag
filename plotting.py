@@ -10,6 +10,33 @@ from .datatypes import PMTWaveform, SetPmt, RejectionLog, S2Areas, Run
 from .dataIO import load_wfm, iter_waveforms
 from .units import s_to_us, V_to_mV
 
+def plot_waveform(wf: PMTWaveform, ax=None, title: str = "Waveform"):
+    """Plot a single waveform."""
+    if ax is None:
+        fig, ax = plt.subplots()
+
+    if wf.ff:
+        print("Averaging FastFrame waveform for plotting")
+        # Average all frames for FastFrame
+        V = wf.v.mean(axis=0)
+        t = wf.t
+    else:
+        t, V = wf.t, wf.v
+    
+    if wf.t[1] - wf.t[0] < 1e-7:  # Hardcoded threshold to distinguish s vs µs
+        print("Converting time to µs for better readability")
+        t = s_to_us(t)  # convert to µs
+        V = V_to_mV(V)  # convert to mV
+    
+    wf_index = Path(wf.source).name.replace(".wfm", "").replace("Wfm", "")
+    title = f"{title} {wf_index}"
+    if wf.ff:
+        title += f" (Average of {wf.nframes} frames)"
+    
+    ax.set(title=title, xlabel="Time (µs)", ylabel="Signal (mV)")
+    ax.plot(t, V)
+    return ax
+
 def plot_waveform_with_cuts(wf: PMTWaveform, set_pmt: SetPmt,
                             width_s2: float):
     t, V = wf.t, wf.v
@@ -57,32 +84,43 @@ def plot_cut_results(wf: PMTWaveform, set_pmt: SetPmt, logs: list[RejectionLog],
     ax.legend()
     return ax
 
-def plot_winS2_wf(wf: PMTWaveform, t_s1: float, time_drift: float, width_s2: float,  ts2_tol: float = 0, ax=None):
+def plot_winS2_wf(wf: PMTWaveform, t_s1: float, time_drift: float, width_s2: float, ts2_tol: float = 0, ax=None):
     """Plot waveform with S1 and S2 window markers.
+    For FastFrame waveforms, plots the average of all frames.
+    
     Args:
         wf: PMTWaveform to plot.
         t_s1: S1 time in µs.
         time_drift: Drift time in µs.
         width_s2: Width of S2 window in µs.
         ts2_tol: Optional tolerance to add to S2 start time in µs.
-        ax: Optional matplotlib Axes to plot on."""
+        ax: Optional matplotlib Axes to plot on.
+    """
     if ax is None:
         fig, ax = plt.subplots()
 
-    t, V = wf.t, wf.v
+    if wf.ff:
+        # Average all frames for FastFrame
+        V = wf.v.mean(axis=0)
+        t = wf.t
+    else:
+        t, V = wf.t, wf.v
     t = s_to_us(t)  # convert to µs
     V = V_to_mV(V)  # convert to mV
+    
     wf_index = Path(wf.source).name.replace(".wfm", "").replace("Wfm", "")
-    ax.set(title=f"Waveform {wf_index}",
-           xlabel="Time (µs)", ylabel="Signal (mV)")
+    title = f"Waveform {wf_index}"
+    if wf.ff:
+        title += f" (Average of {wf.nframes} frames)"
+    
+    ax.set(title=title, xlabel="Time (µs)", ylabel="Signal (mV)")
     ax.plot(t, V)
 
     s2_start = t_s1 + time_drift + ts2_tol
     s2_end = s2_start + width_s2
     ax.axvline(t_s1, color="k", ls="--", label="S1", lw=0.5, zorder=-1)
-    ax.axvline(s2_start, color="m", ls="--", lw=0.5, zorder=-1 )
-    ax.axvline(s2_end, color="r", ls="--" , lw=0.5, zorder=-1)
-    # ymin, ymax = ax.get_ylim()
+    ax.axvline(s2_start, color="m", ls="--", lw=0.5, zorder=-1)
+    ax.axvline(s2_end, color="r", ls="--", lw=0.5, zorder=-1)
     ax.fill_betweenx(ax.get_ylim(), s2_start, s2_end, color='m', alpha=0.3, label="S2 window")
     ax.legend()
 

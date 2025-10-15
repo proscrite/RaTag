@@ -5,7 +5,7 @@ from typing import List
 from scipy.signal import find_peaks
 import numpy as np
 
-from .dataIO import parse_subdir_name
+from .dataIO import load_wfm, parse_subdir_name
 from .datatypes import SetPmt, Run
 from .units import *
 from .transport import compute_reduced_field, redfield_to_speed
@@ -93,25 +93,39 @@ def set_transport_properties(set_pmt: SetPmt,
 
 
 def _find_s1_in_batches(set_pmt: SetPmt,
-                             n_batches: int = 5,
-                             batch_size: int = 20,
-                             height_S1: float = 0.001,
-                             min_distance: int = 200) -> List[float]:
+                        n_batches: int = 5,
+                        batch_size: int = 20,
+                        height_S1: float = 0.001,
+                        min_distance: int = 200) -> List[float]:
     """Helper function to find S1 times in batches of waveforms.
+    For FastFrame files, processes multiple files with frames.
+    For single frame files, processes batches of files.
     
     Returns:
         List of S1 peak times in microseconds
     """
     s1_times = []
-    batch_iter = batch_filenames(set_pmt.filenames, batch_size)
-
-    for batch in itertools.islice(batch_iter, n_batches):
-        t_s, V_v = average_waveform([set_pmt.source_dir / fn for fn in batch])
+    first_wf = load_wfm(set_pmt.source_dir / set_pmt.filenames[0])
+    
+    def process_waveform(t_s, V_v):
+        """Helper to process a single averaged waveform"""
         t_us = s_to_us(t_s)
         V_mV = V_to_mV(V_v)
         idx = find_s1_in_avg(t_us, V_mV, height_S1, min_distance)
         if idx is not None:
             s1_times.append(t_us[idx])
+
+    if first_wf.ff:
+        # For FastFrame files, process n_batches files
+        for i in range(min(n_batches, len(set_pmt.filenames))):
+            t_s, V_v = average_waveform([set_pmt.source_dir / set_pmt.filenames[i]])
+            process_waveform(t_s, V_v)
+    else:
+        # For single frames, process batches
+        batch_iter = batch_filenames(set_pmt.filenames, batch_size)
+        for batch in itertools.islice(batch_iter, n_batches):
+            t_s, V_v = average_waveform([set_pmt.source_dir / fn for fn in batch])
+            process_waveform(t_s, V_v)
 
     if not s1_times:
         raise ValueError("No S1 peaks found in batches")
@@ -153,6 +167,7 @@ def estimate_s2_window_from_batches(set_pmt: SetPmt,
         raise ValueError("t_s1 must be estimated first")
 
     for batch in batch_filenames(set_pmt.filenames, batch_size):
+        
         t, V = average_waveform([set_pmt.source_dir / fn for fn in batch],
                                 baseline_window)
 

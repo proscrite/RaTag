@@ -4,7 +4,7 @@ import numpy as np
 from lmfit.models import GaussianModel # type: ignore
 import matplotlib.pyplot as plt # type: ignore
 
-from .dataIO import iter_waveforms
+from .dataIO import iter_waveforms, store_s2area
 from .datatypes import SetPmt, S2Areas, Run
 from .transformations import s2_area_pipeline
 from .config import IntegrationConfig, FitConfig
@@ -14,7 +14,7 @@ def integrate_set_s2(set_pmt: SetPmt,
                      n_pedestal: int = 2000,
                      ma_window: int = 9,
                      dt: float = 2e-4,
-                     threshold: float = 0.8) -> S2Areas:
+                     bs_threshold: float = 0.8) -> S2Areas:
     
     """
     Apply the S2 area pipeline to all waveforms in a set.
@@ -24,7 +24,7 @@ def integrate_set_s2(set_pmt: SetPmt,
         t_window: (t_start, t_end) defining S2 window in seconds.
         n_pedestal: number of samples to average for pedestal subtraction.
         ma_window: moving average window length (samples).
-        threshold: threshold for clipping voltages above baseline.
+        bs_threshold: threshold for clipping voltages above baseline.
         dt: time step [µs] for Riemann integration.
 
     Returns:
@@ -37,7 +37,7 @@ def integrate_set_s2(set_pmt: SetPmt,
             area = s2_area_pipeline(wf, t_window,
                                     n_pedestal=n_pedestal,
                                     ma_window=ma_window,
-                                    threshold=threshold,
+                                    bs_threshold=bs_threshold,
                                     dt=dt)
             areas.append(area)
         except Exception as e:
@@ -45,26 +45,30 @@ def integrate_set_s2(set_pmt: SetPmt,
             # (e.g., append np.nan to keep indexing aligned)
             areas.append(np.nan)
 
-    return S2Areas(
+    areas = np.array(areas)
+    areas = areas.flatten()  # Ensure 1D array (for FastFrame, etc.)
+    s2areas = S2Areas(
         source_dir=set_pmt.source_dir,
-        areas=np.array(areas),
+        areas=areas,
         method="s2_area_pipeline",
         params={
             "t_window": t_window,
             "n_pedestal": n_pedestal,
             "ma_window": ma_window,
-            "threshold": threshold,
+            "bs_threshold": bs_threshold,
             "dt": dt,
             "width_s2": t_window[1] - t_window[0],
             "set_metadata": set_pmt.metadata,
             }
         )
+    store_s2area(s2areas)  # Store immediately
+    return s2areas
 
 # -------------------------------------------------
 # Run-level integration
 # -------------------------------------------------
-def integrate_run_s2(run: Run, ts2_tol = 2.7,
-                     config: IntegrationConfig = IntegrationConfig() ) -> Dict[str, S2Areas]:
+def integrate_run_s2(run: Run, ts2_tol = -2.7, range_sets: slice = None,
+                     integration_config: IntegrationConfig = IntegrationConfig() ) -> Dict[str, S2Areas]:
     """
     Integrate S2 areas for all sets in a Run.
 
@@ -76,8 +80,9 @@ def integrate_run_s2(run: Run, ts2_tol = 2.7,
         Dict mapping set_id -> S2Areas.
     """
     results = {}
+    sets_to_process = run.sets[range_sets] if range_sets is not None else run.sets
 
-    for set_pmt in run.sets:
+    for set_pmt in sets_to_process:
         # Preconditions: set must already have t_s1 and time_drift
         if "t_s1" not in set_pmt.metadata or set_pmt.time_drift is None:
             raise ValueError(f"Set {set_pmt.source_dir} missing t_s1 or time_drift")
@@ -92,10 +97,10 @@ def integrate_run_s2(run: Run, ts2_tol = 2.7,
 
         
         results[set_pmt.source_dir.name] = integrate_set_s2(set_pmt, t_window, 
-                                                            n_pedestal=config.n_pedestal,
-                                                           ma_window=config.ma_window,
-                                                           threshold=config.threshold,
-                                                           dt=config.dt)
+                                                            n_pedestal=integration_config.n_pedestal,
+                                                           ma_window=integration_config.ma_window,
+                                                           bs_threshold=integration_config.bs_threshold,
+                                                           dt=integration_config.dt)
 
     return results
 
@@ -157,7 +162,7 @@ def fit_set_s2(s2: S2Areas,
 # -------------------------------------------------
 # Run-level Gaussian fit
 # -------------------------------------------------
-def fit_run_s2(areas: Dict[str, S2Areas], config: FitConfig = FitConfig()) -> Dict[str, S2Areas]:
+def fit_run_s2(areas: Dict[str, S2Areas], fit_config: FitConfig = FitConfig()) -> Dict[str, S2Areas]:
     """
     Apply Gaussian fits across all sets in a run.
 
@@ -168,8 +173,8 @@ def fit_run_s2(areas: Dict[str, S2Areas], config: FitConfig = FitConfig()) -> Di
     Returns:
         Dict of {set_id: S2Areas} with fit results.
     """
-    return {sid: fit_set_s2(s2, 
-                            bin_cuts=config.bin_cuts,
-                            nbins=config.nbins,
-                            exclude_index=config.exclude_index)
-                              for sid, s2 in areas.items()}
+    return {sid: fit_set_s2(s2, bin_cuts=fit_config.bin_cuts,
+                               nbins=fit_config.nbins,
+                               exclude_index=fit_config.exclude_index)
+                               for sid, s2 in areas.items() }
+                            

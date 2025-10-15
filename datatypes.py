@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Callable, Optional, Iterator, Any, List
+from typing import Callable, Optional, Optional, Any, List
 import numpy as np
 
 from typing import Optional
@@ -17,32 +17,20 @@ class Waveform:
     t: np.ndarray          # time axis
     v: np.ndarray          # voltage (signal)
     source: Optional[str]  # filename or run ID (for traceability)
+    ff: bool = False  # whether loaded from FastFrames
+    nframes: int = 1
 
     def __len__(self):
         return len(self.t)
-
-    def slice(self, t_min: float, t_max: float) -> "Waveform":
-        """Return a sub-waveform within [t_min, t_max]."""
-        mask = (self.t >= t_min) & (self.t <= t_max)
-        return Waveform(self.t[mask], self.v[mask], source=self.source)
-
-    def baseline(self, t_min: float, t_max: float) -> float:
-        """Compute baseline average in [t_min, t_max]."""
-        return self.slice(t_min, t_max).v.mean()
-
-    def area(self, t_min: float, t_max: float) -> float:
-        """Compute area under the curve (trapezoid)."""
-        w = self.slice(t_min, t_max)
-        return np.trapz(w.v, w.t)
+    
+    def __sizeof__(self):
+        if self.ff:
+            return self.v.shape
     
     def plot(self, ax=None, **kwargs):
         """Plot waveform."""
-        if ax is None:
-            ax = plt.gca()
-        ax.plot(self.t, self.v, **kwargs)
-        ax.set(xlabel='Time (µs)', ylabel='Signal (V)', title=Path(self.source).name if self.source else 'Waveform')
-        ax.xaxis.set_major_formatter(ScalarFormatter(useMathText=True))
-        ax.ticklabel_format(style='sci', axis='x', scilimits=(-6, -6))
+        from .plotting import plot_waveform
+        plot_waveform(self, ax=ax, **kwargs)
         return ax
 
 
@@ -152,3 +140,19 @@ class RejectionLog:
     rejected: list[int]
     reason: str = ""
 
+# -------------------------------
+# X-ray event identification
+# -------------------------------
+
+@dataclass
+class XRayEvent:
+    wf_id: str
+    accepted: bool
+    reason: str
+    area: float = None
+
+@dataclass
+class XRayResults:
+    set_id: str
+    events: list[XRayEvent]
+    params: dict[str, Any]
