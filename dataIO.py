@@ -1,6 +1,6 @@
 import numpy as np
 from pathlib import Path
-from typing import Union, Iterator
+from typing import Union, Iterator, Optional
 import re
 import json
 
@@ -77,20 +77,23 @@ def parse_filename(fname: str) -> dict:
             out["channel"] = int(m.group(2))
     return out
 
-def store_s2area(s2: S2Areas) -> None:
+def store_s2area(s2: S2Areas, set_pmt: Optional[SetPmt] = None) -> None:
     """
-    Store S2Areas object to disk, including all fit results.
+    Store S2Areas object to disk, including all fit results and set metadata.
     
     Saves two files:
     - s2_areas.npy: Raw area array for quick access
-    - s2_results.json: Complete metadata including fit results
+    - s2_results.json: Complete metadata including fit results and analysis parameters
+    
+    Args:
+        s2: S2Areas object with integration and fit results
+        set_pmt: Optional SetPmt to extract complete metadata from
     """
     # Save raw areas as numpy array (for backward compatibility)
     path_areas = s2.source_dir / "s2_areas.npy"
     np.save(path_areas, s2.areas)
     
-    # Save complete results as JSON
-    path_results = s2.source_dir / "s2_results.json"
+    # Build complete results dictionary
     results_dict = {
         "method": s2.method,
         "params": s2.params,
@@ -98,9 +101,28 @@ def store_s2area(s2: S2Areas) -> None:
         "sigma": float(s2.sigma) if s2.sigma is not None else None,
         "ci95": float(s2.ci95) if s2.ci95 is not None else None,
         "fit_success": s2.fit_success,
-        # Note: fit_result (lmfit ModelResult) is not JSON-serializable
-        # If needed for reload, consider using pickle for fit_result separately
     }
+    
+    # Add set metadata if provided
+    if set_pmt is not None:
+        results_dict["set_metadata"] = {
+            "t_s1": set_pmt.metadata.get("t_s1"),
+            "t_s1_std": set_pmt.metadata.get("t_s1_std"),
+            "t_s2_start_mean": set_pmt.metadata.get("t_s2_start_mean"),
+            "t_s2_start_std": set_pmt.metadata.get("t_s2_start_std"),
+            "t_s2_end_mean": set_pmt.metadata.get("t_s2_end_mean"),
+            "t_s2_end_std": set_pmt.metadata.get("t_s2_end_std"),
+            "s2_duration_mean": set_pmt.metadata.get("s2_duration_mean"),
+            "s2_duration_std": set_pmt.metadata.get("s2_duration_std"),
+            "drift_field": float(set_pmt.drift_field) if set_pmt.drift_field is not None else None,
+            "EL_field": float(set_pmt.EL_field) if set_pmt.EL_field is not None else None,
+            "time_drift": float(set_pmt.time_drift) if set_pmt.time_drift is not None else None,
+            "speed_drift": float(set_pmt.speed_drift) if set_pmt.speed_drift is not None else None,
+            "red_drift_field": float(set_pmt.red_drift_field) if set_pmt.red_drift_field is not None else None,
+        }
+    
+    # Save complete results as JSON
+    path_results = s2.source_dir / "s2_results.json"
     with open(path_results, "w") as f:
         json.dump(results_dict, f, indent=2)
 
@@ -144,14 +166,14 @@ def load_s2area(set_pmt: SetPmt) -> S2Areas:
             params={"set_metadata": set_pmt.metadata}
         )
 
-def store_xray_results(xr: XRayResults, path: PathLike = None) -> None:
+def store_xray_results(xr: XRayResults, path: Optional[PathLike] = None) -> None:
     """Store XRayResults in .npy file inside the set's directory."""
     if path is None:
         path = xr.set_id / "xray_results.npy"
     np.save(path, xr.events)
 
 
-def store_xrayset(xrays: XRayResults, outdir: Path = None) -> None:
+def store_xrayset(xrays: XRayResults, outdir: Optional[Path] = None) -> None:
     """
     Store results of X-ray classification.
 
@@ -227,4 +249,54 @@ def load_xray_results(run: Run) -> np.ndarray:
     
     # Flatten all areas into single array
     return np.concatenate(xray_areas)
+
+
+def store_xray_areas_combined(areas: np.ndarray, run: Run, output_dir: Optional[Path] = None) -> None:
+    """
+    Store combined X-ray areas from all sets in a run.
+    
+    Args:
+        areas: Combined X-ray areas array
+        run: Run object
+        output_dir: Directory to save to (defaults to run.root_directory)
+    """
+    if output_dir is None:
+        output_dir = run.root_directory
+    
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Save areas
+    np.save(output_dir / f"{run.run_id}_xray_areas_combined.npy", areas)
+    
+    # Save metadata
+    metadata = {
+        "run_id": run.run_id,
+        "n_areas": len(areas),
+        "sets": [s.source_dir.name for s in run.sets],
+        "mean": float(np.mean(areas)),
+        "std": float(np.std(areas)),
+    }
+    
+    with open(output_dir / f"{run.run_id}_xray_metadata.json", "w") as f:
+        json.dump(metadata, f, indent=2)
+
+
+def save_figure(fig, filename: PathLike, dpi: int = 150) -> None:
+    """
+    Save matplotlib figure to disk.
+    
+    Args:
+        fig: Matplotlib figure
+        filename: Output path
+        dpi: Resolution for raster formats
+    """
+    import matplotlib.pyplot as plt
+    
+    filename = Path(filename)
+    filename.parent.mkdir(parents=True, exist_ok=True)
+    
+    fig.savefig(filename, dpi=dpi, bbox_inches='tight')
+    plt.close(fig)
+    print(f"  → Saved: {filename}")
 
