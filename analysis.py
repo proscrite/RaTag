@@ -1,13 +1,13 @@
 from typing import Dict
 from dataclasses import replace
 import numpy as np
-from lmfit.models import GaussianModel # type: ignore
 import matplotlib.pyplot as plt # type: ignore
 
-from .dataIO import iter_waveforms, store_s2area
+from .dataIO import iter_waveforms
 from .datatypes import SetPmt, S2Areas, Run
 from .transformations import s2_area_pipeline
 from .config import IntegrationConfig, FitConfig
+from .xray_calibration import _fit_gaussian_to_histogram
 
 def integrate_set_s2(set_pmt: SetPmt,
                      t_window: tuple[float, float],
@@ -61,20 +61,26 @@ def integrate_set_s2(set_pmt: SetPmt,
             "set_metadata": set_pmt.metadata,
             }
         )
-    store_s2area(s2areas)  # Store immediately
+    # NOTE: Storage is handled by pipeline with complete set_pmt metadata
+    # Don't store here to avoid duplicate writes
     return s2areas
 
 # -------------------------------------------------
 # Run-level integration
 # -------------------------------------------------
 def integrate_run_s2(run: Run, ts2_tol = -2.7, range_sets: slice = None,
-                     integration_config: IntegrationConfig = IntegrationConfig() ) -> Dict[str, S2Areas]:
+                     integration_config: IntegrationConfig = IntegrationConfig(),
+                     use_estimated_s2_windows: bool = True) -> Dict[str, S2Areas]:
     """
     Integrate S2 areas for all sets in a Run.
 
     Args:
         run: Run object with measurements populated.
-        kwargs: passed to integrate_set_s2.
+        ts2_tol: Time tolerance before S2 window start (µs). Ignored if use_estimated_s2_windows=True.
+        range_sets: Optional slice to select subset of sets.
+        integration_config: Integration configuration parameters.
+        use_estimated_s2_windows: If True, use S2 window statistics from metadata 
+                                  (from s2_variance_run). If False, use t_drift + ts2_tol.
 
     Returns:
         Dict mapping set_id -> S2Areas.
@@ -87,14 +93,25 @@ def integrate_run_s2(run: Run, ts2_tol = -2.7, range_sets: slice = None,
         if "t_s1" not in set_pmt.metadata or set_pmt.time_drift is None:
             raise ValueError(f"Set {set_pmt.source_dir} missing t_s1 or time_drift")
 
-        t_s1 = set_pmt.metadata["t_s1"]   # µs
-        t_drift = set_pmt.time_drift      # µs
-        t_start = t_s1 + t_drift + ts2_tol
-        t_end = t_start + run.width_s2  
-        t_window = (t_start, t_end) 
-
-        print(f"Processing set {set_pmt.source_dir} with t_window: {t_window}")
-
+        # Determine S2 integration window
+        if use_estimated_s2_windows and 't_s2_start_mean' in set_pmt.metadata:
+            # Use estimated S2 timing from metadata
+            t_start = set_pmt.metadata['t_s2_start_mean']
+            t_end = set_pmt.metadata['t_s2_end_mean']
+            t_window = (t_start, t_end)
+            print(f"Processing {set_pmt.source_dir.name} with estimated S2 window: {t_window}")
+        else:
+            # Fallback to original method: t_drift + ts2_tol
+            t_s1 = set_pmt.metadata["t_s1"]   # µs
+            t_drift = set_pmt.time_drift      # µs
+            t_start = t_s1 + t_drift + ts2_tol
+            t_end = t_start + run.width_s2  
+            t_window = (t_start, t_end)
+            
+            if use_estimated_s2_windows:
+                print(f"⚠ Warning: {set_pmt.source_dir.name} missing S2 window estimates, using fallback: {t_window}")
+            else:
+                print(f"Processing {set_pmt.source_dir.name} with calculated t_window: {t_window}")
         
         results[set_pmt.source_dir.name] = integrate_set_s2(set_pmt, t_window, 
                                                             n_pedestal=integration_config.n_pedestal,
@@ -126,27 +143,24 @@ def fit_set_s2(s2: S2Areas,
     Returns:
         New S2Areas with fit results populated.
     """
+    # Check if data exists in range
     area_vec = s2.areas[(s2.areas > bin_cuts[0]) & (s2.areas < bin_cuts[1])]
     if len(area_vec) == 0:
         return replace(s2, fit_success=False)
 
-    n, bins = np.histogram(area_vec, bins=nbins)
-    cbins = 0.5 * (bins[1:] + bins[:-1])
-    n, cbins = n[exclude_index:], cbins[exclude_index:]
-
-    model = GaussianModel()
-    params = model.make_params(amplitude=n.max(),
-                               center=np.mean(cbins),
-                               sigma=np.std(cbins))
-    result = model.fit(n, params, x=cbins)
-
-    mean = result.params["center"].value
-    sigma = result.params["sigma"].value
-    stderr = result.params["center"].stderr
-    ci95 = 1.96 * stderr if stderr else None
+    # Use shared Gaussian fitting function
+    try:
+        mean, sigma, ci95, cbins, n, result = _fit_gaussian_to_histogram(
+            s2.areas, bin_cuts, nbins, exclude_index
+        )
+    except Exception as e:
+        print(f"Warning: Gaussian fit failed for {s2.source_dir.name}: {e}")
+        return replace(s2, fit_success=False)
 
     if flag_plot:
-        n, bins, _ = plt.hist(area_vec, bins=nbins, alpha=0.6, color='g', label="Data")
+        from lmfit.models import GaussianModel
+        n_full, bins, _ = plt.hist(area_vec, bins=nbins, alpha=0.6, color='g', label="Data")
+        model = GaussianModel()
         plt.plot(cbins, model.eval(x=cbins, params=result.params), 'r--', label='fit')
         plt.gca().set(xlabel = 'Area (mV·ns)', ylabel = 'Counts')
         plt.legend()
