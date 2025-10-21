@@ -20,8 +20,9 @@ from .dataIO import load_s2area, load_xray_results
 def _fit_gaussian_to_histogram(
     data: np.ndarray,
     bin_cuts: Tuple[float, float],
-    nbins: int = 100
-) -> Tuple[float, float, float, np.ndarray, np.ndarray, GaussianModel]:
+    nbins: int = 100,
+    exclude_index: int = 0
+):
     """
     Helper function to fit Gaussian to histogram data using lmfit.
     
@@ -29,9 +30,10 @@ def _fit_gaussian_to_histogram(
         data: Array of values to fit
         bin_cuts: (min, max) range for histogram
         nbins: Number of histogram bins
+        exclude_index: Number of initial bins to exclude from fit (for pedestal removal)
         
     Returns:
-        Tuple of (mean, sigma, ci95, bin_centers, bin_counts, fitted_model)
+        Tuple of (mean, sigma, ci95, bin_centers, bin_counts, fitted_model_result)
     """
     # Filter data within range
     filtered = data[(data >= bin_cuts[0]) & (data <= bin_cuts[1])]
@@ -42,13 +44,18 @@ def _fit_gaussian_to_histogram(
     # Create histogram
     n, bins = np.histogram(filtered, bins=nbins, range=bin_cuts)
     cbins = 0.5 * (bins[1:] + bins[:-1])
+    
+    # Exclude first bins if requested (for pedestal removal)
+    if exclude_index > 0:
+        n = n[exclude_index:]
+        cbins = cbins[exclude_index:]
 
     # Fit Gaussian model using lmfit
     model = GaussianModel()
     params = model.make_params(
         amplitude=n.max(),
-        center=np.mean(filtered),
-        sigma=np.std(filtered)
+        center=np.mean(cbins),  # Use bin centers after exclusion
+        sigma=np.std(cbins)
     )
     result = model.fit(n, params, x=cbins)
 
@@ -320,6 +327,27 @@ def calibrate_and_analyze(
     )
     print(f"  → X-ray mean: {A_x_mean:.3f} ± {ci95_x:.3f} mV·µs")
     print(f"  → X-ray sigma: {sigma_x:.3f} mV·µs")
+    
+    # Save X-ray histogram plot
+    if flag_plot:
+        from .dataIO import save_figure, store_xray_areas_combined
+        plots_dir = run.root_directory / "plots"
+        plots_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Store combined X-ray areas
+        store_xray_areas_combined(xray_areas, run, plots_dir)
+        
+        # Generate and save X-ray histogram plot
+        mean_fit, sigma_fit, ci95_fit, cbins, n, fit_result = _fit_gaussian_to_histogram(
+            xray_areas, xray_bin_cuts, xray_nbins
+        )
+        
+        import RaTag.plotting as plotting
+        fig_xray, _ = plotting.plot_xray_histogram(
+            xray_areas, run.run_id, xray_nbins, xray_bin_cuts,
+            fit_result=fit_result, mean=mean_fit, ci95=ci95_fit
+        )
+        save_figure(fig_xray, plots_dir / f"{run.run_id}_xray_histogram.png")
     
     # 2. Compute calibration constants
     print("\n[3/5] Computing calibration constants...")
