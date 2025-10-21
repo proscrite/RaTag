@@ -1,11 +1,14 @@
+from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Callable, Optional, Optional, Any, List
+from typing import Callable, Optional, Any, List, TYPE_CHECKING
 import numpy as np
 
-from typing import Optional
 import matplotlib.pyplot as plt     # type: ignore[import]
 from matplotlib.ticker import ScalarFormatter # type: ignore[import]
+
+if TYPE_CHECKING:
+    from typing import List as ListType
 
 # -------------------------------
 # Dataclasses for waveforms
@@ -59,7 +62,7 @@ class SiliconWaveform(Waveform):
 # Dataclasses for measurement sets
 # -------------------------------
 
-@dataclass(frozen=True)
+@dataclass(repr=False)
 class SetPmt:
 
     # --- Provenance / housekeeping ---
@@ -72,15 +75,21 @@ class SetPmt:
     EL_field: float = None           # V/cm
     red_drift_field: float = None    # reduced drift field (Td)
     red_EL_field: float = None       # reduced EL field (Td)
-    speed_drift: float  = None              # mm/us
-    time_drift: float  = None               # us
+    speed_drift: float = None        # mm/us
+    time_drift: float = None         # us
     diffusion_coefficient: float = None    # mm/√cm 
 
     # --- Cuts bookkeeping ---
-    rejection_log: list["RejectionLog"] = field(default_factory=list)
+    rejection_log: List[Any] = field(default_factory=list)
 
     def __len__(self):
         return len(self.filenames)
+    
+    # def __repr__(self):
+    #     return f"SetPmt(source_dir={self.source_dir.name}, n_waveforms={len(self)})"
+    
+    def __str__(self):
+        return f"SetPmt(source_dir={self.source_dir}, n_wfms={len(self)})"
 
 
 # -------------------------------
@@ -104,6 +113,13 @@ class Run:
     gas_density: Optional[float] = None  # cm^-3, to be filled in
     width_s2: float = 1.1 # in µs
     t_s1: float = 0.0  # can be refined by batch analysis
+
+    # Calibration constants
+    W_value: float = 22.0               # eV per e-ion pair (gas Xe @ 2 bar)
+    E_gamma_xray: float = 12.3e3        # eV X-ray energy (for Th228 decay)
+    A_x_mean: Optional[float] = None    # mean X-ray S2 area
+    N_e_exp: Optional[float] = None     # expected electrons
+    g_S2: Optional[float] = None        # mV·µs per electron
 
     
 # -------------------------------
@@ -156,3 +172,13 @@ class XRayResults:
     set_id: str
     events: list[XRayEvent]
     params: dict[str, Any]
+
+
+@dataclass
+class CalibrationResults:
+    """Results of X-ray calibration and ion recombination analysis."""
+    run_id: str
+    A_x_mean: float
+    N_e_exp: float
+    g_S2: float
+    # per_set: dict[str, dict[str, float]]  # e.g. {set_id: {"A_ion": ..., "N_e_meas": ..., "r": ..., "E_d": ...}}
