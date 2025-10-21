@@ -162,19 +162,22 @@ def fit_set_s2(s2: S2Areas,
 # -------------------------------------------------
 # Run-level Gaussian fit
 # -------------------------------------------------
-def fit_run_s2(areas: Dict[str, S2Areas], fit_config: FitConfig = FitConfig()) -> Dict[str, S2Areas]:
+def fit_run_s2(areas: Dict[str, S2Areas], fit_config: FitConfig = FitConfig(), 
+               flag_plot: bool = False) -> Dict[str, S2Areas]:
     """
     Apply Gaussian fits across all sets in a run.
 
     Args:
         areas: Dict of {set_id: S2Areas} with raw areas.
-        kwargs: passed to fit_set_s2.
+        fit_config: FitConfig with fitting parameters.
+        flag_plot: If True, plot histogram and fit for each set.
 
     Returns:
         Dict of {set_id: S2Areas} with fit results.
     """
     return {sid: fit_set_s2(s2, bin_cuts=fit_config.bin_cuts,
                                nbins=fit_config.nbins,
-                               exclude_index=fit_config.exclude_index)
+                               exclude_index=fit_config.exclude_index,
+                               flag_plot=flag_plot)
                                for sid, s2 in areas.items() }
                             
