@@ -12,7 +12,8 @@ All functions follow functional programming principles with immutable data struc
 from typing import Dict, Optional
 from dataclasses import replace
 
-from .constructors import populate_run, set_fields, set_transport_properties, estimate_s1_from_batches, set_from_dir
+from .constructors import (populate_run, set_fields, set_transport_properties, 
+                          estimate_s1_from_batches, set_from_dir, s2_variance_run)
 from .analysis import integrate_run_s2, fit_run_s2
 from .xray_integration import classify_xrays_run
 from .xray_calibration import calibrate_and_analyze
@@ -51,13 +52,18 @@ def prepare_run(
     n_batches: int = 5,
     batch_size: int = 20,
     flag_plot: bool = False,
-    nfiles: Optional[int] = None
+    nfiles: Optional[int] = None,
+    estimate_s2_windows: bool = True,
+    s2_duration_cuts: tuple = (5, 25),
+    threshold_s2: float = 0.4,
+    max_waveforms_s2: Optional[int] = None
 ) -> Run:
     """
     Complete run preparation pipeline:
     1. Add gas density
     2. Populate sets from directory structure
     3. Prepare each set (S1 estimation, fields, transport)
+    4. Optionally estimate S2 windows for refined integration
 
     Args:
         run: Run object with root_directory and experiment parameters
@@ -65,9 +71,13 @@ def prepare_run(
         batch_size: Files per batch for S1 estimation
         flag_plot: If True, show diagnostic plots during preparation
         nfiles: If provided, limit each set to this many files (for testing)
+        estimate_s2_windows: If True, estimate S2 timing windows from data
+        s2_duration_cuts: (min, max) duration cuts in µs for S2 variance estimation
+        threshold_s2: S2 detection threshold in mV
+        max_waveforms_s2: Max waveforms for S2 window estimation (None = all, or use nfiles)
 
     Returns:
-        New Run with all sets prepared
+        New Run with all sets prepared and S2 windows estimated
     """
     print("=" * 60)
     print(f"PREPARING RUN: {run.run_id}")
@@ -75,30 +85,47 @@ def prepare_run(
     
     # Add gas density
     run = with_gas_density(run)
-    print(f"\n[1/3] Gas density: {run.gas_density:.3e} cm⁻³")
+    print(f"\n[1/4] Gas density: {run.gas_density:.3e} cm⁻³")
     
     # Populate sets
     run = populate_run(run)
     
     # If nfiles is specified, limit files per set
     if nfiles is not None:
-        print(f"\n[2/3] Limiting sets to {nfiles} files each (test mode)")
+        print(f"\n[2/4] Limiting sets to {nfiles} files each (test mode)")
         limited_sets = []
         for s in run.sets:
             limited_set = set_from_dir(s.source_dir, nfiles=nfiles)
             limited_sets.append(limited_set)
         run = replace(run, sets=limited_sets)
     else:
-        print(f"\n[2/3] Loaded {len(run.sets)} sets")
+        print(f"\n[2/4] Loaded {len(run.sets)} sets")
     
-    # Prepare all sets
-    print(f"\n[3/3] Preparing sets (S1 estimation, fields, transport)...")
+    # Prepare all sets (S1, fields, transport)
+    print(f"\n[3/4] Preparing sets (S1 estimation, fields, transport)...")
     prepared_sets = []
     for i, s in enumerate(run.sets):
         print(f"  → Processing set {i+1}/{len(run.sets)}: {s.source_dir.name}")
         prepared_sets.append(prepare_set(s, run, n_batches=n_batches, batch_size=batch_size, flag_plot=flag_plot))
     
     run = replace(run, sets=prepared_sets)
+    
+    # Estimate S2 windows if requested
+    if estimate_s2_windows:
+        print(f"\n[4/4] Estimating S2 timing windows...")
+        # Use nfiles as max_waveforms if specified, otherwise use max_waveforms_s2
+        max_wf = nfiles if nfiles is not None else max_waveforms_s2
+        
+        run = s2_variance_run(
+            run,
+            s2_duration_cuts=s2_duration_cuts,
+            threshold_s2=threshold_s2,
+            max_waveforms=max_wf,
+            method='percentile'
+        )
+        print("  → S2 timing statistics stored in set metadata")
+    else:
+        print(f"\n[4/4] Skipping S2 window estimation (estimate_s2_windows=False)")
     
     print("\n" + "=" * 60)
     print("RUN PREPARATION COMPLETE")
@@ -164,7 +191,8 @@ def run_ion_integration(
     integration_config: IntegrationConfig = IntegrationConfig(),
     fit_config: FitConfig = FitConfig(),
     nfiles: Optional[int] = None,
-    flag_plot: bool = False
+    flag_plot: bool = False,
+    use_estimated_s2_windows: bool = True
 ) -> Dict[str, S2Areas]:
     """
     Execute ion (Ra recoil) S2 area integration and fitting across a run.
@@ -174,12 +202,15 @@ def run_ion_integration(
 
     Args:
         run: Prepared Run object with sets populated
-        ts2_tol: Time tolerance before S2 window start (µs)
+        ts2_tol: Time tolerance before S2 window start (µs). Ignored if use_estimated_s2_windows=True
+                 and S2 windows were estimated in prepare_run().
         range_sets: Optional slice to process subset of sets
         integration_config: IntegrationConfig with integration parameters
         fit_config: FitConfig with fitting parameters
         nfiles: If provided, limit each set to this many files (for testing)
         flag_plot: If True, plot histograms with fits and S2 vs drift field
+        use_estimated_s2_windows: If True, use S2 window statistics from set metadata
+                                  (from s2_variance_run in prepare_run). If False, use ts2_tol.
 
     Returns:
         Dictionary mapping set_id -> S2Areas (with fit results)
@@ -194,7 +225,7 @@ def run_ion_integration(
         limited_sets = []
         for s in run.sets:
             limited_set = set_from_dir(s.source_dir, nfiles=nfiles)
-            # Copy metadata from prepared set
+            # Copy metadata from prepared set (including S2 window estimates if present)
             limited_set.metadata = s.metadata
             limited_set.drift_field = s.drift_field
             limited_set.EL_field = s.EL_field
@@ -203,22 +234,62 @@ def run_ion_integration(
         run = replace(run, sets=limited_sets)
     
     # Integrate S2 areas
-    print("\n[1/3] Integrating S2 areas...")
-    areas = integrate_run_s2(run, ts2_tol=ts2_tol, range_sets=range_sets, integration_config=integration_config)
+    if use_estimated_s2_windows:
+        print("\n[1/3] Integrating S2 areas using estimated windows from metadata...")
+    else:
+        print("\n[1/3] Integrating S2 areas using ts2_tol offset...")
+    
+    areas = integrate_run_s2(run, ts2_tol=ts2_tol, range_sets=range_sets, 
+                            integration_config=integration_config,
+                            use_estimated_s2_windows=use_estimated_s2_windows)
     
     # Fit Gaussian distributions
     print("\n[2/3] Fitting Gaussian distributions...")
     fitted = fit_run_s2(areas, fit_config=fit_config, flag_plot=flag_plot)
     
-    # Store results
-    print("\n[3/3] Storing results to disk...")
-    for s2 in fitted.values():
-        store_s2area(s2)
+    # Store results and generate plots
+    print("\n[3/3] Storing results and generating plots...")
     
-    # Generate summary plot if requested
+    # Create plots directory
+    plots_dir = run.root_directory / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    
+    for set_pmt in run.sets:
+        set_name = set_pmt.source_dir.name
+        s2_result = fitted[set_name]
+        
+        # Store S2 areas with complete metadata
+        from .dataIO import store_s2area, save_figure
+        store_s2area(s2_result, set_pmt=set_pmt)
+        
+        # Generate and save histogram plot
+        fig_hist, _ = plotting.plot_hist_fit(s2_result, nbins=fit_config.nbins, 
+                                             bin_cuts=fit_config.bin_cuts)
+        save_figure(fig_hist, plots_dir / f"{set_name}_s2_histogram.png")
+        
+        # Generate and save waveform validation plot (10 random waveforms)
+        if len(set_pmt.filenames) > 0:
+            n_waveforms = min(10, len(set_pmt.filenames))
+            fig_wf, _ = plotting.plot_waveforms_with_s1_s2(
+                set_pmt,
+                n_waveforms=n_waveforms,
+                t_s1_mean=set_pmt.metadata.get("t_s1"),
+                t_s1_std=set_pmt.metadata.get("t_s1_std"),
+                t_s2_start_mean=set_pmt.metadata.get("t_s2_start_mean"),
+                t_s2_start_std=set_pmt.metadata.get("t_s2_start_std"),
+                t_s2_end_mean=set_pmt.metadata.get("t_s2_end_mean"),
+                t_s2_end_std=set_pmt.metadata.get("t_s2_end_std"),
+                figsize=(10, 4 * n_waveforms)
+            )
+            save_figure(fig_wf, plots_dir / f"{set_name}_waveform_validation.png")
+    
+    # Generate summary plots
     if flag_plot:
-        print("\nGenerating S2 vs drift field plot...")
-        plotting.plot_s2_vs_drift(run, fitted)
+        print("\nGenerating summary plots...")
+        
+        # S2 vs drift field (unnormalized)
+        fig_drift, _ = plotting.plot_s2_vs_drift(run, fitted, normalized=False)
+        save_figure(fig_drift, plots_dir / f"{run.run_id}_s2_vs_drift.png")
     
     print("\n" + "=" * 60)
     print("ION S2 INTEGRATION COMPLETE")
@@ -232,15 +303,17 @@ def run_calibration_analysis(
     ion_fitted_areas: Optional[Dict[str, S2Areas]] = None,
     xray_bin_cuts: tuple = (0.6, 20),
     xray_nbins: int = 100,
-    flag_plot: bool = True
+    flag_plot: bool = True,
+    save_plots: bool = True
 ) -> tuple:
     """
-    Execute complete calibration and recombination analysis.
+    Execute complete calibration and recombination analysis with comprehensive plotting.
 
     This combines X-ray calibration data with ion S2 measurements to:
     1. Extract gain factor (g_S2) from X-ray energy calibration
     2. Normalize ion S2 areas using X-ray reference
     3. Compute electron recombination fractions vs drift field
+    4. Generate and save all diagnostic plots
 
     Args:
         run: Run object with X-ray and ion data
@@ -249,6 +322,7 @@ def run_calibration_analysis(
         xray_bin_cuts: Range for X-ray histogram fitting
         xray_nbins: Number of bins for X-ray histogram
         flag_plot: If True, generate diagnostic plots
+        save_plots: If True, save plots to disk
 
     Returns:
         Tuple of (CalibrationResults, recombination_dict)
@@ -258,10 +332,78 @@ def run_calibration_analysis(
         S2 results from each set's directory. This makes the pipeline modular
         and allows running calibration separately from ion integration.
     """
-    return calibrate_and_analyze(
+    print("\n" + "=" * 60)
+    print("CALIBRATION & RECOMBINATION ANALYSIS")
+    print("=" * 60)
+    
+    # Run calibration
+    calib_results, recomb_dict = calibrate_and_analyze(
         run,
         ion_fitted_areas=ion_fitted_areas,
         xray_bin_cuts=xray_bin_cuts,
         xray_nbins=xray_nbins,
         flag_plot=flag_plot
     )
+    
+    if save_plots:
+        print("\nGenerating and saving comprehensive plots...")
+        from .dataIO import save_figure, load_xray_results, store_xray_areas_combined
+        
+        # Create plots directory
+        plots_dir = run.root_directory / "plots"
+        plots_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Load and save combined X-ray areas
+        try:
+            xray_areas = load_xray_results(run)
+            store_xray_areas_combined(xray_areas, run, plots_dir)
+            
+            # Plot combined X-ray histogram (this should be done in calibrate_and_analyze)
+            # but we can regenerate it here for consistency
+            print("  → Combined X-ray histogram...")
+            
+        except Exception as e:
+            print(f"Warning: Could not process X-ray results: {e}")
+        
+        # Generate normalized S2 vs drift plot
+        if ion_fitted_areas is not None:
+            print("  → S2 vs drift (normalized)...")
+            fig_norm, _ = plotting.plot_s2_vs_drift(run, ion_fitted_areas, normalized=True)
+            save_figure(fig_norm, plots_dir / f"{run.run_id}_s2_vs_drift_normalized.png")
+        
+        # Generate diffusion analysis plots if S2 variance data is available
+        print("  → Diffusion analysis...")
+        try:
+            drift_times = []
+            sigma_obs_squared = []
+            speeds_drift = []
+            drift_fields = []
+            
+            for set_pmt in run.sets:
+                if "s2_duration_std" in set_pmt.metadata:
+                    drift_times.append(set_pmt.time_drift)
+                    sigma_obs_squared.append(set_pmt.metadata["s2_duration_std"] ** 2)
+                    speeds_drift.append(set_pmt.speed_drift)
+                    drift_fields.append(set_pmt.drift_field)
+            
+            if len(drift_times) > 0:
+                import numpy as np
+                fig_diff, _ = plotting.plot_s2_diffusion_analysis(
+                    np.array(drift_times),
+                    np.array(sigma_obs_squared),
+                    np.array(speeds_drift),
+                    np.array(drift_fields),
+                    run.pressure
+                )
+                save_figure(fig_diff, plots_dir / f"{run.run_id}_diffusion_analysis.png")
+            else:
+                print("  ⚠ No S2 variance data available for diffusion analysis")
+                
+        except Exception as e:
+            print(f"Warning: Could not generate diffusion analysis plots: {e}")
+    
+    print("\n" + "=" * 60)
+    print("CALIBRATION ANALYSIS COMPLETE")
+    print("=" * 60)
+    
+    return calib_results, recomb_dict
