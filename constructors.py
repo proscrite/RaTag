@@ -208,6 +208,7 @@ def estimate_s2_window(set_pmt: SetPmt,
                       max_waveforms: int = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Estimate S2 window (start, end, duration) for all waveforms in a set.
+    Supports both single-frame and FastFrame waveforms.
     
     Args:
         set_pmt: SetPmt with t_s1 and time_drift set
@@ -233,19 +234,41 @@ def estimate_s2_window(set_pmt: SetPmt,
         waveforms = itertools.islice(waveforms, max_waveforms)
     
     for wf in waveforms:
-        try:
-            t_start, t_end = s2_window_pipeline(
-                wf, t_s1, set_pmt.time_drift,
-                window_size=window_size,
-                threshold_s2=threshold_s2,
-                threshold_clip=threshold_clip
-            )
-            if t_end > t_start:
-                t_starts.append(t_start)
-                t_ends.append(t_end)
-                durations.append(t_end - t_start)
-        except (ValueError, IndexError):
-            continue
+        # Handle FastFrame waveforms: process each frame individually
+        if wf.ff and wf.nframes > 1:
+            for frame_idx in range(wf.nframes):
+                try:
+                    # Extract single frame
+                    from .dataIO import extract_single_frame
+                    single_wf = extract_single_frame(wf, frame_idx)
+                    
+                    t_start, t_end = s2_window_pipeline(
+                        single_wf, t_s1, set_pmt.time_drift,
+                        window_size=window_size,
+                        threshold_s2=threshold_s2,
+                        threshold_clip=threshold_clip
+                    )
+                    if t_end > t_start:
+                        t_starts.append(t_start)
+                        t_ends.append(t_end)
+                        durations.append(t_end - t_start)
+                except (ValueError, IndexError):
+                    continue
+        else:
+            # Single frame waveform
+            try:
+                t_start, t_end = s2_window_pipeline(
+                    wf, t_s1, set_pmt.time_drift,
+                    window_size=window_size,
+                    threshold_s2=threshold_s2,
+                    threshold_clip=threshold_clip
+                )
+                if t_end > t_start:
+                    t_starts.append(t_start)
+                    t_ends.append(t_end)
+                    durations.append(t_end - t_start)
+            except (ValueError, IndexError):
+                continue
     
     if not t_starts:
         raise ValueError(f"No valid S2 windows found in {set_pmt.source_dir.name}")
