@@ -5,6 +5,7 @@ import itertools
 from dataclasses import replace
 from typing import Callable
 from scipy.signal import find_peaks
+from pathlib import Path
 from .dataIO import load_wfm
 from .datatypes import PMTWaveform
 
@@ -87,7 +88,7 @@ def s2_area_pipeline(wf: PMTWaveform,
 # Batch processing helpers
 # -------------------------------
 
-def batch_filenames(filenames: list[str], batch_size: int = 20):
+def batch_filenames(filenames: list[Path], batch_size: int = 20):
     """Yield batches of filenames (lists) of size batch_size."""
     it = iter(sorted(filenames))
     while True:
@@ -96,7 +97,7 @@ def batch_filenames(filenames: list[str], batch_size: int = 20):
             break
         yield batch
 
-def average_waveform(batch_files: list[str]) -> tuple[np.ndarray, np.ndarray]:
+def average_waveform(batch_files: list[Path]) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute average waveform for a batch of files, handling both FastFrame and single frame formats.
     For FastFrame files, averages all frames in the file.
@@ -135,7 +136,10 @@ def average_waveform(batch_files: list[str]) -> tuple[np.ndarray, np.ndarray]:
     return t, V_avg
 
 def find_s1_in_avg(t, V, height_S1=0.001, min_distance=200):
-    """Find S1 peak index in averaged waveform."""
+    """Find S1 peak index in averaged waveform.
+     Returns None if no peak found.
+     Note: this assumes S1 appears before t=0.
+    """
     mask = t < 0
     inds = find_peaks(V[mask], height=height_S1, distance=min_distance)[0]
     if len(inds) == 0:

@@ -33,7 +33,7 @@ def transport_saturation(rE: float, p0: float, p1: float, p2: float, p3: float) 
     """
     Saturating + rational function for electron drift velocity.
     Args:
-        rE : reduced electric field (V/cm/bar)
+        rE : reduced electric field (Td)
     """
     return p0 * (1.0 - np.exp(-p1 * rE)) + (p2 * rE) / (1.0 + p3 * rE)
 

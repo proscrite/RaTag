@@ -283,7 +283,7 @@ def plot_hist_fit(s2: S2Areas, nbins=100, bin_cuts=(0, 5), ax=None):
         y = s2.fit_result.eval(x=x)  # Use stored fit result to evaluate
         ax.plot(x, y, 'r-', label="Gaussian Fit")
         ax.axvline(s2.mean, color='b', ls='--', 
-                  label=f"Mean: {s2.mean:.1f} ± {s2.ci95:.1f}")
+                  label=f"Mean: {s2.mean:.2f} ± {s2.ci95:.2f}")
         ax.legend()
     else:
         ax.text(0.5, 0.9, "Fit failed or not performed", 
@@ -307,11 +307,162 @@ def plot_s1_time_distribution(s1_times: List[float],
     """Plot histogram of S1 peak times with mean and std."""
     
     plt.figure(figsize=(10, 6))
-    plt.plot(range(len(s1_times)), s1_times, 'o')
-    plt.axhline(np.mean(s1_times), color='r', linestyle='--', 
-                label=f'Mean: {np.mean(s1_times):.3f} ± {np.std(s1_times):.3f} μs')
-    plt.fill_betweenx((np.mean(s1_times) - np.std(s1_times), np.mean(s1_times) + np.std(s1_times)), 0, len(s1_times),
+
+    n, bins, _ = plt.hist(s1_times, bins=50);
+    cbins = 0.5 * (bins[1:] + bins[:-1])
+    t_mode = cbins[np.argmax(n)]
+    dt_mean = np.std(s1_times)
+    plt.axvline(t_mode, color='red', linestyle='--', label='Mode S1 time')
+
+    plt.fill_between((t_mode - dt_mean, t_mode + dt_mean), 0, max(n),
                      color='g', alpha=0.2)
 
-    plt.gca().set(xlabel='Waveform Index', ylabel='S1 Peak Time (μs)', title=title)
+    plt.gca().set(xlabel='S1 Peak Time (μs)', ylabel='Counts', title=title)
     plt.legend()
+
+def plot_waveforms_with_s1_s2(set_pmt: SetPmt,
+                             n_waveforms: int = 10,
+                             t_s1_mean: float = None,
+                             t_s1_std: float = None,
+                             t_s2_start_mean: float = None,
+                             t_s2_start_std: float = None,
+                             t_s2_end_mean: float = None,
+                             t_s2_end_std: float = None,
+                             figsize: tuple = (10, 40)) -> tuple:
+    """
+    Plot multiple waveforms with S1 and S2 timing markers.
+    
+    Args:
+        set_pmt: SetPmt object
+        n_waveforms: Number of waveforms to plot
+        t_s1_mean: Mean S1 time (µs), from metadata if None
+        t_s1_std: S1 time spread (µs)
+        t_s2_start_mean: Mean S2 start time (µs)
+        t_s2_start_std: S2 start spread (µs)
+        t_s2_end_mean: Mean S2 end time (µs)
+        t_s2_end_std: S2 end spread (µs)
+        figsize: Figure size
+        
+    Returns:
+        (fig, axes)
+    """
+    from .dataIO import load_wfm
+    
+    # Get S1 from metadata if not provided
+    if t_s1_mean is None:
+        t_s1_mean = set_pmt.metadata.get("t_s1")
+    if t_s1_std is None:
+        t_s1_std = set_pmt.metadata.get("t_s1_std", 0)
+    
+    # Select waveforms
+    filenames = set_pmt.filenames[:n_waveforms]
+    
+    fig, axes = plt.subplots(len(filenames), 1, figsize=figsize, sharex=True)
+    if n_waveforms == 1:
+        axes = [axes]
+    
+    for i, fn in enumerate(filenames):
+        wf = load_wfm(set_pmt.source_dir / fn)
+        plot_waveform(wf, ax=axes[i])
+        axes[i].set_title(f"Waveform {i+1}", fontsize=10)
+        
+        # S1 markers
+        if t_s1_mean is not None:
+            axes[i].axvline(t_s1_mean, color='red', linestyle='--', 
+                          lw=1.5, label='S1 Mean')
+            if t_s1_std > 0:
+                y_max = wf.v.max() * 1e3
+                axes[i].fill_betweenx([0, y_max], 
+                                     t_s1_mean - t_s1_std,
+                                     t_s1_mean + t_s1_std,
+                                     color='red', alpha=0.2, label='S1 ±σ')
+        
+        # S2 start markers
+        if t_s2_start_mean is not None:
+            axes[i].axvline(t_s2_start_mean, color='blue', linestyle='--',
+                          lw=1.5, label='S2 Start Mean')
+            if t_s2_start_std is not None and t_s2_start_std > 0:
+                y_max = wf.v.max() * 1e3
+                axes[i].fill_betweenx([0, y_max],
+                                     t_s2_start_mean - t_s2_start_std,
+                                     t_s2_start_mean + t_s2_start_std,
+                                     color='blue', alpha=0.2, label='S2 Start ±σ')
+        
+        # S2 end markers
+        if t_s2_end_mean is not None:
+            axes[i].axvline(t_s2_end_mean, color='purple', linestyle='--',
+                          lw=1.5, label='S2 End Mean')
+            if t_s2_end_std is not None and t_s2_end_std > 0:
+                y_max = wf.v.max() * 1e3
+                axes[i].fill_betweenx([0, y_max],
+                                     t_s2_end_mean - t_s2_end_std,
+                                     t_s2_end_mean + t_s2_end_std,
+                                     color='purple', alpha=0.2, label='S2 End ±σ')
+        
+        axes[i].legend(fontsize=8, loc='upper right')
+        axes[i].grid(alpha=0.3)
+    
+    axes[-1].set_xlabel("Time (µs)")
+    fig.suptitle(f"S1/S2 Timing - {set_pmt.source_dir.name}", fontsize=12)
+    plt.tight_layout()
+    
+    return fig, axes
+
+
+def plot_s2_diffusion_analysis(drift_times: np.ndarray,
+                               sigma_obs_squared: np.ndarray,
+                               speeds_drift: np.ndarray,
+                               drift_fields: np.ndarray,
+                               pressure: float,
+                               figsize: tuple = (10, 10)) -> tuple:
+    """
+    Plot S2 duration variance vs drift parameters for diffusion analysis.
+    
+    Args:
+        drift_times: Drift times (µs)
+        sigma_obs_squared: Observed variance (µs²)
+        speeds_drift: Drift speeds (mm/µs)
+        drift_fields: Drift fields (V/cm)
+        pressure: Gas pressure (bar)
+        figsize: Figure size
+        
+    Returns:
+        (fig, axes)
+    """
+    fig, axes = plt.subplots(3, 1, figsize=figsize)
+    
+    # Plot 1: σ² vs t_drift
+    axes[0].scatter(drift_times, sigma_obs_squared, s=50, alpha=0.7)
+    axes[0].set(xlabel="Drift Time $t_d$ (µs)",
+               ylabel="$\\sigma_{obs}^2$ (µs²)",
+               title="S2 Duration Variance vs Drift Time")
+    axes[0].grid(alpha=0.3)
+    
+    # Fit and overlay
+    if len(drift_times) > 2:
+        fit = np.polyfit(drift_times, sigma_obs_squared, 1)
+        x_fit = np.linspace(drift_times.min(), drift_times.max(), 100)
+        axes[0].plot(x_fit, fit[0] * x_fit + fit[1], 'r--', lw=2,
+                    label=f'Linear fit: σ² = {fit[0]:.3f}·t + {fit[1]:.3f}')
+        axes[0].legend()
+    
+    # Plot 2: σ² vs t_d/v_d²
+    speeds_squared = speeds_drift ** 2
+    axes[1].scatter(drift_times / speeds_squared, sigma_obs_squared, 
+                   s=50, alpha=0.7, color='orange')
+    axes[1].set(xlabel="$t_d / v_d^2$ (µs·mm⁻²)",
+               ylabel="$\\sigma_{obs}^2$ (µs²)",
+               title="Normalized by Drift Speed²")
+    axes[1].grid(alpha=0.3)
+    
+    # Plot 3: σ² vs reduced drift field
+    reduced_field = drift_fields / pressure
+    axes[2].scatter(reduced_field, sigma_obs_squared, 
+                   s=50, alpha=0.7, color='green')
+    axes[2].set(xlabel="Reduced Drift Field (V·cm⁻¹·bar⁻¹)",
+               ylabel="$\\sigma_{obs}^2$ (µs²)",
+               title="S2 Variance vs Reduced Field")
+    axes[2].grid(alpha=0.3)
+    
+    plt.tight_layout()
+    return fig, axes
