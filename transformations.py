@@ -135,13 +135,35 @@ def average_waveform(batch_files: list[Path]) -> tuple[np.ndarray, np.ndarray]:
     
     return t, V_avg
 
-def find_s1_in_avg(t, V, height_S1=0.001, min_distance=200):
-    """Find S1 peak index in averaged waveform.
-     Returns None if no peak found.
-     Note: this assumes S1 appears before t=0.
+def find_s1_in_frame(t, V, threshold_s1=0.1):
+    """Find S1 peak time in a single frame.
+    
+    Looks for the last peak before t=0 that is above threshold_s1.
+    This is optimized for FastFrame data where batching is not needed.
+    
+    Args:
+        t: Time array in microseconds
+        V: Voltage array in millivolts
+        threshold_s1: Minimum peak height in mV (default: 0.1)
+        
+    Returns:
+        S1 peak time in microseconds, or None if not found
     """
     mask = t < 0
-    inds = find_peaks(V[mask], height=height_S1, distance=min_distance)[0]
-    if len(inds) == 0:
+    V_before_zero = V[mask]
+    t_before_zero = t[mask]
+    
+    if len(V_before_zero) == 0:
         return None
-    return inds[np.argmax(V[inds])] if len(inds) > 1 else inds[0]
+    
+    # Find indices where signal is above threshold
+    above_threshold = V_before_zero > threshold_s1
+    
+    if not np.any(above_threshold):
+        return None
+    
+    # Get the last (rightmost) peak above threshold
+    indices_above = np.where(above_threshold)[0]
+    last_peak_idx = indices_above[-1]
+    
+    return t_before_zero[last_peak_idx]

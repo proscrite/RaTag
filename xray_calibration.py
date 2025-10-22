@@ -95,7 +95,7 @@ def _plot_gaussian_fit(
     mean = fit_result.params["center"].value
     sigma = fit_result.params["sigma"].value
     stderr = fit_result.params["center"].stderr
-    ci95 = 1.96 * stderr if stderr else None
+    ci95 = 1.96 * stderr if stderr is not None else None
     ci95_str = f"{ci95:.2f}" if ci95 is not None else "N/A"
     
     # Extract unit from xlabel if present
@@ -313,10 +313,19 @@ def calibrate_and_analyze(
     print("CALIBRATION AND RECOMBINATION ANALYSIS")
     print("=" * 60)
     
-    # 1. Load and fit X-ray data
+    # 1. Load X-ray data and extract accepted events
     print("\n[1/5] Loading X-ray results...")
-    xray_areas = load_xray_results(run)
-    print(f"  → Loaded {len(xray_areas)} accepted X-ray events")
+    xray_results_dict = load_xray_results(run)
+    
+    # Extract accepted X-ray areas from all sets
+    xray_areas = []
+    for set_name, xray_result in xray_results_dict.items():
+        accepted_events = [e.area for e in xray_result.events if e.accepted and e.area is not None]
+        xray_areas.extend(accepted_events)
+        print(f"  → {set_name}: {len(accepted_events)} accepted events")
+    
+    xray_areas = np.array(xray_areas)
+    print(f"  → Total: {len(xray_areas)} accepted X-ray events")
     
     print("\n[2/5] Fitting X-ray histogram...")
     A_x_mean, sigma_x, ci95_x = fit_xray_histogram(
@@ -330,12 +339,9 @@ def calibrate_and_analyze(
     
     # Save X-ray histogram plot
     if flag_plot:
-        from .dataIO import save_figure, store_xray_areas_combined
+        from .dataIO import save_figure
         plots_dir = run.root_directory / "plots"
         plots_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Store combined X-ray areas
-        store_xray_areas_combined(xray_areas, run, plots_dir)
         
         # Generate and save X-ray histogram plot
         mean_fit, sigma_fit, ci95_fit, cbins, n, fit_result = _fit_gaussian_to_histogram(

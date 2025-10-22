@@ -13,7 +13,7 @@ from typing import Dict, Optional
 from dataclasses import replace
 
 from .constructors import (populate_run, set_fields, set_transport_properties, 
-                          estimate_s1_from_batches, set_from_dir, s2_variance_run)
+                          estimate_s1_from_frames, set_from_dir, s2_variance_run)
 from .analysis import integrate_run_s2, fit_run_s2
 from .xray_integration import classify_xrays_run
 from .xray_calibration import calibrate_and_analyze
@@ -41,7 +41,7 @@ def prepare_set(s: SetPmt, run: Run, n_batches: int = 5, batch_size: int = 20, f
     Returns:
         New SetPmt with all fields populated
     """
-    s1 = estimate_s1_from_batches(s, n_batches=n_batches, batch_size=batch_size, flag_plot=flag_plot)
+    s1 = estimate_s1_from_frames(s, max_waveforms=n_batches*batch_size, threshold_s1=0.1, flag_plot=flag_plot)
     s1 = set_fields(s1, drift_gap_cm=run.drift_gap, el_gap_cm=run.el_gap, gas_density=run.gas_density)
     s1 = set_transport_properties(s1, drift_gap_cm=run.drift_gap, transport=None)
     return s1

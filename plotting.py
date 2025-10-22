@@ -10,7 +10,7 @@ from .datatypes import PMTWaveform, SetPmt, RejectionLog, S2Areas, Run
 from .dataIO import load_wfm, iter_waveforms
 from .units import s_to_us, V_to_mV
 
-def plot_waveform(wf: PMTWaveform, ax=None, title: str = "Waveform"):
+def plot_waveform(wf: PMTWaveform, ax=None, title: str = "Waveform", color: str = "g"):
     """Plot a single waveform."""
     if ax is None:
         fig, ax = plt.subplots()
@@ -18,13 +18,13 @@ def plot_waveform(wf: PMTWaveform, ax=None, title: str = "Waveform"):
     if wf.ff:
         print("Averaging FastFrame waveform for plotting")
         # Average all frames for FastFrame
-        V = wf.v.mean(axis=0)
+        V = wf.v[0, :]
         t = wf.t
     else:
         t, V = wf.t, wf.v
     
     if wf.t[1] - wf.t[0] < 1e-7:  # Hardcoded threshold to distinguish s vs µs
-        print("Converting time to µs for better readability")
+        # print("Converting time to µs for better readability")
         t = s_to_us(t)  # convert to µs
         V = V_to_mV(V)  # convert to mV
     
@@ -34,7 +34,7 @@ def plot_waveform(wf: PMTWaveform, ax=None, title: str = "Waveform"):
         title += f" (Average of {wf.nframes} frames)"
     
     ax.set(title=title, xlabel="Time (µs)", ylabel="Signal (mV)")
-    ax.plot(t, V)
+    ax.plot(t, V, color=color, alpha=0.6)
     return ax
 
 def plot_waveform_with_cuts(wf: PMTWaveform, set_pmt: SetPmt,
@@ -382,15 +382,18 @@ def plot_xray_histogram(areas: np.ndarray, run_id: str, nbins: int = 100,
     return fig, ax
 
 def plot_s1_time_distribution(s1_times: List[float], 
-                            title: str = "S1 Peak Times Distribution"):
+                            title: str = "S1 Peak Times Distribution",
+                            method: str = "mad"):
     """Plot histogram of S1 peak times with mean and std."""
-    
+    from RaTag.constructors import compute_s2_variance
     plt.figure(figsize=(10, 6))
 
     n, bins, _ = plt.hist(s1_times, bins=50);
     cbins = 0.5 * (bins[1:] + bins[:-1])
-    t_mode = cbins[np.argmax(n)]
-    dt_mean = np.std(s1_times)
+    t_mode, dt_mean = compute_s2_variance(s1_times, method=method)
+
+    # t_mode = cbins[np.argmax(n)]
+    # dt_mean = np.std(s1_times)
     plt.axvline(t_mode, color='red', linestyle='--', label='Mode S1 time')
 
     plt.fill_between((t_mode - dt_mean, t_mode + dt_mean), 0, max(n),
@@ -406,8 +409,7 @@ def plot_waveforms_with_s1_s2(set_pmt: SetPmt,
                              t_s2_start_mean: float = None,
                              t_s2_start_std: float = None,
                              t_s2_end_mean: float = None,
-                             t_s2_end_std: float = None,
-                             figsize: tuple = (10, 40)) -> tuple:
+                             t_s2_end_std: float = None) -> tuple:
     """
     Plot multiple waveforms with S1 and S2 timing markers.
     
@@ -432,17 +434,26 @@ def plot_waveforms_with_s1_s2(set_pmt: SetPmt,
         t_s1_mean = set_pmt.metadata.get("t_s1")
     if t_s1_std is None:
         t_s1_std = set_pmt.metadata.get("t_s1_std", 0)
+    if t_s2_start_mean is None:
+        t_s2_start_mean = set_pmt.metadata.get("t_s2_start_mean")
+    if t_s2_start_std is None:
+        t_s2_start_std = set_pmt.metadata.get("t_s2_start_std", 0)
+    if t_s2_end_mean is None:
+        t_s2_end_mean = set_pmt.metadata.get("t_s2_end_mean")
+    if t_s2_end_std is None:
+        t_s2_end_std = set_pmt.metadata.get("t_s2_end_std", 0)
     
     # Select waveforms
     filenames = set_pmt.filenames[:n_waveforms]
-    
-    fig, axes = plt.subplots(len(filenames), 1, figsize=figsize, sharex=True)
+
+    fig, axes = plt.subplots(len(filenames), 1, figsize=(6, 4*n_waveforms), sharex=False)
     if n_waveforms == 1:
         axes = [axes]
     
     for i, fn in enumerate(filenames):
         wf = load_wfm(set_pmt.source_dir / fn)
         plot_waveform(wf, ax=axes[i])
+        wf.v = V_to_mV(wf.v[0, :]) if wf.ff else V_to_mV(wf.v)
         axes[i].set_title(f"Waveform {i+1}", fontsize=10)
         
         # S1 markers
@@ -450,18 +461,19 @@ def plot_waveforms_with_s1_s2(set_pmt: SetPmt,
             axes[i].axvline(t_s1_mean, color='red', linestyle='--', 
                           lw=1.5, label='S1 Mean')
             if t_s1_std > 0:
-                y_max = wf.v.max() * 1e3
+                y_max = wf.v.max()
+                print(f'y_max: {y_max:.2f} V') 
                 axes[i].fill_betweenx([0, y_max], 
                                      t_s1_mean - t_s1_std,
                                      t_s1_mean + t_s1_std,
-                                     color='red', alpha=0.2, label='S1 ±σ')
+                                     color='red', alpha=0.1, label='S1 ±σ')
         
         # S2 start markers
         if t_s2_start_mean is not None:
             axes[i].axvline(t_s2_start_mean, color='blue', linestyle='--',
                           lw=1.5, label='S2 Start Mean')
             if t_s2_start_std is not None and t_s2_start_std > 0:
-                y_max = wf.v.max() * 1e3
+                y_max = wf.v.max()
                 axes[i].fill_betweenx([0, y_max],
                                      t_s2_start_mean - t_s2_start_std,
                                      t_s2_start_mean + t_s2_start_std,
@@ -472,13 +484,13 @@ def plot_waveforms_with_s1_s2(set_pmt: SetPmt,
             axes[i].axvline(t_s2_end_mean, color='purple', linestyle='--',
                           lw=1.5, label='S2 End Mean')
             if t_s2_end_std is not None and t_s2_end_std > 0:
-                y_max = wf.v.max() * 1e3
+                y_max = wf.v.max()
                 axes[i].fill_betweenx([0, y_max],
                                      t_s2_end_mean - t_s2_end_std,
                                      t_s2_end_mean + t_s2_end_std,
                                      color='purple', alpha=0.2, label='S2 End ±σ')
         
-        axes[i].legend(fontsize=8, loc='upper right')
+        axes[i].legend(fontsize=8, loc='upper left')
         axes[i].grid(alpha=0.3)
     
     axes[-1].set_xlabel("Time (µs)")

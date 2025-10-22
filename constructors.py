@@ -1,7 +1,7 @@
 import itertools
 from dataclasses import replace
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from scipy.signal import find_peaks
 import numpy as np
 
@@ -15,20 +15,46 @@ from .plotting import plot_s1_time_distribution
 # --- Set constructors ---
 # ------------------------
 
-def set_from_dir(path: Path, nfiles: int = None) -> SetPmt:
+def set_from_dir(source_dir: Path, nfiles: Optional[int] = None) -> SetPmt:
     """
-    Parse folder name and contained files to build SetPmt.
-    Does NOT load waveforms, only stores filenames.
-    """
-    # Example: FieldScan_5GSsec_Anode3000_Gate1600
-    md = parse_subdir_name(path.name)
+    Create SetPmt from directory by lazy-loading filenames.
     
-    # Filenames: RUN2_21082025_Gate70_Anode2470_P3_0006[_ch1].wfm
-    filenames = [f.name for f in path.glob("*.wfm")]
-    if nfiles is not None:
-        filenames = filenames[:nfiles]
-
-    return SetPmt(source_dir=path, filenames=filenames, metadata=md)
+    Automatically detects FastFrame properties from the first file.
+    
+    Args:
+        source_dir: Path to directory containing .wfm files
+        nfiles: Optional limit on number of files to load
+        
+    Returns:
+        SetPmt with filenames and FastFrame properties detected
+    """
+    source_dir = Path(source_dir)
+    
+    # Get all .wfm files
+    all_files = sorted(source_dir.glob("*.wfm"))
+    
+    if not all_files:
+        raise FileNotFoundError(f"No .wfm files found in {source_dir}")
+    
+    # Limit files if requested
+    files_to_use = all_files[:nfiles] if nfiles is not None else all_files
+    filenames = [f.name for f in files_to_use]
+    
+    # Detect FastFrame properties from first file
+    first_wf = load_wfm(files_to_use[0])
+    ff = first_wf.ff
+    nframes = first_wf.nframes if ff else 1
+    
+    # Parse metadata from directory name
+    metadata = parse_subdir_name(source_dir.name)
+    
+    return SetPmt(
+        source_dir=source_dir,
+        filenames=filenames,
+        metadata=metadata,
+        ff=ff,
+        nframes=nframes
+    )
 
 
 def set_fields(set_pmt: SetPmt, drift_gap_cm: float, el_gap_cm: float,
@@ -94,80 +120,99 @@ def set_transport_properties(set_pmt: SetPmt,
                    diffusion_coefficient=diffusion)
 
 
-def _find_s1_in_batches(set_pmt: SetPmt,
-                        n_batches: int = 5,
-                        batch_size: int = 20,
-                        height_S1: float = 0.001,
-                        min_distance: int = 200) -> List[float]:
-    """Helper function to find S1 times in batches of waveforms.
-    For FastFrame files, processes multiple files with frames.
-    For single frame files, processes batches of files.
+def _find_s1_in_frames(set_pmt: SetPmt,
+                       max_files: int,
+                       threshold_s1: float = 1.0) -> List[float]:
+    """Find S1 times by looking at individual frames.
     
+    Optimized for FastFrame data - processes each frame independently
+    looking for the last peak before t=0 above threshold.
+    
+    Args:
+        set_pmt: Measurement set
+        max_files: Maximum number of files to process
+        threshold_s1: S1 detection threshold in mV (default: 0.1)
+        
     Returns:
         List of S1 peak times in microseconds
     """
     s1_times = []
-    first_wf = load_wfm(set_pmt.source_dir / set_pmt.filenames[0])
     
-    def process_waveform(t_s, V_v):
-        """Helper to process a single averaged waveform"""
-        t_us = s_to_us(t_s)
-        V_mV = V_to_mV(V_v)
-        idx = tf.find_s1_in_avg(t_us, V_mV, height_S1, min_distance)
-        if idx is not None:
-            s1_times.append(t_us[idx])
-
-    if first_wf.ff:
-        # For FastFrame files, process n_batches files
-        for i in range(min(n_batches, len(set_pmt.filenames))):
-            t_s, V_v = tf.average_waveform([set_pmt.source_dir / set_pmt.filenames[i]])
-            process_waveform(t_s, V_v)
-    else:
-        # For single frames, process batches
-        batch_iter = tf.batch_filenames(set_pmt.filenames, batch_size)
-        for batch in itertools.islice(batch_iter, n_batches):
-            t_s, V_v = tf.average_waveform([set_pmt.source_dir / fn for fn in batch])
-            process_waveform(t_s, V_v)
-
+    for wf in itertools.islice(iter_waveforms(set_pmt), max_files):
+        # Convert units
+        wf = tf.t_in_us(wf)
+        wf = tf.v_in_mV(wf)
+        wf = tf.subtract_pedestal(wf, n_points=200)
+        
+        # Handle FastFrame: iterate over frames
+        if wf.ff:
+            for frame_v in wf.v:
+                frame_wf = replace(wf, v=frame_v, ff=False)
+                t_s1 = tf.find_s1_in_frame(frame_wf.t, frame_wf.v, threshold_s1)
+                if t_s1 is not None:
+                    s1_times.append(t_s1)
+        else:
+            # Single frame
+            t_s1 = tf.find_s1_in_frame(wf.t, wf.v, threshold_s1)
+            if t_s1 is not None:
+                s1_times.append(t_s1)
+    
     if not s1_times:
-        raise ValueError("No S1 peaks found in batches")
-
+        raise ValueError("No S1 peaks found in frames")
+    
     return np.array(s1_times)
 
 
-def estimate_s1_from_batches(set_pmt: SetPmt,
-                           n_batches: int = 20,
-                           batch_size: int = 50,
-                           height_S1: float = 0.001,
-                           min_distance: int = 200,
-                           sigma_threshold: float = 1.0,
-                           flag_plot: bool = True) -> SetPmt:
-    """Estimate average S1 time by analyzing batches and optionally plot distribution."""
-
-    t_s1_mean = 1
-    t_s1_std = 0.9
-    s1_times = _find_s1_in_batches(
-        set_pmt, n_batches, batch_size, height_S1, min_distance
-    )
-
+def estimate_s1_from_frames(set_pmt: SetPmt, 
+                           max_frames: int = 1000,
+                           threshold_s1: float = 1.0, 
+                           flag_plot: bool = False) -> SetPmt:
+    """
+    Estimate S1 timing from individual frames (optimized for FastFrame).
     
+    Processes frames individually looking for S1-like peaks before t=0.
+    No batching or averaging - each frame analyzed independently.
+    
+    Args:
+        set_pmt: Measurement set with ff and nframes properties
+        max_frames: Target number of frames to process (default: 1000)
+                    Actual frames = ceil(max_frames/nframes) × nframes
+        threshold_s1: Minimum peak height in mV (default: 0.1)
+        flag_plot: If True, show diagnostic plot
+        
+    Returns:
+        SetPmt with t_s1 and t_s1_std in metadata
+    """
+    # Compute how many files to process (rounds up to complete files)
+    max_files = int(np.ceil(max_frames / set_pmt.nframes))
+    actual_frames = max_files * set_pmt.nframes
+    
+    print(f"  S1 estimation: processing {max_files} files (~{actual_frames} frames)")
+    
+    # Find S1 in individual frames
+    s1_times = _find_s1_in_frames(set_pmt, max_files, threshold_s1)
+    
+    # Outlier rejection
     t_mean_init = round(np.mean(s1_times), 3)
     dt_init = round(np.std(s1_times), 3)
-    mask = np.abs(s1_times - t_mean_init) < (sigma_threshold * dt_init)
+    mask = np.abs(s1_times - t_mean_init) < (3 * dt_init)
     s1_times_clean = s1_times[mask]
-
+    
+    # Compute mode from histogram
     n, bins = np.histogram(s1_times_clean, bins=50)
     cbins = 0.5 * (bins[1:] + bins[:-1])
     t_s1_mode = round(cbins[np.argmax(n)], 3)
     t_s1_std = round(np.std(s1_times_clean), 3)
-
+    
+    print(f"  → t_s1 = {t_s1_mode} ± {t_s1_std} µs (from {len(s1_times_clean)} frames)")
+    
     if flag_plot:
         plot_s1_time_distribution(s1_times_clean, 
             f"S1 Peak Times Distribution - {set_pmt.source_dir.name}")
     
-
     new_meta = {**set_pmt.metadata, "t_s1": t_s1_mode, "t_s1_std": t_s1_std}
     return replace(set_pmt, metadata=new_meta)
+
 
 def _find_s2_window(wf: PMTWaveform,
                     t_s1: float,
@@ -187,7 +232,7 @@ def _find_s2_window(wf: PMTWaveform,
 
 def s2_window_pipeline(wf, t_s1: float, t_drift: float,
                         window_size: int = 9,
-                       threshold_s2: float = 0.4,
+                       threshold_s2: float = 0.8,
                        threshold_clip: float = 0.02):
     """Estimate S2 window (start, end) in a waveform."""
     wf = tf.t_in_us(wf)
@@ -202,12 +247,12 @@ def s2_window_pipeline(wf, t_s1: float, t_drift: float,
 
 
 def estimate_s2_window(set_pmt: SetPmt,
-                      threshold_s2: float = 0.4,
+                      threshold_s2: float = 0.8,
                       window_size: int = 9,
                       threshold_clip: float = 0.02,
-                      max_waveforms: int = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                      max_frames: int = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Estimate S2 window (start, end, duration) for all waveforms in a set.
+    Estimate S2 window (start, end, duration) for waveforms in a set.
     Supports both single-frame and FastFrame waveforms.
     
     Args:
@@ -215,23 +260,28 @@ def estimate_s2_window(set_pmt: SetPmt,
         threshold_s2: Amplitude threshold for S2 detection (mV)
         window_size: Moving average window size
         threshold_clip: Clipping threshold for noise
-        max_waveforms: Maximum number of waveforms to process (None = all)
+        max_frames: Target number of frames to process (None = all)
+                    Actual frames = ceil(max_frames/nframes) × nframes
         
     Returns:
         Tuple of (t_starts, t_ends, s2_durations) in microseconds
     """
     t_s1 = set_pmt.metadata.get("t_s1")
     if t_s1 is None:
-        raise ValueError("t_s1 must be estimated first (call estimate_s1_from_batches)")
+        raise ValueError("t_s1 must be estimated first (call estimate_s1_from_frames)")
     
     if set_pmt.time_drift is None:
         raise ValueError("time_drift must be set (call set_transport_properties)")
 
     t_starts, t_ends, durations = [], [], []
     
-    waveforms = iter_waveforms(set_pmt)
-    if max_waveforms is not None:
-        waveforms = itertools.islice(waveforms, max_waveforms)
+    # Compute max files to process (rounds up to complete files)
+    if max_frames is not None:
+        max_files = int(np.ceil(max_frames / set_pmt.nframes))
+        waveforms = itertools.islice(iter_waveforms(set_pmt), max_files)
+        print(f"  S2 estimation: processing {max_files} files (~{max_frames} frames)")
+    else:
+        waveforms = iter_waveforms(set_pmt)
     
     for wf in waveforms:
         # Handle FastFrame waveforms: process each frame individually
@@ -319,25 +369,22 @@ def compute_s2_variance(s2_durations: np.ndarray,
 
 
 def s2_variance_run(run: Run,
-                   s2_duration_cuts: tuple[float, float] = (5, 25),
-                   threshold_s2: float = 0.4,
-                   max_waveforms: int = None,
+                   s2_duration_cuts: tuple = (5, 25),
+                   threshold_s2: float = 0.8,
+                   max_frames: int = 200,
                    method: str = 'percentile') -> Run:
     """
-    Compute S2 timing statistics for all sets in a run and store in metadata.
+    Estimate S2 timing windows for all sets in a run.
     
     Args:
         run: Run object with prepared sets
         s2_duration_cuts: (min, max) duration cuts in µs
         threshold_s2: S2 detection threshold in mV
-        max_waveforms: Max waveforms per set (None = all)
-        method: Variance estimation method
+        max_files: Maximum files per set to process (default: 200)
+        method: Method for computing statistics ('percentile' or 'std')
         
     Returns:
-        Updated Run with S2 timing statistics stored in each set's metadata:
-            - t_s2_start_mean, t_s2_start_std
-            - t_s2_end_mean, t_s2_end_std
-            - s2_duration_mean, s2_duration_std
+        Run with S2 timing statistics in each set's metadata
     """
     updated_sets = []
     
@@ -347,7 +394,7 @@ def s2_variance_run(run: Run,
             t_starts, t_ends, durations = estimate_s2_window(
                 set_pmt,
                 threshold_s2=threshold_s2,
-                max_waveforms=max_waveforms
+                max_frames=max_frames
             )
             
             # Compute statistics for each timing quantity
@@ -363,17 +410,50 @@ def s2_variance_run(run: Run,
                 mean, std = compute_s2_variance(data, duration_cuts=cuts, method=method)
                 new_metadata[f'{name}_mean'] = mean
                 new_metadata[f'{name}_std'] = std
+                if name != 's2_duration':
+                    assert std / mean < 0.2, f"⚠ Warning: High relative error in {name} for {set_pmt.source_dir.name}"
             
             updated_sets.append(replace(set_pmt, metadata=new_metadata))
             
             print(f"✓ {set_pmt.source_dir.name}:")
-            print(f"  S2 Start:    {new_metadata['t_s2_start_mean']:.2f} ± {new_metadata['t_s2_start_std']:.2f} µs")
-            print(f"  S2 End:      {new_metadata['t_s2_end_mean']:.2f} ± {new_metadata['t_s2_end_std']:.2f} µs")
+            print(f"  S2 Start:    {new_metadata['t_s2_start_mean']:.2f} ± {new_metadata['t_s2_start_std']:.2f} µs, rel. error: {100 * new_metadata['t_s2_start_std'] / new_metadata['t_s2_start_mean']:.2f} %")
+            print(f"  S2 End:      {new_metadata['t_s2_end_mean']:.2f} ± {new_metadata['t_s2_end_std']:.2f} µs, rel. error: {100 * new_metadata['t_s2_end_std'] / new_metadata['t_s2_end_mean']:.2f} %")
             print(f"  S2 Duration: {new_metadata['s2_duration_mean']:.2f} ± {new_metadata['s2_duration_std']:.2f} µs")
-            
+
         except Exception as e:
             print(f"⚠ Warning: Failed to process {set_pmt.source_dir.name}: {e}")
             updated_sets.append(set_pmt)  # Keep original if processing fails
             continue
     
     return replace(run, sets=updated_sets)
+
+
+def populate_run(run: Run, nfiles: Optional[int] = None) -> Run:
+    """
+    Populate a Run with all measurement sets from subdirectories.
+    
+    Each subdirectory in run.root_directory becomes a SetPmt.
+    FastFrame properties are automatically detected per set.
+    
+    Args:
+        run: Run object with root_directory
+        nfiles: Optional limit on files per set
+        
+    Returns:
+        Run with sets populated
+    """
+    sets = []
+    subdirs = [d for d in run.root_directory.iterdir() if (d.is_dir() and 'FieldScan' in d.name)]
+    
+    for subdir in sorted(subdirs):
+        try:
+            set_pmt = set_from_dir(subdir, nfiles=nfiles)
+            sets.append(set_pmt)
+            
+            # Log FastFrame info
+            ff_info = f"FastFrame ({set_pmt.nframes} frames/file)" if set_pmt.ff else "single-frame"
+            print(f"  Loaded: {subdir.name} - {len(set_pmt)} files ({set_pmt.n_waveforms} waveforms) [{ff_info}]")
+        except Exception as e:
+            print(f"  Warning: Failed to load {subdir.name}: {e}")
+    
+    return replace(run, sets=sets)

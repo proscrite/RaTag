@@ -179,7 +179,7 @@ def store_xrayset(xrays: XRayResults, outdir: Optional[Path] = None) -> None:
 
     Saves:
       - accepted areas as a .npy array (fast reload for histograms)
-      - full classification log as a .json (audit trail)
+      - summary statistics as a .json (compact metadata)
     """
     if outdir is None:
         outdir = Path(xrays.set_id)  # assume set_id is a directory name
@@ -189,66 +189,87 @@ def store_xrayset(xrays: XRayResults, outdir: Optional[Path] = None) -> None:
     accepted_areas = [ev.area for ev in xrays.events if ev.accepted and ev.area is not None]
     np.save(outdir / "xray_areas.npy", np.array(accepted_areas))
 
-    # Full event-level log
-    log = []
+    # Aggregate rejection reasons
+    rejection_reasons = {}
     for ev in xrays.events:
-        log.append({
-            "wf_id": ev.wf_id,
-            "accepted": ev.accepted,
-            "reason": ev.reason,
-            "area": ev.area if ev.area is not None else None,
-        })
+        if not ev.accepted:
+            reason = ev.reason or "unknown"
+            rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
 
+    # Filter out non-serializable items from params (e.g., 'integrator' function)
+    params_serializable = {
+        k: v for k, v in xrays.params.items() 
+        if k != 'integrator' and not callable(v)
+    }
+    
+    # Summary statistics only (no individual events)
     meta = {
-        "set_id": xrays.set_id,
-        "params": xrays.params,
+        "set_id": str(xrays.set_id),  # Convert Path to string for JSON serialization
+        "params": params_serializable,
         "n_events": len(xrays.events),
         "n_accepted": sum(ev.accepted for ev in xrays.events),
         "n_rejected": sum(not ev.accepted for ev in xrays.events),
-        "events": log,
+        "rejection_reasons": rejection_reasons,
+        "accepted_area_stats": {
+            "mean": float(np.mean(accepted_areas)) if accepted_areas else None,
+            "std": float(np.std(accepted_areas)) if accepted_areas else None,
+            "min": float(np.min(accepted_areas)) if accepted_areas else None,
+            "max": float(np.max(accepted_areas)) if accepted_areas else None,
+        }
     }
 
     with open(outdir / "xray_results.json", "w") as f:
         json.dump(meta, f, indent=2)
 
 
-def load_xray_results(run: Run) -> np.ndarray:
-    """
-    Load all X-ray results from a run's sets.
 
+def load_xray_results(run: Run) -> dict[str, XRayResults]:
+    """
+    Load X-ray classification results for all sets in a run.
+    
     Args:
-        run: Run object with sets populated
-
+        run: Run object with sets to load X-ray results from
+        
     Returns:
-        Array of accepted X-ray S2 areas (mV·µs)
+        Dictionary mapping set names to XRayResults objects
+        
+    Raises:
+        ValueError: If no X-ray results could be loaded from any set
     """
-    xray_areas = []
+    xray_results = {}
     
     for set_pmt in run.sets:
         xray_file = set_pmt.source_dir / 'xray_results.npy'
         
         if not xray_file.exists():
-            print(f"Warning: No X-ray results found for {set_pmt.source_dir.name}")
+            print(f"Warning: X-ray results file not found for {set_pmt.source_dir.name}")
             continue
             
         try:
-            xres = np.load(xray_file, allow_pickle=True).item()
-            # Extract accepted events from all waveforms
-            areas = np.array([
-                event.area 
-                for wfm_events in xres.events 
-                for event in wfm_events 
-                if event.accepted
-            ])
-            xray_areas.append(areas)
+            # Load the numpy array of XRayEvent objects
+            events = np.load(xray_file, allow_pickle=True)
+            
+            # Convert array to list if needed
+            if isinstance(events, np.ndarray):
+                events = events.tolist()
+            
+            # Create XRayResults object
+            xray_result = XRayResults(
+                set_id=set_pmt.source_dir,
+                events=events,
+                params={}  # Add params if you have them stored elsewhere
+            )
+            
+            xray_results[set_pmt.source_dir.name] = xray_result
+            
         except Exception as e:
-            print(f"Error loading X-ray results from {set_pmt.source_dir.name}: {e}")
+            print(f"Warning: Failed to load X-ray results from {xray_file}: {e}")
+            continue
     
-    if not xray_areas:
+    if not xray_results:
         raise ValueError("No X-ray results could be loaded from any set")
     
-    # Flatten all areas into single array
-    return np.concatenate(xray_areas)
+    return xray_results
 
 
 def store_xray_areas_combined(areas: np.ndarray, run: Run, output_dir: Optional[Path] = None) -> None:

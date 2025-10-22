@@ -70,6 +70,10 @@ class SetPmt:
     filenames: list[str]     # lazy list of filenames (not waveforms!)
     metadata: dict
 
+    # --- FastFrame properties ---
+    ff: bool = False                 # Whether this set uses FastFrame files
+    nframes: int = 1                 # Frames per file (1 for single-frame, typically 49 for FastFrame)
+
     # --- Physics context ---
     drift_field: float = None        # V/cm
     EL_field: float = None           # V/cm
@@ -83,13 +87,22 @@ class SetPmt:
     rejection_log: List[Any] = field(default_factory=list)
 
     def __len__(self):
+        """Return number of files."""
         return len(self.filenames)
     
-    # def __repr__(self):
-    #     return f"SetPmt(source_dir={self.source_dir.name}, n_waveforms={len(self)})"
+    @property
+    def n_waveforms(self) -> int:
+        """Total number of waveforms (frames) in the set."""
+        return len(self.filenames) * self.nframes
+    
+    @property
+    def n_files(self) -> int:
+        """Number of files (alias for len())."""
+        return len(self.filenames)
     
     def __str__(self):
-        return f"SetPmt(source_dir={self.source_dir}, n_wfms={len(self)})"
+        ff_str = f"FastFrame({self.nframes} frames/file)" if self.ff else "single-frame"
+        return f"SetPmt(source_dir={self.source_dir.name}, n_files={self.n_files}, n_waveforms={self.n_waveforms}, {ff_str})"
 
 
 # -------------------------------
@@ -169,7 +182,7 @@ class XRayEvent:
 
 @dataclass
 class XRayResults:
-    set_id: str
+    set_id: Path
     events: list[XRayEvent]
     params: dict[str, Any]
 
