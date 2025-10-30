@@ -49,7 +49,7 @@ def compute_analog_path(path):
         all_peaks.append(peaks)
     return np.concatenate(all_peaks)
 
-def get_baseline(V):
+def get_baseline(V, npoints: int = 200) -> float:
     """Estimate the baseline of the waveform."""
     return np.mean(V[:npoints])
 
@@ -94,6 +94,7 @@ def process_alpha_waveforms(path_sca: str) -> np.ndarray:
         if len(V.shape) > 1:
             # Multiple waveforms in the file
             for v in V:
+                V_trigger
                 bs = get_baseline(v)
                 peak = v.max() - bs
                 peak_volts.append(peak)
