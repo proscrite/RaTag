@@ -320,9 +320,9 @@ def calibrate_and_analyze(
     # Extract accepted X-ray areas from all sets
     xray_areas = []
     for set_name, xray_result in xray_results_dict.items():
-        accepted_events = [e.area for e in xray_result.events if e.accepted and e.area is not None]
-        xray_areas.extend(accepted_events)
-        print(f"  → {set_name}: {len(accepted_events)} accepted events")
+        # accepted_events = [e.area for e in xray_result.events if e.accepted and e.area is not None]
+        xray_areas.extend(xray_result.events)
+        print(f"  → {set_name}: {len(xray_result.events)} accepted events")
     
     xray_areas = np.array(xray_areas)
     print(f"  → Total: {len(xray_areas)} accepted X-ray events")

@@ -9,6 +9,10 @@ from .datatypes import Waveform, SetPmt, Run, S2Areas, PMTWaveform, XRayResults
 from RaTag.scripts.wfm2read_fast import wfm2read # type: ignore
 PathLike = Union[str, Path]
 
+
+# --- Load waveform from .wfm file ---
+# Rename by _load_wfm_V_s
+# Call from def load_wfm(): wf = _load_wfm_V_s(path); wf = V_to_mV(wf); wf = t_in_us(wf);
 def load_wfm(path: PathLike) -> Waveform:
     """Load waveform from a .wfm file storing (t, -v)."""
     wfm = wfm2read(str(path))
@@ -19,7 +23,7 @@ def load_wfm(path: PathLike) -> Waveform:
     else:
         ff = False
         nframes = 1
-    return Waveform(t, v, source=str(path), ff=ff, nframes=nframes)
+    return PMTWaveform(t, v, source=str(path), ff=ff, nframes=nframes)
 
 # --- Lazy loader ---
 def iter_waveforms(set_pmt: SetPmt) -> Iterator[PMTWaveform]:
@@ -90,7 +94,7 @@ def store_s2area(s2: S2Areas, set_pmt: Optional[SetPmt] = None) -> None:
         set_pmt: Optional SetPmt to extract complete metadata from
     """
     # Save raw areas as numpy array (for backward compatibility)
-    path_areas = s2.source_dir / "s2_areas.npy"
+    path_areas = s2.source_dir / "s2_areas1.npy"
     np.save(path_areas, s2.areas)
     
     # Build complete results dictionary
@@ -108,11 +112,11 @@ def store_s2area(s2: S2Areas, set_pmt: Optional[SetPmt] = None) -> None:
         results_dict["set_metadata"] = {
             "t_s1": set_pmt.metadata.get("t_s1"),
             "t_s1_std": set_pmt.metadata.get("t_s1_std"),
-            "t_s2_start_mean": set_pmt.metadata.get("t_s2_start_mean"),
+            "t_s2_start": set_pmt.metadata.get("t_s2_start"),
             "t_s2_start_std": set_pmt.metadata.get("t_s2_start_std"),
-            "t_s2_end_mean": set_pmt.metadata.get("t_s2_end_mean"),
+            "t_s2_end": set_pmt.metadata.get("t_s2_end_"),
             "t_s2_end_std": set_pmt.metadata.get("t_s2_end_std"),
-            "s2_duration_mean": set_pmt.metadata.get("s2_duration_mean"),
+            "s2_duration": set_pmt.metadata.get("s2_duration"),
             "s2_duration_std": set_pmt.metadata.get("s2_duration_std"),
             "drift_field": float(set_pmt.drift_field) if set_pmt.drift_field is not None else None,
             "EL_field": float(set_pmt.EL_field) if set_pmt.EL_field is not None else None,
@@ -122,7 +126,7 @@ def store_s2area(s2: S2Areas, set_pmt: Optional[SetPmt] = None) -> None:
         }
     
     # Save complete results as JSON
-    path_results = s2.source_dir / "s2_results.json"
+    path_results = s2.source_dir / "s2_results1.json"
     with open(path_results, "w") as f:
         json.dump(results_dict, f, indent=2)
 
@@ -239,7 +243,7 @@ def load_xray_results(run: Run) -> dict[str, XRayResults]:
     xray_results = {}
     
     for set_pmt in run.sets:
-        xray_file = set_pmt.source_dir / 'xray_results.npy'
+        xray_file = set_pmt.source_dir / 'xray_areas.npy'
         
         if not xray_file.exists():
             print(f"Warning: X-ray results file not found for {set_pmt.source_dir.name}")

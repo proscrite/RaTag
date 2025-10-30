@@ -354,9 +354,9 @@ def integrate_run_unified(
         dt_s1 = set_pmt.metadata.get('t_s1_std', 0.0)
         print(f"  → Using tS1: [{t_s1:.2f} ± {dt_s1:.2f}] µs")
         # Determine S2 integration window
-        if use_estimated_s2_windows and 't_s2_start_mean' in set_pmt.metadata:
-            s2_start = set_pmt.metadata['t_s2_start_mean']
-            s2_end = set_pmt.metadata['t_s2_end_mean']
+        if use_estimated_s2_windows and 't_s2_start' in set_pmt.metadata:
+            s2_start = set_pmt.metadata['t_s2_start'] + ts2_tol
+            s2_end = set_pmt.metadata['t_s2_end']
             print(f"  → Using estimated S2 window: [{s2_start:.2f}, {s2_end:.2f}] µs")
         else:
             s2_start = t_s1 + set_pmt.time_drift + ts2_tol

@@ -66,6 +66,13 @@ def to_Td(reduced_field: float) -> float:
     """
     return reduced_field * 1e17
 
+def Td_to_Vpcm(reduced_field_Td: float) -> float:
+    """
+    Convert reduced field [Td] to [V·cm²].
+    """
+    return reduced_field_Td * 1e-17
+
+
 def cm_to_mm(cm_value: float) -> float:
     """
     Convert cm to mm.

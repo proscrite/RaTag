@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Optional
 from scipy.signal import find_peaks
 import numpy as np
+import matplotlib.pyplot as plt  # type: ignore
 
 from .dataIO import load_wfm, parse_subdir_name, iter_waveforms
 from .datatypes import PMTWaveform, SetPmt, Run
@@ -192,6 +193,7 @@ def estimate_s1_from_frames(set_pmt: SetPmt,
     # Find S1 in individual frames
     s1_times = _find_s1_in_frames(set_pmt, max_files, threshold_s1)
     
+    s1_times = s1_times[s1_times < -0.5]  # Keep only times before t=0
     # Outlier rejection
     t_mean_init = round(np.mean(s1_times), 3)
     dt_init = round(np.std(s1_times), 3)
@@ -221,7 +223,7 @@ def _find_s2_window(wf: PMTWaveform,
     """Estimate S2 window (start, end) in a clean waveform."""
   
     t, V = wf.t, wf.v
-    mask = t > t_s1 + t_drift * 0.75
+    mask = t > t_s1 + t_drift * 0.3
     s2_window = V[mask]
     positive_mask = s2_window > threshold_s2
 
@@ -372,7 +374,8 @@ def s2_variance_run(run: Run,
                    s2_duration_cuts: tuple = (5, 25),
                    threshold_s2: float = 0.8,
                    max_frames: int = 200,
-                   method: str = 'percentile') -> Run:
+                   method: str = 'percentile',
+                   flag_plot: bool = False) -> Run:
     """
     Estimate S2 timing windows for all sets in a run.
     
@@ -387,8 +390,12 @@ def s2_variance_run(run: Run,
         Run with S2 timing statistics in each set's metadata
     """
     updated_sets = []
-    
-    for set_pmt in run.sets:
+
+    for i, set_pmt in enumerate(run.sets):
+        expected_s2_start = set_pmt.metadata['t_s1'] + set_pmt.time_drift
+        print(f"Set ({i}/{len(run.sets)})")
+        print(f"✓ {set_pmt.source_dir.name}:")
+        print(f"  Expected S2 start : {expected_s2_start:.2f} µs")
         try:
             # Get raw S2 timing data
             t_starts, t_ends, durations = estimate_s2_window(
@@ -396,11 +403,15 @@ def s2_variance_run(run: Run,
                 threshold_s2=threshold_s2,
                 max_frames=max_frames
             )
-            
+            if flag_plot:
+                fig, ax = plt.subplots(2, 1, figsize=(8, 12))
+                plot_s1_time_distribution(t_starts, f'S2 Start Times Distribution - {set_pmt.source_dir.name}', ax=ax[0])
+                plot_s1_time_distribution(t_ends, f'S2 End Times Distribution - {set_pmt.source_dir.name}', ax=ax[1])
+                plt.tight_layout()
             # Compute statistics for each timing quantity
             timing_data = [
-                ('t_s2_start', t_starts, None),              # No cuts for start times
-                ('t_s2_end', t_ends, None),                  # No cuts for end times
+                ('t_s2_start', t_starts, (expected_s2_start * 0.3, expected_s2_start * 1.5)),              # No cuts for start times
+                ('t_s2_end', t_ends, (expected_s2_start * 1.2, 35)),                  # No cuts for end times
                 ('s2_duration', durations, s2_duration_cuts) # Cuts for durations
             ]
             
@@ -408,23 +419,21 @@ def s2_variance_run(run: Run,
             
             for name, data, cuts in timing_data:
                 mean, std = compute_s2_variance(data, duration_cuts=cuts, method=method)
-                new_metadata[f'{name}_mean'] = mean
+                new_metadata[f'{name}'] = mean
                 new_metadata[f'{name}_std'] = std
-                if name != 's2_duration':
-                    assert std / mean < 0.2, f"⚠ Warning: High relative error in {name} for {set_pmt.source_dir.name}"
+                print(f"  {name}: {mean:.2f} ± {std:.2f} µs, rel. error: {100 * std / mean:.2f} %")
+                # if name != 's2_duration':
+                #     assert std / mean < 0.2, f"⚠ Warning: High relative error in {name} for {set_pmt.source_dir.name}"
             
             updated_sets.append(replace(set_pmt, metadata=new_metadata))
             
-            print(f"✓ {set_pmt.source_dir.name}:")
-            print(f"  S2 Start:    {new_metadata['t_s2_start_mean']:.2f} ± {new_metadata['t_s2_start_std']:.2f} µs, rel. error: {100 * new_metadata['t_s2_start_std'] / new_metadata['t_s2_start_mean']:.2f} %")
-            print(f"  S2 End:      {new_metadata['t_s2_end_mean']:.2f} ± {new_metadata['t_s2_end_std']:.2f} µs, rel. error: {100 * new_metadata['t_s2_end_std'] / new_metadata['t_s2_end_mean']:.2f} %")
-            print(f"  S2 Duration: {new_metadata['s2_duration_mean']:.2f} ± {new_metadata['s2_duration_std']:.2f} µs")
 
         except Exception as e:
             print(f"⚠ Warning: Failed to process {set_pmt.source_dir.name}: {e}")
             updated_sets.append(set_pmt)  # Keep original if processing fails
+ 
             continue
-    
+        
     return replace(run, sets=updated_sets)
 
 

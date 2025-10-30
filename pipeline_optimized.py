@@ -32,8 +32,9 @@ Usage:
 from typing import Dict, Optional
 from dataclasses import replace
 from pathlib import Path
+import numpy as np
 
-from RaTag.constructors import (estimate_s1_from_frames, set_from_dir, set_fields, set_transport_properties,
+from .constructors import (estimate_s1_from_frames, set_from_dir, set_fields, set_transport_properties,
                                 s2_variance_run, populate_run)
 from .unified_integration import integrate_run_unified
 from .analysis import fit_run_s2
@@ -42,16 +43,18 @@ from .datatypes import Run, SetPmt, S2Areas, XRayResults
 from .config import IntegrationConfig, FitConfig
 from .transport import with_gas_density
 from .dataIO import save_figure, store_s2area
-import RaTag.plotting as plotting
+from . import plotting as plotting
 
 
 def prepare_run_optimized(run: Run,
                         flag_plot: bool = False,
+                        skip_s1: bool = False,
                         max_frames_s1: int = 1000,
+                        threshold_s1: float = 1.0,
                         estimate_s2_windows: bool = True,
                         max_frames_s2: int = 10000,
                         s2_duration_cuts: tuple = (5, 25),
-                        threshold_s2: float = 0.4) -> Run:
+                        threshold_s2: float = 0.8) -> Run:
     """
     Complete run preparation pipeline (OPTIMIZED).
     
@@ -100,8 +103,8 @@ def prepare_run_optimized(run: Run,
     for i, s in enumerate(run.sets):
         print(f"\n  Set {i+1}/{len(run.sets)}: {s.source_dir.name}")
         
-        # S1 estimation with limited frames
-        s1 = estimate_s1_from_frames(s, max_frames=max_frames_s1, threshold_s1=0.1, flag_plot=flag_plot)
+        if not skip_s1:
+            s1 = estimate_s1_from_frames(s, max_frames=max_frames_s1, threshold_s1=threshold_s1, flag_plot=False)
 
         # Set fields and transport (uses metadata, not files)
         s1 = set_fields(s1, drift_gap_cm=run.drift_gap, el_gap_cm=run.el_gap, gas_density=run.gas_density)
@@ -120,6 +123,7 @@ def prepare_run_optimized(run: Run,
             s2_duration_cuts=s2_duration_cuts,
             threshold_s2=threshold_s2,
             max_frames=max_frames_s2,
+            flag_plot=flag_plot,
             method='percentile'
         )
         print("  → S2 timing statistics stored in set metadata")
@@ -256,18 +260,11 @@ def run_s2_fitting(
             
             # Waveform validation plot (if we have S2 timing metadata)
             if 't_s2_start_mean' in set_pmt.metadata and len(set_pmt.filenames) > 0:
-                n_waveforms = min(10, len(set_pmt.filenames))
-                fig_wf, _ = plotting.plot_waveforms_with_s1_s2(
+                n_waveforms = min(3, len(set_pmt.filenames))
+                fig_wf = plotting.plot_set_windows(
                     set_pmt,
-                    n_waveforms=n_waveforms,
-                    t_s1_mean=set_pmt.metadata.get("t_s1"),
-                    t_s1_std=set_pmt.metadata.get("t_s1_std"),
-                    t_s2_start_mean=set_pmt.metadata.get("t_s2_start_mean"),
-                    t_s2_start_std=set_pmt.metadata.get("t_s2_start_std"),
-                    t_s2_end_mean=set_pmt.metadata.get("t_s2_end_mean"),
-                    t_s2_end_std=set_pmt.metadata.get("t_s2_end_std"),
                 )
-                save_figure(fig_wf, plots_dir / f"{set_name}_waveform_validation.png")
+                # save_figure(fig_wf, plots_dir / f"{set_name}_waveform_validation.png")
         
         # Run-level plot: S2 vs drift field
         if flag_plot:
