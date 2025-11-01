@@ -17,8 +17,8 @@ from pathlib import Path
 import numpy as np
 
 from .datatypes import PMTWaveform, SetPmt, S2Areas, XRayEvent, XRayResults, Run
-from .dataIO import iter_waveforms, store_s2area, store_xrayset
-from .transformations import (
+from ..core.dataIO import iter_waveforms, store_s2area, store_xrayset
+from ..waveform import (
     t_in_us, v_in_mV, subtract_pedestal, extract_window, 
     moving_average, threshold_clip, integrate_trapz
 )
@@ -26,14 +26,12 @@ from .config import IntegrationConfig
 from .units import s_to_us
 
 
-def process_waveform_unified(
-    wf: PMTWaveform,
-    t_s1: float,
-    s2_start: float,
-    s2_end: float,
-    xray_config: dict,
-    s2_config: dict
-) -> Tuple[list[XRayEvent], np.ndarray]:
+def process_waveform_unified(wf: PMTWaveform,
+                            t_s1: float,
+                            s2_start: float,
+                            s2_end: float,
+                            xray_config: dict,
+                            s2_config: dict) -> Tuple[list[XRayEvent], np.ndarray]:
     """
     Process a single waveform for both X-ray classification and S2 integration.
     
@@ -57,9 +55,6 @@ def process_waveform_unified(
     xray_events = []
     s2_areas = []
     
-    # Convert to standard units (ONCE per waveform)
-    wf = t_in_us(wf)
-    wf = v_in_mV(wf)
     wf = subtract_pedestal(wf, n_points=xray_config['n_pedestal'])
     
     # Handle FastFrame vs single frame
@@ -95,14 +90,12 @@ def process_waveform_unified(
     return xray_events, np.array(s2_areas)
 
 
-def classify_xray_frame(
-    processed_wf: PMTWaveform,
-    wf_id: str,
-    frame_idx: int,
-    t_s1: float,
-    s2_start: float,
-    config: dict
-) -> XRayEvent:
+def classify_xray_frame(processed_wf: PMTWaveform,
+                        wf_id: str,
+                        frame_idx: int,
+                        t_s1: float,
+                        s2_start: float,
+                        config: dict) -> XRayEvent:
     """
     Classify a single frame as X-ray or not.
     
@@ -164,12 +157,10 @@ def classify_xray_frame(
     )
 
 
-def integrate_s2_frame(
-    processed_wf: PMTWaveform,
-    s2_start: float,
-    s2_end: float,
-    config: dict
-) -> float:
+def integrate_s2_frame(processed_wf: PMTWaveform,
+                        s2_start: float,
+                        s2_end: float,
+                        config: dict) -> float:
     """
     Integrate S2 signal for a single frame.
     
@@ -276,14 +267,13 @@ def integrate_set_unified(set_pmt: SetPmt,
     return xray_results, s2_areas_obj
 
 
-def integrate_run_unified(
-    run: Run,
-    ts2_tol: float = -2.7,
-    range_sets: Optional[slice] = None,
-    xray_config: Optional[IntegrationConfig] = None,
-    ion_config: Optional[IntegrationConfig] = None,
-    use_estimated_s2_windows: bool = True
-) -> Tuple[Dict[str, XRayResults], Dict[str, S2Areas]]:
+def integrate_run_unified(run: Run,
+                          ts2_tol: float = -2.7,
+                          range_sets: Optional[slice] = None,
+                          xray_config: Optional[IntegrationConfig] = None,
+                          ion_config: Optional[IntegrationConfig] = None,
+                          use_estimated_s2_windows: bool = True 
+                          ) -> Tuple[Dict[str, XRayResults], Dict[str, S2Areas]]:
     """
     Process all sets in a run with unified X-ray classification and S2 integration.
     

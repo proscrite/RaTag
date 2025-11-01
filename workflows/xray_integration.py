@@ -5,12 +5,13 @@ import matplotlib.pyplot as plt
 from typing import Callable, List, Dict
 from .datatypes import PMTWaveform, SetPmt, Run, XRayEvent, XRayResults
 from .config import IntegrationConfig
-from .dataIO import iter_waveforms, store_xrayset
+from .core.dataIO import iter_waveforms, store_xrayset
 from .units import s_to_us, V_to_mV
 from .transformations import *
 
-# -----
+# ----------------------------------------------------------------
 # --- Signal classification functions for single waveforms
+# ----------------------------------------------------------------
 
 def excessive_s2_check(wf: PMTWaveform, s2_start: float, bs_threshold: float, max_area_s2: float = 1e5, debug: bool = False ) -> tuple[bool, str]:
     """Check if waveform baseline before S2 is acceptable."""
@@ -94,9 +95,10 @@ def xray_event_pipeline(wf: PMTWaveform,
 
     return events
 
-# -----
-# --- Set-level S1 estimation and X-ray classification
-# -------------------------------------------------
+# -------------------------------------------------------
+# ---   Set-level S1 estimation and X-ray classification
+# -------------------------------------------------------
+
 def classify_xrays_set(set_pmt: SetPmt,
                        t_s1: float,
                        s2_start: float,
@@ -171,6 +173,8 @@ def classify_xrays_set(set_pmt: SetPmt,
     )
     store_xrayset(xresults)
     return xresults
+
+
 # -------------------------------------------------
 # ---- Run-level x-ray integration 
 # -------------------------------------------------

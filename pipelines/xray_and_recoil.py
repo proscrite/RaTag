@@ -34,19 +34,19 @@ from dataclasses import replace
 from pathlib import Path
 import numpy as np
 
-from .constructors import (estimate_s1_from_frames, set_from_dir, set_fields, set_transport_properties,
+from core.constructors import (estimate_s1_from_frames, set_from_dir, set_fields, set_transport_properties,
                                 s2_variance_run, populate_run)
-from .unified_integration import integrate_run_unified
-from .analysis import fit_run_s2
-from .xray_calibration import calibrate_and_analyze
-from .datatypes import Run, SetPmt, S2Areas, XRayResults
-from .config import IntegrationConfig, FitConfig
-from .transport import with_gas_density
-from .dataIO import save_figure, store_s2area
-from . import plotting as plotting
+from core.datatypes import Run, SetPmt, S2Areas, XRayResults
+from core.config import IntegrationConfig, FitConfig
+from core.physics import with_gas_density
+from core.dataIO import save_figure, store_s2area
+from core.fitting import fit_run_s2
+from workflows.unified_processing import integrate_run_unified
+from workflows.xrays import calibrate_and_analyze
+from .. import plotting as plotting
 
 
-def prepare_run_optimized(run: Run,
+def prepare_run_unified(run: Run,
                         flag_plot: bool = False,
                         skip_s1: bool = False,
                         max_frames_s1: int = 1000,
@@ -205,13 +205,11 @@ def run_unified_integration(
     return xray_results, s2_areas
 
 
-def run_s2_fitting(
-    run: Run,
-    s2_areas_dict: Dict[str, S2Areas],
-    fit_config: Optional[FitConfig] = None,
-    flag_plot: bool = False,
-    save_plots: bool = True
-) -> Dict[str, S2Areas]:
+def run_s2_fitting(run: Run,
+                    s2_areas_dict: Dict[str, S2Areas],
+                    fit_config: Optional[FitConfig] = None,
+                    flag_plot: bool = False,
+                    save_plots: bool = True ) -> Dict[str, S2Areas]:
     """
     Fit Gaussian distributions to S2 area histograms.
     
@@ -319,7 +317,7 @@ def run_calibration_analysis_optimized(
     
     if save_plots:
         print("\nGenerating and saving comprehensive plots...")
-        from .dataIO import load_xray_results, store_xray_areas_combined
+        from .core.dataIO import load_xray_results, store_xray_areas_combined
         
         # Create plots directory
         plots_dir = run.root_directory / "plots"

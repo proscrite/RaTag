@@ -1,22 +1,26 @@
-import numpy as np
+import numpy as np # type: ignore
 from pathlib import Path
 from typing import Union, Iterator, Optional
 import re
 import json
+import itertools
+from dataclasses import replace
 
+from .units import V_to_mV, s_to_us
 from .datatypes import Waveform, SetPmt, Run, S2Areas, PMTWaveform, XRayResults
+from .wfm2read_fast import wfm2read # type: ignore
 
-from RaTag.scripts.wfm2read_fast import wfm2read # type: ignore
 PathLike = Union[str, Path]
 
+# -------------------------------------
+# --- Load waveform from .wfm file  ---
+# -------------------------------------
 
-# --- Load waveform from .wfm file ---
-# Rename by _load_wfm_V_s
-# Call from def load_wfm(): wf = _load_wfm_V_s(path); wf = V_to_mV(wf); wf = t_in_us(wf);
-def load_wfm(path: PathLike) -> Waveform:
-    """Load waveform from a .wfm file storing (t, -v)."""
+def _load_wfm_V_s(path: PathLike) -> PMTWaveform:
+    """Load waveform from a .wfm file storing (t, v)."""
     wfm = wfm2read(str(path))
-    t, v = wfm[1], -wfm[0]  # Invert signal polarity
+    t, v = wfm[1], wfm[0]
+    v = -v  # Invert signal polarity
     if len(v.shape) > 1:  # FastFrame format
         ff = True
         nframes = v.shape[0]
@@ -24,6 +28,17 @@ def load_wfm(path: PathLike) -> Waveform:
         ff = False
         nframes = 1
     return PMTWaveform(t, v, source=str(path), ff=ff, nframes=nframes)
+
+def load_wfm(path: PathLike) -> PMTWaveform:
+    """Load waveform from a .wfm file storing (t, -v)."""
+    wf = _load_wfm_V_s(path)
+    t_s, v_V = wf.t, wf.v
+
+    v_mV = V_to_mV(v_V)
+    t_us = s_to_us(t_s)
+
+    return PMTWaveform(t=t_us, v=v_mV, source=wf.source, ff=wf.ff, nframes=wf.nframes)
+
 
 # --- Lazy loader ---
 def iter_waveforms(set_pmt: SetPmt) -> Iterator[PMTWaveform]:
@@ -42,6 +57,39 @@ def extract_single_frame(wf: Waveform, frame: int = 0) -> PMTWaveform:
         raise ValueError(f"Frame index {frame} out of range [0, {wf.nframes})")
     v_single = wf.v[frame, :]
     return PMTWaveform(t=wf.t, v=v_single, source=wf.source, ff=False, nframes=1)
+
+
+def iter_frames(set_pmt, max_files: int = None) -> Iterator[PMTWaveform]:
+    """
+    Iterate over individual frames from a set, handling both FastFrame and single-frame.
+    
+    This is the canonical way to iterate over frames in the codebase.
+    All analysis functions should use this to ensure consistency.
+    
+    Args:
+        set_pmt: SetPmt to iterate over
+        max_files: Optional limit on number of files to process
+        
+    Yields:
+        Individual PMTWaveform objects (with ff=False)
+    """
+    waveforms = iter_waveforms(set_pmt)
+    
+    if max_files is not None:
+        waveforms = itertools.islice(waveforms, max_files)
+    
+    for wf in waveforms:
+        if wf.ff and wf.nframes > 1:
+            # FastFrame: yield each frame individually
+            for frame_idx in range(wf.nframes):
+                yield extract_single_frame(wf, frame_idx)
+        else:
+            # Single frame: yield as-is
+            yield wf
+
+# ----------------------------------------
+# --- Subdirectory parsers for set constructions  ---
+# -------------------------------------
 
 def parse_subdir_name(name: str) -> dict:
     """
@@ -80,6 +128,74 @@ def parse_filename(fname: str) -> dict:
         if m.group(2):
             out["channel"] = int(m.group(2))
     return out
+
+# ----------------------------------------
+# --- Set metadata IO:     ---------------
+# --- store transport properties, s1, s2...
+# ----------------------------------------
+
+# core/dataIO.py - Add simple save/load functions
+
+def save_set_metadata(set_pmt: SetPmt) -> None:
+    """Save set metadata to JSON file."""
+    metadata_file = set_pmt.source_dir / ".metadata.json"
+    
+    metadata = {
+        # Timing parameters
+        "t_s1": set_pmt.metadata.get("t_s1"),
+        "t_s1_std": set_pmt.metadata.get("t_s1_std"),
+        "t_s2_start_mean": set_pmt.metadata.get("t_s2_start_mean"),
+        "t_s2_start_std": set_pmt.metadata.get("t_s2_start_std"),
+        "t_s2_end_mean": set_pmt.metadata.get("t_s2_end_mean"),
+        "t_s2_end_std": set_pmt.metadata.get("t_s2_end_std"),
+        "s2_duration_mean": set_pmt.metadata.get("s2_duration_mean"),
+        "s2_duration_std": set_pmt.metadata.get("s2_duration_std"),
+        
+        # Transport properties
+        "drift_field": float(set_pmt.drift_field) if set_pmt.drift_field else None,
+        "EL_field": float(set_pmt.EL_field) if set_pmt.EL_field else None,
+        "red_drift_field": float(set_pmt.red_drift_field) if set_pmt.red_drift_field else None,
+        "red_EL_field": float(set_pmt.red_EL_field) if set_pmt.red_EL_field else None,
+        "speed_drift": float(set_pmt.speed_drift) if set_pmt.speed_drift else None,
+        "time_drift": float(set_pmt.time_drift) if set_pmt.time_drift else None,
+        "diffusion_coefficient": float(set_pmt.diffusion_coefficient) if set_pmt.diffusion_coefficient else None,
+    }
+    
+    with open(metadata_file, 'w') as f:
+        json.dump(metadata, f, indent=2)
+
+
+def load_set_metadata(set_pmt: SetPmt) -> Optional[SetPmt]:
+    """Load metadata if exists, return None if not found."""
+    metadata_file = set_pmt.source_dir / ".metadata.json"
+    
+    if not metadata_file.exists():
+        return None
+    
+    with open(metadata_file, 'r') as f:
+        data = json.load(f)
+    
+    # Restore metadata dict
+    metadata = {k: v for k, v in data.items() 
+                if k in ["t_s1", "t_s1_std", "t_s2_start_mean", "t_s2_start_std",
+                        "t_s2_end_mean", "t_s2_end_std", "s2_duration_mean", "s2_duration_std"]}
+    
+    # Restore SetPmt with all properties
+    return replace(
+        set_pmt,
+        metadata={**set_pmt.metadata, **metadata},
+        drift_field=data.get("drift_field"),
+        EL_field=data.get("EL_field"),
+        red_drift_field=data.get("red_drift_field"),
+        red_EL_field=data.get("red_EL_field"),
+        speed_drift=data.get("speed_drift"),
+        time_drift=data.get("time_drift"),
+        diffusion_coefficient=data.get("diffusion_coefficient")
+    )
+
+# ----------------------------------------
+# --- S2Areas storage and retrieval  -----
+# ----------------------------------------
 
 def store_s2area(s2: S2Areas, set_pmt: Optional[SetPmt] = None) -> None:
     """
@@ -169,6 +285,10 @@ def load_s2area(set_pmt: SetPmt) -> S2Areas:
             method="loaded_from_npy",
             params={"set_metadata": set_pmt.metadata}
         )
+
+# ------------------------------------------
+# --- XRayResults storage and retrieval  ---
+# ------------------------------------------
 
 def store_xray_results(xr: XRayResults, path: Optional[PathLike] = None) -> None:
     """Store XRayResults in .npy file inside the set's directory."""
@@ -306,6 +426,10 @@ def store_xray_areas_combined(areas: np.ndarray, run: Run, output_dir: Optional[
     with open(output_dir / f"{run.run_id}_xray_metadata.json", "w") as f:
         json.dump(metadata, f, indent=2)
 
+
+# ----------------------------------------
+# --- Figure saving utility  ------------
+# ----------------------------------------
 
 def save_figure(fig, filename: PathLike, dpi: int = 150) -> None:
     """

@@ -12,16 +12,15 @@ All functions follow functional programming principles with immutable data struc
 from typing import Dict, Optional
 from dataclasses import replace
 
-from .constructors import (populate_run, set_fields, set_transport_properties, 
-                          estimate_s1_from_frames, set_from_dir, s2_variance_run)
-from .analysis import integrate_run_s2, fit_run_s2
-from .xray_integration import classify_xrays_run
-from .xray_calibration import calibrate_and_analyze
-from .dataIO import store_s2area, load_s2area
-from .datatypes import Run, SetPmt, S2Areas, CalibrationResults
-from .config import IntegrationConfig, FitConfig
-from .transport import with_gas_density
-import RaTag.plotting as plotting
+from core.datatypes import Run, SetPmt, S2Areas, CalibrationResults
+from core.config import IntegrationConfig, FitConfig
+from core.physics import with_gas_density
+from core.dataIO import store_s2area
+from core.constructors import (populate_run, set_fields, set_transport_properties, 
+                          estimate_s1_from_frames, set_from_dir)
+from workflows.timing_estimation import find_s2_run, find_s1_set
+from workflows.recoil_integration import integrate_s2_run, fit_s2_run
+import plotting
 
 
 def prepare_set(s: SetPmt, run: Run, n_batches: int = 5, batch_size: int = 20, flag_plot: bool = False) -> SetPmt:
@@ -47,17 +46,15 @@ def prepare_set(s: SetPmt, run: Run, n_batches: int = 5, batch_size: int = 20, f
     return s1
 
 
-def prepare_run(
-    run: Run,
-    n_batches: int = 5,
-    batch_size: int = 20,
-    flag_plot: bool = False,
-    nfiles: Optional[int] = None,
-    estimate_s2_windows: bool = True,
-    s2_duration_cuts: tuple = (5, 25),
-    threshold_s2: float = 0.4,
-    max_waveforms_s2: Optional[int] = None
-) -> Run:
+def prepare_run(run: Run,
+                n_batches: int = 5,
+                batch_size: int = 20,
+                flag_plot: bool = False,
+                nfiles: Optional[int] = None,
+                estimate_s2_windows: bool = True,
+                s2_duration_cuts: tuple = (5, 25),
+                threshold_s2: float = 0.4,
+                max_waveforms_s2: Optional[int] = None) -> Run:
     """
     Complete run preparation pipeline:
     1. Add gas density
@@ -133,67 +130,18 @@ def prepare_run(
     
     return run
 
+# ----------------------------------
+# ---   Run-level Ion S2 integration  ---
+# ----------------------------------
 
-def run_xray_classification(
-    run: Run,
-    ts2_tol: float = -2.7,
-    range_sets: Optional[slice] = None,
-    config: IntegrationConfig = IntegrationConfig(),
-    nfiles: Optional[int] = None
-) -> Dict[str, any]:
-    """
-    Execute X-ray event classification across all sets in a run.
-
-    This identifies X-ray-like signals in the drift region between S1 and S2,
-    classifying events as accepted/rejected based on signal quality criteria.
-
-    Args:
-        run: Prepared Run object with sets populated
-        ts2_tol: Time tolerance before S2 window start (µs)
-        range_sets: Optional slice to process subset of sets
-        config: IntegrationConfig with analysis parameters
-        nfiles: If provided, limit each set to this many files (for testing)
-
-    Returns:
-        Dictionary mapping set_id -> XRayResults
-    """
-    print("\n" + "=" * 60)
-    print("X-RAY CLASSIFICATION PIPELINE")
-    print("=" * 60)
-    
-    # If nfiles is specified, create limited version of run
-    if nfiles is not None:
-        print(f"\nLimiting sets to {nfiles} files each (test mode)")
-        limited_sets = []
-        for s in run.sets:
-            limited_set = set_from_dir(s.source_dir, nfiles=nfiles)
-            # Copy metadata from prepared set
-            limited_set.metadata = s.metadata
-            limited_set.drift_field = s.drift_field
-            limited_set.EL_field = s.EL_field
-            limited_set.time_drift = s.time_drift
-            limited_sets.append(limited_set)
-        run = replace(run, sets=limited_sets)
-    
-    results = classify_xrays_run(run, ts2_tol=ts2_tol, range_sets=range_sets, config=config)
-    
-    print("\n" + "=" * 60)
-    print("X-RAY CLASSIFICATION COMPLETE")
-    print("=" * 60)
-    
-    return results
-
-
-def run_ion_integration(
-    run: Run,
-    ts2_tol: float = -2.7,
-    range_sets: Optional[slice] = None,
-    integration_config: IntegrationConfig = IntegrationConfig(),
-    fit_config: FitConfig = FitConfig(),
-    nfiles: Optional[int] = None,
-    flag_plot: bool = False,
-    use_estimated_s2_windows: bool = True
-) -> Dict[str, S2Areas]:
+def run_ion_integration(run: Run,
+                        ts2_tol: float = -2.7,
+                        range_sets: Optional[slice] = None,
+                        integration_config: IntegrationConfig = IntegrationConfig(),
+                        fit_config: FitConfig = FitConfig(),
+                        nfiles: Optional[int] = None,
+                        flag_plot: bool = False,
+                        use_estimated_s2_windows: bool = True) -> Dict[str, S2Areas]:
     """
     Execute ion (Ra recoil) S2 area integration and fitting across a run.
 
@@ -239,13 +187,13 @@ def run_ion_integration(
     else:
         print("\n[1/3] Integrating S2 areas using ts2_tol offset...")
     
-    areas = integrate_run_s2(run, ts2_tol=ts2_tol, range_sets=range_sets, 
+    areas = integrate_s2_run(run, ts2_tol=ts2_tol, range_sets=range_sets, 
                             integration_config=integration_config,
                             use_estimated_s2_windows=use_estimated_s2_windows)
     
     # Fit Gaussian distributions
     print("\n[2/3] Fitting Gaussian distributions...")
-    fitted = fit_run_s2(areas, fit_config=fit_config, flag_plot=flag_plot)
+    fitted = fit_s2_run(areas, fit_config=fit_config, flag_plot=flag_plot)
     
     # Store results and generate plots
     print("\n[3/3] Storing results and generating plots...")
@@ -259,7 +207,7 @@ def run_ion_integration(
         s2_result = fitted[set_name]
         
         # Store S2 areas with complete metadata
-        from .dataIO import store_s2area, save_figure
+        from .core.dataIO import store_s2area, save_figure
         store_s2area(s2_result, set_pmt=set_pmt)
         
         # Generate and save histogram plot
@@ -296,114 +244,3 @@ def run_ion_integration(
     print("=" * 60)
     
     return fitted
-
-
-def run_calibration_analysis(
-    run: Run,
-    ion_fitted_areas: Optional[Dict[str, S2Areas]] = None,
-    xray_bin_cuts: tuple = (0.6, 20),
-    xray_nbins: int = 100,
-    flag_plot: bool = True,
-    save_plots: bool = True
-) -> tuple:
-    """
-    Execute complete calibration and recombination analysis with comprehensive plotting.
-
-    This combines X-ray calibration data with ion S2 measurements to:
-    1. Extract gain factor (g_S2) from X-ray energy calibration
-    2. Normalize ion S2 areas using X-ray reference
-    3. Compute electron recombination fractions vs drift field
-    4. Generate and save all diagnostic plots
-
-    Args:
-        run: Run object with X-ray and ion data
-        ion_fitted_areas: Dictionary of fitted ion S2 areas per set.
-                         If None, will attempt to load from disk using load_s2area().
-        xray_bin_cuts: Range for X-ray histogram fitting
-        xray_nbins: Number of bins for X-ray histogram
-        flag_plot: If True, generate diagnostic plots
-        save_plots: If True, save plots to disk
-
-    Returns:
-        Tuple of (CalibrationResults, recombination_dict)
-        
-    Note:
-        If ion_fitted_areas is not provided, the function will load stored
-        S2 results from each set's directory. This makes the pipeline modular
-        and allows running calibration separately from ion integration.
-    """
-    print("\n" + "=" * 60)
-    print("CALIBRATION & RECOMBINATION ANALYSIS")
-    print("=" * 60)
-    
-    # Run calibration
-    calib_results, recomb_dict = calibrate_and_analyze(
-        run,
-        ion_fitted_areas=ion_fitted_areas,
-        xray_bin_cuts=xray_bin_cuts,
-        xray_nbins=xray_nbins,
-        flag_plot=flag_plot
-    )
-    
-    if save_plots:
-        print("\nGenerating and saving comprehensive plots...")
-        from .dataIO import save_figure, load_xray_results, store_xray_areas_combined
-        
-        # Create plots directory
-        plots_dir = run.root_directory / "plots"
-        plots_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Load and save combined X-ray areas
-        try:
-            xray_areas = load_xray_results(run)
-            store_xray_areas_combined(xray_areas, run, plots_dir)
-            
-            # Plot combined X-ray histogram (this should be done in calibrate_and_analyze)
-            # but we can regenerate it here for consistency
-            print("  → Combined X-ray histogram...")
-            
-        except Exception as e:
-            print(f"Warning: Could not process X-ray results: {e}")
-        
-        # Generate normalized S2 vs drift plot
-        if ion_fitted_areas is not None:
-            print("  → S2 vs drift (normalized)...")
-            fig_norm, _ = plotting.plot_s2_vs_drift(run, ion_fitted_areas, normalized=True)
-            save_figure(fig_norm, plots_dir / f"{run.run_id}_s2_vs_drift_normalized.png")
-        
-        # Generate diffusion analysis plots if S2 variance data is available
-        print("  → Diffusion analysis...")
-        try:
-            drift_times = []
-            sigma_obs_squared = []
-            speeds_drift = []
-            drift_fields = []
-            
-            for set_pmt in run.sets:
-                if "s2_duration_std" in set_pmt.metadata:
-                    drift_times.append(set_pmt.time_drift)
-                    sigma_obs_squared.append(set_pmt.metadata["s2_duration_std"] ** 2)
-                    speeds_drift.append(set_pmt.speed_drift)
-                    drift_fields.append(set_pmt.drift_field)
-            
-            if len(drift_times) > 0:
-                import numpy as np
-                fig_diff, _ = plotting.plot_s2_diffusion_analysis(
-                    np.array(drift_times),
-                    np.array(sigma_obs_squared),
-                    np.array(speeds_drift),
-                    np.array(drift_fields),
-                    run.pressure
-                )
-                save_figure(fig_diff, plots_dir / f"{run.run_id}_diffusion_analysis.png")
-            else:
-                print("  ⚠ No S2 variance data available for diffusion analysis")
-                
-        except Exception as e:
-            print(f"Warning: Could not generate diffusion analysis plots: {e}")
-    
-    print("\n" + "=" * 60)
-    print("CALIBRATION ANALYSIS COMPLETE")
-    print("=" * 60)
-    
-    return calib_results, recomb_dict

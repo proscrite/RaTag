@@ -1,7 +1,7 @@
 import numpy as np
 from dataclasses import dataclass
 from typing import Callable
-from .transformations import integrate_trapz
+from waveform.integration import integrate_trapz
 from .datatypes import PMTWaveform
 
 # -------------------------------

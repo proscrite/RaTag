@@ -26,13 +26,18 @@ def with_gas_density(run: Run) -> Run:
     return replace(run, gas_density=gd)
 
 
-# -------------------------------
-# Drift velocity models
-# -------------------------------
+# -------------------------------------------------------------------------------------------
+#  Drift velocity models
+#  Based on digitalized fits to experimental data: 
+#  Fig. 5 in Nuclear Inst. and Methods in Physics Research, A 972 (2020) 163965) 
+#  By O. Njoya, T. Tsang, M. Tarka et al. https://doi.org/10.1016/j.nima.2020.163965
+#  Digitized data in /RaTagging/scope_data/driftSpeed_redField_data.csv
+# ------------------------------------------------------------------------------------------- 
 
 def transport_saturation(rE: float, p0: float, p1: float, p2: float, p3: float) -> float:
     """
     Saturating + rational function for electron drift velocity.
+    Fitting experimental data in Xe gas at mid-range reduced fields.
     Args:
         rE : reduced electric field (Td)
     """
@@ -57,6 +62,11 @@ def redfield_to_speed(rE: float, params: dict = DRIFT_VELOCITY_PARAMS) -> float:
 def drift_curve(rE_list: Sequence[float], params: dict) -> np.ndarray:
     """Vectorized evaluation of drift velocities for a list of reduced fields."""
     return np.array([redfield_to_speed(rE, params) for rE in rE_list])
+
+# --------------------------------------------------------------
+# Inversion: speed to reduced field
+# For effective field calculations from measured drift speeds
+# --------------------------------------------------------------
 
 def speed_to_redfield(v_drift: float, 
                      params: dict = DRIFT_VELOCITY_PARAMS,
@@ -106,6 +116,7 @@ def speed_to_redfield_vectorized(v_drifts: np.ndarray,
 # -------------------------------
 # Diffusion models
 # -------------------------------
+
 def longitudinal_diffusion_coeff(rE: float, a: float, b: float) -> float:
     """
     Longitudinal diffusion coefficient [mm^2/μs].

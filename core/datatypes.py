@@ -120,7 +120,7 @@ class Run:
     sampling_rate: float = 1e9 
     el_gap: float = 0.8 # cm
     drift_gap: float = 1.4 # cm
-    sets: List[SetPmt] = None
+    sets: List[SetPmt] = field(default_factory=list)
 
     # Orchestrate cut params here
     gas_density: Optional[float] = None  # cm^-3, to be filled in
@@ -158,18 +158,6 @@ class S2Areas:
 
 
 # -------------------------------
-# Cut results
-# -------------------------------
-
-@dataclass(frozen=True)
-class RejectionLog:
-    cut_name: str
-    cut_fn: Callable[[Any], tuple[bool, np.ndarray, np.ndarray]]  # wf -> (bool, t_pass, V_pass)
-    passed: list[int]
-    rejected: list[int]
-    reason: str = ""
-
-# -------------------------------
 # X-ray event identification
 # -------------------------------
 
@@ -195,3 +183,17 @@ class CalibrationResults:
     N_e_exp: float
     g_S2: float
     # per_set: dict[str, dict[str, float]]  # e.g. {set_id: {"A_ion": ..., "N_e_meas": ..., "r": ..., "E_d": ...}}
+
+
+
+# -------------------------------
+# Deprecated: Cut results
+# -------------------------------
+
+@dataclass(frozen=True)
+class RejectionLog:
+    cut_name: str
+    cut_fn: Callable[[Any], tuple[bool, np.ndarray, np.ndarray]]  # wf -> (bool, t_pass, V_pass)
+    passed: list[int]
+    rejected: list[int]
+    reason: str = ""

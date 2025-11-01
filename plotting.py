@@ -1,21 +1,21 @@
 import select
 import matplotlib.pyplot as plt # type: ignore
 import time
-import numpy as np
-import ipywidgets as widgets
+import numpy as np # type: ignore
+import ipywidgets as widgets # type: ignore
 from IPython.display import display
-from typing import List
+from typing import Optional
 from pathlib import Path
 
-from .datatypes import PMTWaveform, SetPmt, RejectionLog, S2Areas, Run
-from .dataIO import load_wfm, iter_waveforms
-from .units import s_to_us, V_to_mV
+from core.datatypes import PMTWaveform, SetPmt, RejectionLog, S2Areas, Run
+from core.dataIO import load_wfm, iter_waveforms
+from core.units import s_to_us, V_to_mV
 
 # --------------------------------
 # Basic waveform plotter
 # --------------------------------
 
-def plot_waveform(wf: PMTWaveform, frame: int = None, ax=None, title: str = "Waveform", color: str = "b"):
+def plot_waveform(wf: PMTWaveform, frame: Optional[int] = None, ax=None, title: str = "Waveform", color: str = "b"):
     """Plot a single waveform."""
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 6))
@@ -35,14 +35,14 @@ def plot_waveform(wf: PMTWaveform, frame: int = None, ax=None, title: str = "Wav
         t = s_to_us(t)  # convert to µs
         V = V_to_mV(V)  # convert to mV
     
-    wf_index = Path(wf.source).name.replace(".wfm", "").replace("Wfm", "").split("_")[-1]
+    wf_index = Path(wf.source).name.replace(".wfm", "").replace("Wfm", "").split("_")[-1] # type: ignore
     title = f"{title}, File {wf_index}"
     if wf.ff:
         title += f", frame {frame} of {wf.nframes}"
     
     ax.set(title=title, xlabel="Time (µs)", ylabel="Signal (mV)")
     ax.plot(t, V, color=color, alpha=1)
-    ax.set_xticks(np.arange(min(t), max(t), step=(max(t)-min(t))/10))
+    ax.set_xticks(np.arange(min(t), max(t), step=(max(t)-min(t))/10)) # type: ignore
     ax.grid(True) 
     return ax, V.max()
 
@@ -82,7 +82,7 @@ def _plot_window_shading(ax: plt.Axes, kwargs: dict, key: str, y_max: float, col
                          color=color, alpha=0.1)
 
 def plot_set_windows(set_pmt: SetPmt, 
-                          file_index: int = None, frame: int = None,
+                          file_index: int = None, frame: int = None, # type: ignore
                           ax = None, **kwargs) -> tuple:
     """
     Plot multiple waveforms with S1 and S2 timing markers.
@@ -102,7 +102,7 @@ def plot_set_windows(set_pmt: SetPmt,
     Returns:
         (fig, axes)
     """
-    from .dataIO import load_wfm
+    from .core.dataIO import load_wfm
     
     kwargs = _get_metadata_kwargs(kwargs, set_pmt.metadata) # get timing params
     
@@ -419,29 +419,6 @@ def plot_xray_histogram(areas: np.ndarray, run_id: str, nbins: int = 100,
     
     return fig, ax
 
-def plot_s1_time_distribution(s1_times: List[float], 
-                            title: str = "S1 Peak Times Distribution",
-                            method: str = "mad",
-                            ax = None):
-    """Plot histogram of S1 peak times with mean and std."""
-    from RaTag.constructors import compute_s2_variance
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 6))
-
-    n, bins, _ = ax.hist(s1_times, bins=50);
-    cbins = 0.5 * (bins[1:] + bins[:-1])
-    t_mode, dt_mean = compute_s2_variance(s1_times, method=method)
-
-    # t_mode = cbins[np.argmax(n)]
-    # dt_mean = np.std(s1_times)
-    ax.axvline(t_mode, color='red', linestyle='--', label='Mode S1 time')
-
-    ax.fill_between((t_mode - dt_mean, t_mode + dt_mean), 0, max(n),
-                    color='g', alpha=0.2)
-
-    ax.set(xlabel='S1 Peak Time (μs)', ylabel='Counts', title=title)
-    ax.legend()
-
 
 def plot_s2_diffusion_analysis(drift_times: np.ndarray,
                                sigma_obs_squared: np.ndarray,
@@ -500,6 +477,54 @@ def plot_s2_diffusion_analysis(drift_times: np.ndarray,
     
     plt.tight_layout()
     return fig, axes
+
+
+def plot_time_histograms(times: np.ndarray,
+                        title: str = "Time Distribution",
+                        mean: Optional[float] = None,
+                        std: Optional[float] = None,
+                        xlabel: str = "Time (µs)",
+                        color: str = 'blue',
+                        ax: Optional[plt.Axes] = None) -> plt.Figure:
+    """
+    Plot timing histogram with mean and std markers.
+    
+    Simple histogram plotter that can be used standalone or as subplot.
+    
+    Args:
+        times: Timing array to plot
+        title: Plot title
+        mean: Mean/mode value (for vertical line)
+        std: Standard deviation (for shaded region)
+        xlabel: X-axis label
+        color: Fill color for std region
+        ax: Optional axes to plot on (for subplots)
+        
+    Returns:
+        Matplotlib figure
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 6))
+    else:
+        fig = ax.get_figure()
+    
+    # Plot histogram
+    n, bins, _ = ax.hist(times, bins=50, alpha=0.7, color=color)
+    
+    # Add mean line and std shading
+    if mean is not None:
+        ax.axvline(mean, color='red', linestyle='--', label=f'Mode: {mean:.2f} µs')
+        
+        if std is not None:
+            ax.fill_between((mean - std, mean + std), 0, max(n),
+                           color=color, alpha=0.2,
+                           label=f'± σ: {std:.2f} µs')
+    
+    ax.set(xlabel=xlabel, ylabel='Counts', title=title)
+    ax.legend()
+    ax.grid(alpha=0.3)
+    
+    return fig
 
 # --------------------------------
 # Deprecated functions
