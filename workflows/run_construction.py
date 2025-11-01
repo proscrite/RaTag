@@ -132,11 +132,15 @@ def initialize_run(run: Run, max_files: Optional[int] = None) -> Run:
     print("\n[3/3] Computing fields and transport properties...")
     
     def process_set(s: SetPmt) -> SetPmt:
-        # Try to load from cache (checking for transport as indicator)
-        loaded = load_set_metadata(s)
-        if loaded and loaded.time_drift is not None:
-            print(f"  📂 {s.source_dir.name}: Loaded from cache")
-            return loaded
+        # Check if metadata file exists on disk
+        metadata_file = s.source_dir.parent / "processed_data" / ".metadata.json"
+        
+        if metadata_file.exists():
+            # Try to load from cache
+            loaded = load_set_metadata(s)
+            if loaded and loaded.time_drift is not None:
+                print(f"  📂 {s.source_dir.name}: Loaded from cache")
+                return loaded
         
         # Compute fields
         s_with_fields = set_fields(
@@ -153,9 +157,9 @@ def initialize_run(run: Run, max_files: Optional[int] = None) -> Run:
             transport=None
         )
         
-        # Save immediately
+        # Save to cache immediately!
         save_set_metadata(s_with_transport)
-        print(f"  ✓ {s.source_dir.name}: Computed and saved")
+        print(f"  ✓ {s.source_dir.name}: Computed and saved to cache")
         
         return s_with_transport
     

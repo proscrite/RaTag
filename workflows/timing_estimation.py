@@ -110,8 +110,10 @@ def _estimate_timing_in_run(run: Run,
         
         # Check cache (metadata contains timing stats)
         cache_key = f"t_{param_name}" if param_name == "s1" else f"t_{param_name}_start"
+        data_file = data_dir / f"{set_pmt.source_dir.name}_{param_name}.npz"
+
         loaded = load_set_metadata(set_pmt)
-        if loaded and cache_key in loaded.metadata:
+        if loaded and cache_key in loaded.metadata and data_file.exists():
             print(f"  📂 Loaded from cache")
             updated_sets.append(loaded)
             continue
@@ -236,7 +238,7 @@ def compute_s2(set_pmt: SetPmt,
     durations = t_ends - t_starts
     
     timing_data = [
-        ("t_s2_start", t_starts, (expected_s2_start * 0.3, expected_s2_start * 1.5)),
+        ("t_s2_start", t_starts, (expected_s2_start * 0.8, expected_s2_start * 1.3)),
         ("t_s2_end", t_ends, (expected_s2_start * 1.2, 35)),
         ("s2_duration", durations, s2_duration_cuts)
     ]
@@ -247,9 +249,9 @@ def compute_s2(set_pmt: SetPmt,
         new_metadata.update(stats)
     
     s2_data = {
-        't_starts': t_starts,
-        't_ends': t_ends,
-        'durations': durations
+        't_s2_start': t_starts, 
+        't_s2_end': t_ends,     
+        's2_duration': durations
     }
     
     return replace(set_pmt, metadata=new_metadata), s2_data
@@ -277,11 +279,11 @@ def workflow_s1_set(set_pmt: SetPmt,
     # Default directories
     if data_dir is None:
         data_dir = set_pmt.source_dir.parent / "processed_data"
-        data_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
     
     if plots_dir is None:
         plots_dir = set_pmt.source_dir.parent / "plots" / "s1_timing"
-        plots_dir.mkdir(parents=True, exist_ok=True)
+    plots_dir.mkdir(parents=True, exist_ok=True)
     
     # Save
     save_timing_results(updated_set, s1_times, data_dir, "s1")
@@ -294,6 +296,7 @@ def workflow_s1_set(set_pmt: SetPmt,
                                xlabel = "Time (µs)", color='blue', ax = None)
 
     fig.savefig(plots_dir / f"{set_pmt.source_dir.name}_s1.png")
+    plt.close(fig)
     return updated_set
 
 
@@ -317,25 +320,26 @@ def workflow_s2_set(set_pmt: SetPmt,
     # Default directories
     if data_dir is None:
         data_dir = set_pmt.source_dir.parent / "processed_data"
-        data_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
     
     if plots_dir is None:
         plots_dir = set_pmt.source_dir.parent / "plots" / "s2_timing"
-        plots_dir.mkdir(parents=True, exist_ok=True)
+    plots_dir.mkdir(parents=True, exist_ok=True)
     
     # Save
     save_timing_results(updated_set, s2_data, data_dir, "s2")
     
     # Plot
     fig, ax = plt.subplots(3, 1, figsize=(8, 12))
-    for a, time_data in zip(ax, ['t_start', 't_end', 'duration']):
+    for a, time_data in zip(ax, ['t_s2_start', 't_s2_end', 's2_duration']):
         plot_time_histograms(s2_data[time_data], 
-                             title=f"S2 {time_data.replace('t_', ' ').title()} - {set_pmt.source_dir.name}",
+                             title=f"{time_data.replace('t_', ' ').replace('_', ' ').title()} - {set_pmt.source_dir.name}",
                              mean=updated_set.metadata.get(f"{time_data}", None),
                              std=updated_set.metadata.get(f"{time_data}_std", None),
                              xlabel = "Time (µs)", color='blue', ax = a)
 
     fig.savefig(str(plots_dir / f"{set_pmt.source_dir.name}_s2.png"))
+    plt.close(fig)
 
     return updated_set
 

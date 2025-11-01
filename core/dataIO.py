@@ -137,18 +137,30 @@ def parse_filename(fname: str) -> dict:
 # core/dataIO.py - Add simple save/load functions
 
 def save_set_metadata(set_pmt: SetPmt) -> None:
-    """Save set metadata to JSON file."""
-    metadata_file = set_pmt.source_dir / ".metadata.json"
+    """
+    Save set metadata to JSON file in processed_data directory.
+    
+    Metadata includes:
+    - Transport properties (drift_field, speed_drift, time_drift, etc.)
+    - Timing estimates (t_s1, t_s2_start, s2_duration, etc.)
+    
+    File location: {run_dir}/processed_data/{set_name}_metadata.json
+    """
+    # Metadata goes in processed_data at run level
+    metadata_dir = set_pmt.source_dir.parent / "processed_data"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    
+    metadata_file = metadata_dir / f"{set_pmt.source_dir.name}_metadata.json"
     
     metadata = {
         # Timing parameters
         "t_s1": set_pmt.metadata.get("t_s1"),
         "t_s1_std": set_pmt.metadata.get("t_s1_std"),
-        "t_s2_start_mean": set_pmt.metadata.get("t_s2_start_mean"),
+        "t_s2_start": set_pmt.metadata.get("t_s2_start"),
         "t_s2_start_std": set_pmt.metadata.get("t_s2_start_std"),
-        "t_s2_end_mean": set_pmt.metadata.get("t_s2_end_mean"),
+        "t_s2_end": set_pmt.metadata.get("t_s2_end"),
         "t_s2_end_std": set_pmt.metadata.get("t_s2_end_std"),
-        "s2_duration_mean": set_pmt.metadata.get("s2_duration_mean"),
+        "s2_duration": set_pmt.metadata.get("s2_duration"),
         "s2_duration_std": set_pmt.metadata.get("s2_duration_std"),
         
         # Transport properties
@@ -166,8 +178,17 @@ def save_set_metadata(set_pmt: SetPmt) -> None:
 
 
 def load_set_metadata(set_pmt: SetPmt) -> Optional[SetPmt]:
-    """Load metadata if exists, return None if not found."""
-    metadata_file = set_pmt.source_dir / ".metadata.json"
+    """
+    Load set metadata from JSON if it exists.
+    
+    File location: {run_dir}/processed_data/{set_name}_metadata.json
+    
+    Returns:
+        Updated SetPmt with loaded metadata, or None if file doesn't exist
+    """
+    # Look in processed_data at run level
+    metadata_dir = set_pmt.source_dir.parent / "processed_data"
+    metadata_file = metadata_dir / f"{set_pmt.source_dir.name}_metadata.json"
     
     if not metadata_file.exists():
         return None
@@ -177,8 +198,8 @@ def load_set_metadata(set_pmt: SetPmt) -> Optional[SetPmt]:
     
     # Restore metadata dict
     metadata = {k: v for k, v in data.items() 
-                if k in ["t_s1", "t_s1_std", "t_s2_start_mean", "t_s2_start_std",
-                        "t_s2_end_mean", "t_s2_end_std", "s2_duration_mean", "s2_duration_std"]}
+                if k in ["t_s1", "t_s1_std", "t_s2_start", "t_s2_start_std",
+                        "t_s2_end", "t_s2_end_std", "s2_duration", "s2_duration_std"]}
     
     # Restore SetPmt with all properties
     return replace(
@@ -192,6 +213,56 @@ def load_set_metadata(set_pmt: SetPmt) -> Optional[SetPmt]:
         time_drift=data.get("time_drift"),
         diffusion_coefficient=data.get("diffusion_coefficient")
     )
+
+# ----------------------------------------
+# --- Run metadata storing           -----
+# ----------------------------------------
+
+def save_run_metadata(run: Run) -> None:
+    """
+    Save run-level metadata to JSON file.
+    
+    File location: {run_dir}/metadata/run_info.json
+    """
+    
+    metadata_dir = run.root_directory / "metadata"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    
+    metadata_file = metadata_dir / "run_info.json"
+    
+    # Collect run-level info
+    metadata = {
+        "run_id": run.run_id,
+        "target_isotope": run.target_isotope,
+        "pressure": run.pressure,
+        "temperature": run.temperature,
+        "sampling_rate": run.sampling_rate,
+        "drift_gap": run.drift_gap,
+        "el_gap": run.el_gap,
+        "el_field": run.el_field,
+        "gas_density": run.gas_density,
+        "W_value": run.W_value,
+        "E_gamma_xray": run.E_gamma_xray,
+        
+        # Set summaries
+        "n_sets": len(run.sets),
+        "sets": [
+            {
+                "name": s.source_dir.name,
+                "v_gate": s.metadata['gate'],
+                "v_anode": s.metadata['anode'],
+                "drift_field": s.drift_field,
+                "time_drift": s.time_drift,
+                "n_waveforms": len(s.filenames) if s.filenames else 0,
+            }
+            for s in run.sets
+        ]
+    }
+    
+    with open(metadata_file, 'w') as f:
+        json.dump(metadata, f, indent=2)
+
+
 
 # ----------------------------------------
 # --- S2Areas storage and retrieval  -----
