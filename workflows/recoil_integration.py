@@ -1,145 +1,340 @@
-"""Recoil (S2) signal analysis."""
-from typing import Dict, Callable
+"""
+Ion recoil S2 area integration and analysis workflow.
 
-from core.config import IntegrationConfig,  FitConfig 
-from core.datatypes import PMTWaveform, SetPmt, S2Areas, Run
-from core.dataIO import iter_waveforms
-from waveform.preprocessing import subtract_pedestal, moving_average, threshold_clip
-from waveform.s1s2_detection import extract_window
-from waveform.integration import integrate_trapz
+This module provides workflows for:
+1. Complete set-level S2 integration workflow (ETL: extract → transform → load)
+2. Run-level orchestration
+3. Field-dependent summary plotting
+
+Structure mirrors timing_estimation.py:
+- Set-level workflows handle complete ETL including immediate persistence
+- Run-level functions orchestrate with caching
+- Plotting uses existing functions from plotting module
+"""
+
+from typing import Dict, Optional
+from pathlib import Path
+from dataclasses import replace
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from RaTag.core.datatypes import SetPmt, S2Areas, Run
+from RaTag.core.config import IntegrationConfig, FitConfig
+from RaTag.core.dataIO import iter_frames, store_s2area, load_s2area, save_figure
+from RaTag.core.fitting import fit_set_s2
+from RaTag.core.functional import map_over
+from RaTag.waveform.integration import integrate_s2_in_frame
+from RaTag.plotting import plot_s2_vs_drift, plot_hist_fit
+
 
 # ============================================================================
-# WAVEFORM LEVEL
+# DIRECTORY MANAGEMENT HELPERS
 # ============================================================================
 
-def integrate_s2_frame(wf: PMTWaveform, s2_start: float, s2_end: float, 
-                      config: IntegrationConfig) -> float:
-    """Integrate S2 signal in a single frame."""
-    # Preprocess
-    wf = subtract_pedestal(wf, n_points=config.n_pedestal)
-    wf = moving_average(wf, window=config.ma_window)
-    wf = threshold_clip(wf, threshold=config.bs_threshold)
-    
-    # Extract window and integrate
-    wf_s2 = extract_window(wf, s2_start, s2_end)
-    areas = config.integrator(wf_s2, config.dt)
-    return areas[-1]  # Total area
-
-# ============================================================================
-# SET LEVEL
-# ============================================================================
-
-def integrate_s2_set(set_pmt: SetPmt,
-                     t_window: tuple[float, float],
-                     integration_config: IntegrationConfig) -> S2Areas:
-    
+def _setup_set_directories(set_pmt: SetPmt,
+                          plots_dir: Optional[Path] = None,
+                          data_dir: Optional[Path] = None) -> tuple[Path, Path]:
     """
-    Apply the S2 area pipeline to all waveforms in a set.
-
+    Setup output directories for set-level processing.
+    
     Args:
-        set_pmt: Measurement set (lazy list of waveforms).
-        t_window: (t_start, t_end) defining S2 window in seconds.
-        n_pedestal: number of samples to average for pedestal subtraction.
-        ma_window: moving average window length (samples).
-        bs_threshold: threshold for clipping voltages above baseline.
-        dt: time step [µs] for Riemann integration.
-
+        set_pmt: Source set
+        plots_dir: Optional custom plots directory
+        data_dir: Optional custom data directory
+        
     Returns:
-        S2Areas object with raw integration results.
+        Tuple of (plots_dir, data_dir)
     """
-    areas = []
+    if plots_dir is None:
+        plots_dir = set_pmt.source_dir.parent / "plots" / "s2_histograms"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    
+    if data_dir is None:
+        data_dir = set_pmt.source_dir.parent / "processed_data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    
+    return plots_dir, data_dir
 
-    for idx, wf in enumerate(iter_waveforms(set_pmt)):
+
+def _setup_run_directories(run: Run,
+                          plots_dir: Optional[Path] = None) -> tuple[Path, Path]:
+    """
+    Setup output directories for run-level processing.
+    
+    Args:
+        run: Source run
+        plots_dir: Optional custom plots directory
+        
+    Returns:
+        Tuple of (plots_dir, data_dir)
+    """
+    if plots_dir is None:
+        plots_dir = run.root_directory / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    
+    data_dir = run.root_directory / "processed_data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    
+    return plots_dir, data_dir
+
+
+# ============================================================================
+# SET-LEVEL WORKFLOW (Complete ETL with immediate persistence)
+# ============================================================================
+
+def workflow_s2_integration(set_pmt: SetPmt,
+                           max_files: Optional[int] = None,
+                           integration_config: IntegrationConfig = IntegrationConfig(),
+                           fit_config: FitConfig = FitConfig(),
+                           plots_dir: Optional[Path] = None,
+                           data_dir: Optional[Path] = None) -> SetPmt:
+    """
+    Complete S2 integration workflow for a single set.
+    
+    1. Integrate S2 areas from all frames
+    2. Fit Gaussian to distribution
+    3. Save results + histogram plot immediately
+    4. Store fit results in set metadata
+    
+    Prerequisites:
+    - Set metadata must contain t_s2_start and t_s2_end
+    
+    Args:
+        set_pmt: Set with S2 timing metadata
+        max_files: Optional limit on number of files
+        integration_config: Integration parameters
+        fit_config: Fitting parameters
+        plots_dir: Directory for histogram plots
+        data_dir: Directory for S2 areas data
+        
+    Returns:
+        SetPmt with updated metadata containing area_s2_mean, area_s2_ci95, area_s2_sigma
+    """
+    # Check preconditions
+    if 't_s2_start' not in set_pmt.metadata or 't_s2_end' not in set_pmt.metadata:
+        raise ValueError(f"Set {set_pmt.source_dir.name} missing S2 window metadata")
+    
+    s2_start = set_pmt.metadata['t_s2_start']
+    s2_end = set_pmt.metadata['t_s2_end']
+    
+    print(f"  Integrating S2 window: [{s2_start:.2f}, {s2_end:.2f}] µs")
+    
+    # Setup directories
+    plots_dir, data_dir = _setup_set_directories(set_pmt, plots_dir, data_dir)
+    
+    # Integrate all frames
+    areas = []
+    for wf in iter_frames(set_pmt, max_files=max_files):
         try:
-            area = integrate_s2_frame(wf, s2_start=t_window[0], s2_end=t_window[1],
-                                        config=integration_config)
+            area = integrate_s2_in_frame(wf, s2_start, s2_end, integration_config)
             areas.append(area)
         except Exception as e:
-            # Optionally, handle bad waveforms gracefully
-            # (e.g., append np.nan to keep indexing aligned)
-            areas.append(np.nan)
-
-    areas = np.array(areas)
-    areas = areas.flatten()  # Ensure 1D array (for FastFrame, etc.)
-    s2areas = S2Areas(source_dir=set_pmt.source_dir,
-                      areas=areas,
-                      method="s2_area_pipeline",
-                      params={
-                        "t_window": t_window,
-                        "width_s2": t_window[1] - t_window[0],
-                        "n_pedestal": integration_config.n_pedestal,
-                        "ma_window": integration_config.ma_window,
-                        "bs_threshold": integration_config.bs_threshold,
-                        "dt": integration_config.dt,
-                        "set_metadata": set_pmt.metadata,
-                    }
+            print(f"    ⚠ Frame integration failed: {e}")
+            continue
+    
+    if len(areas) == 0:
+        raise ValueError(f"No frames integrated successfully")
+    
+    print(f"    ✓ Integrated {len(areas)} frames")
+    
+    # Create S2Areas object
+    s2 = S2Areas(source_dir=set_pmt.source_dir,
+                 areas=np.array(areas).flatten(),
+                 method="recoil_integration",
+                 params={
+                    "s2_window": (s2_start, s2_end),
+                    "width_s2": s2_end - s2_start,
+                    "n_pedestal": integration_config.n_pedestal,
+                    "ma_window": integration_config.ma_window,
+                    "bs_threshold": integration_config.bs_threshold,
+                    "dt": integration_config.dt,
+                }
             )
-    return s2areas
+    
+    # Save raw areas immediately
+    store_s2area(s2, set_pmt=set_pmt, output_dir=data_dir)
+    print(f"    💾 Saved S2 areas to disk")
+    
+    # Fit Gaussian
+    s2_fitted = fit_set_s2(s2,
+                           bin_cuts=fit_config.bin_cuts,
+                           nbins=fit_config.nbins,
+                           exclude_index=fit_config.exclude_index,
+                           flag_plot=False)
+    
+    if s2_fitted.fit_success:
+        print(f"    ✓ Fit: μ={s2_fitted.mean:.3f} ± {s2_fitted.ci95:.3f} mV·µs")
+    else:
+        print(f"    ✗ Fit failed")
+    
+    # Save histogram plot
+    fig, _ = plot_hist_fit(s2_fitted,
+                           nbins=fit_config.nbins,
+                           bin_cuts=fit_config.bin_cuts)
+    
+    save_figure(fig, plots_dir / f"{set_pmt.source_dir.name}_s2_histogram.png")
+    plt.close(fig)  # Close figure to free memory
+    print(f"    📊 Saved histogram plot")
+    
+    # Update metadata with fit results
+    new_metadata = {
+        **set_pmt.metadata,
+        'area_s2_mean': s2_fitted.mean,
+        'area_s2_ci95': s2_fitted.ci95,
+        'area_s2_sigma': s2_fitted.sigma,
+        'area_s2_fit_success': s2_fitted.fit_success
+    }
+    
+    updated_set = replace(set_pmt, metadata=new_metadata)
+    
+    # Save updated metadata
+    from RaTag.core.dataIO import save_set_metadata
+    save_set_metadata(updated_set)
+    
+    return updated_set
+
 
 # ============================================================================
-# RUN LEVEL
+# RUN-LEVEL ORCHESTRATION (with caching)
 # ============================================================================
 
-def integrate_s2_run(run: Run, ts2_tol = -2.7, range_sets: slice = None,
-                     integration_config: IntegrationConfig = IntegrationConfig(),
-                     use_estimated_s2_windows: bool = True) -> Dict[str, S2Areas]:
+def integrate_s2_in_run(run: Run,
+                       range_sets: slice = None,
+                       max_files: Optional[int] = None,
+                       integration_config: IntegrationConfig = IntegrationConfig(),
+                       fit_config: FitConfig = FitConfig()) -> Run:
     """
-    Integrate S2 areas for all sets in a Run.
-
+    Integrate S2 areas for all sets in a run with caching.
+    
     Args:
-        run: Run object with measurements populated.
-        ts2_tol: Time tolerance before S2 window start (µs). Ignored if use_estimated_s2_windows=True.
-        range_sets: Optional slice to select subset of sets.
-        integration_config: Integration configuration parameters.
-        use_estimated_s2_windows: If True, use S2 window statistics from metadata 
-                                  (from s2_variance_run). If False, use t_drift + ts2_tol.
-
-    Returns:
-        Dict mapping set_id -> S2Areas.
-    """
-    results = {}
-    sets_to_process = run.sets[range_sets] if range_sets is not None else run.sets
-
-    for set_pmt in sets_to_process:
-        # Preconditions: set must already have t_s1 and time_drift
-        if "t_s1" not in set_pmt.metadata or set_pmt.time_drift is None:
-            raise ValueError(f"Set {set_pmt.source_dir} missing t_s1 or time_drift")
-
-        # Determine S2 integration window
-        if use_estimated_s2_windows and 't_s2_start_mean' in set_pmt.metadata:
-            # Use estimated S2 timing from metadata
-            t_start = set_pmt.metadata['t_s2_start_mean']
-            t_end = set_pmt.metadata['t_s2_end_mean']
-            t_window = (t_start, t_end)
-            print(f"Processing {set_pmt.source_dir.name} with estimated S2 window: {t_window}")
-        else:
-            # Fallback to original method: t_drift + ts2_tol
-            t_s1 = set_pmt.metadata["t_s1"]   # µs
-            t_drift = set_pmt.time_drift      # µs
-            t_start = t_s1 + t_drift + ts2_tol
-            t_end = t_start + run.width_s2  
-            t_window = (t_start, t_end)
-            
-            if use_estimated_s2_windows:
-                print(f"⚠ Warning: {set_pmt.source_dir.name} missing S2 window estimates, using fallback: {t_window}")
-            else:
-                print(f"Processing {set_pmt.source_dir.name} with calculated t_window: {t_window}")
+        run: Run with prepared sets (must have S2 window metadata)
+        range_sets: Optional slice to select subset of sets
+        max_files: Optional limit on files per set (testing)
+        integration_config: Integration parameters
+        fit_config: Fitting parameters
         
-        results[set_pmt.source_dir.name] = integrate_s2_set(set_pmt, t_window, 
-                                                            integration_config=integration_config)
-
-    return results
+    Returns:
+        Run with updated sets containing area_s2_mean in metadata
+    """
+    print("\n" + "="*60)
+    print("S2 AREA INTEGRATION AND FITTING")
+    print("="*60)
+    
+    # Setup directories
+    plots_dir = run.root_directory / "plots" / "s2_histograms"
+    data_dir = run.root_directory / "processed_data"
+    
+    # Select sets to process
+    sets_to_process = run.sets[range_sets] if range_sets else run.sets
+    
+    # Process each set with caching
+    updated_sets = []
+    for i, set_pmt in enumerate(sets_to_process, 1):
+        print(f"\nSet {i}/{len(sets_to_process)}: {set_pmt.source_dir.name}")
+        
+        # Check cache via metadata
+        if 'area_s2_mean' in set_pmt.metadata:
+            print(f"  📂 Loaded from cache")
+            updated_sets.append(set_pmt)
+            continue
+        
+        # Run complete workflow
+        try:
+            updated_set = workflow_s2_integration(set_pmt,
+                                                 max_files=max_files,
+                                                 integration_config=integration_config,
+                                                 fit_config=fit_config,
+                                                 plots_dir=plots_dir,
+                                                 data_dir=data_dir)
+            updated_sets.append(updated_set)
+        except Exception as e:
+            print(f"  ⚠ Failed: {e}")
+            updated_sets.append(set_pmt)
+    
+    print(f"\n✓ Integration complete: {len(updated_sets)}/{len(sets_to_process)} sets")
+    
+    return replace(run, sets=updated_sets)
 
 
 # ============================================================================
-# Fits (move out to fitting.py?)
+# HELPER FUNCTIONS
 # ============================================================================
 
-def fit_s2_run(run: Run, s2_areas: Dict[str, S2Areas],
-              fit_config: FitConfig) -> Dict[str, FitResult]:
-    """Fit S2 distributions for all sets."""
-    ...
+def _collect_s2_data(run: Run) -> pd.DataFrame:
+    """
+    Collect S2 vs drift field data from set metadata.
+    
+    Args:
+        run: Run with sets containing area_s2_mean in metadata
+        
+    Returns:
+        DataFrame with columns: set_name, drift_field, s2_mean, s2_ci95, s2_sigma
+    """
+    data_rows = []
+    for s in run.sets:
+        # Check if integration results exist in metadata
+        if 'area_s2_mean' not in s.metadata:
+            continue
+        
+        if not s.metadata.get('area_s2_fit_success', False):
+            continue
+        
+        data_rows.append({
+            'set_name': s.source_dir.name,
+            'drift_field': s.drift_field,
+            's2_mean': s.metadata['area_s2_mean'],
+            's2_ci95': s.metadata.get('area_s2_ci95', 0.0),
+            's2_sigma': s.metadata.get('area_s2_sigma', 0.0)
+        })
+    
+    df = pd.DataFrame(data_rows)
+    return df.sort_values('drift_field') if len(df) > 0 else df
 
+
+# ============================================================================
+# RUN-LEVEL SUMMARY PLOTTING
+# ============================================================================
+
+def summarize_s2_vs_field(run: Run, 
+                          plots_dir: Optional[Path] = None) -> Run:
+    """
+    Generate S2 area vs drift field summary plot and save data to CSV.
+    """
+    print("\n" + "="*60)
+    print("FIELD-DEPENDENT ANALYSIS")
+    print("="*60)
+    
+    # Setup directories
+    plots_dir, data_dir = _setup_run_directories(run, plots_dir)
+    
+    # Collect data from set metadata
+    df = _collect_s2_data(run)
+    
+    if len(df) == 0:
+        print("  ⚠ No valid results to plot")
+        return run
+    
+    # Save CSV
+    csv_file = data_dir / f"{run.run_id}_s2_vs_drift.csv"
+    df.to_csv(csv_file, index=False, float_format='%.6f')
+    print(f"  💾 Saved data to {csv_file.name}")
+    
+    # Generate plot
+    fig, _ = plot_s2_vs_drift(df, run.run_id)
+    
+    plot_file = plots_dir / f"{run.run_id}_s2_vs_drift.png"
+    save_figure(fig, plot_file)
+    plt.close(fig)  # Close figure to free memory
+    print(f"  📊 Saved plot to {plot_file.name}")
+    
+    # Print summary
+    print(f"\n  Summary:")
+    print(f"    • Sets with successful fits: {len(df)}")
+    print(f"    • Drift field range: {df['drift_field'].min():.1f} - {df['drift_field'].max():.1f} V/cm")
+    print(f"    • S2 mean range: {df['s2_mean'].min():.3f} - {df['s2_mean'].max():.3f} mV·µs")
+    
+    return run
 
 
 
