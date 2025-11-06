@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import numpy as np # type: ignore
 from typing import Optional
-from core.datatypes import PMTWaveform
+from RaTag.core.datatypes import PMTWaveform
 from .preprocessing import moving_average, subtract_pedestal, threshold_clip
 
 # ----------------------------------

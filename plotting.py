@@ -6,10 +6,11 @@ import ipywidgets as widgets # type: ignore
 from IPython.display import display
 from typing import Optional
 from pathlib import Path
+import pandas as pd
 
-from core.datatypes import PMTWaveform, SetPmt, RejectionLog, S2Areas, Run
-from core.dataIO import load_wfm, iter_waveforms
-from core.units import s_to_us, V_to_mV
+from RaTag.core.datatypes import PMTWaveform, SetPmt, RejectionLog, S2Areas, Run
+from RaTag.core.dataIO import load_wfm, iter_waveforms
+from RaTag.core.units import s_to_us, V_to_mV
 
 # --------------------------------
 # Basic waveform plotter
@@ -82,8 +83,8 @@ def _plot_window_shading(ax: plt.Axes, kwargs: dict, key: str, y_max: float, col
                          color=color, alpha=0.1)
 
 def plot_set_windows(set_pmt: SetPmt, 
-                          file_index: int = None, frame: int = None, # type: ignore
-                          ax = None, **kwargs) -> tuple:
+                     file_index: int = None, frame: int = None, # type: ignore
+                     ax = None, **kwargs) -> tuple:
     """
     Plot multiple waveforms with S1 and S2 timing markers.
     
@@ -92,17 +93,17 @@ def plot_set_windows(set_pmt: SetPmt,
         file_index: index of file in the set to plot (if None, assigned randomly)
         frame: index of the frame in the FF file to plot (if None, assigned randomly)
         **kwargs: Optional timing parameters:
-            t_s1_mean: Mean S1 time (µs)
+            t_s1: Mean S1 time (µs)
             t_s1_std: Std dev of S1 time (µs)
-            t_s2_start_mean: Mean S2 start time (µs)
+            t_s2_start: Mean S2 start time (µs)
             t_s2_start_std: Std dev of S2 start time (µs)
-            t_s2_end_mean: Mean S2 end time (µs)
+            t_s2_end: Mean S2 end time (µs)
             t_s2_end_std: Std dev of S2 end time (µs)
         
     Returns:
         (fig, axes)
     """
-    from .core.dataIO import load_wfm
+
     
     kwargs = _get_metadata_kwargs(kwargs, set_pmt.metadata) # get timing params
     
@@ -158,9 +159,80 @@ def plot_n_waveforms(set_pmt: SetPmt, n_waveforms: int, **kwargs) -> tuple:
     
     return fig, axes
 
+def plot_timing_errorbar(drift_fields: np.ndarray,
+                         means: np.ndarray,
+                         stds: np.ndarray,
+                         label: str,
+                         color: str,
+                         marker: str,
+                         ax: plt.Axes) -> None:
+    """
+    Plot single timing parameter vs drift field with error bars.
+    
+    Pure plotting function - minimal responsibility.
+    
+    Args:
+        drift_fields: Drift field values (V/cm)
+        means: Mean timing values (µs)
+        stds: Standard deviations (µs)
+        label: Legend label
+        color: Line/marker color
+        marker: Marker style ('o', 's', '^', etc.)
+        ax: Matplotlib axes to plot on
+    """
+    ax.errorbar(drift_fields, means, yerr=stds,
+                fmt=f'{marker}-', label=label, color=color, 
+                capsize=5, markersize=8, linewidth=2)
+
+
+def plot_timing_vs_drift_field(drift_fields: np.ndarray,
+                                timing_data: dict[str, dict],
+                                title: str = "Timing vs Drift Field") -> tuple:
+    """
+    Plot timing estimates as a function of drift field.
+    
+    Pure plotting function - iterates over timing parameters.
+    
+    Args:
+        drift_fields: Array of drift field values (V/cm)
+        timing_data: Dict mapping param names to {'mean': array, 'std': array}
+                    Keys: 't_s1', 't_s2_start', 't_s2_end'
+        title: Plot title
+        
+    Returns:
+        (fig, ax) tuple
+    """
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Configuration for each timing parameter
+    plot_config = [
+        ('t_s1', 'S1 (prompt)', 'blue', 'o'),
+        ('t_s2_start', 'S2 start (drift)', 'green', 's'),
+        ('t_s2_end', 'S2 end', 'red', '^')
+    ]
+    
+    # Plot each parameter (if data exists)
+    for param_name, label, color, marker in plot_config:
+        if param_name in timing_data:
+            t_data = timing_data[param_name]
+            if len(t_data['mean']) > 0:  # Check for non-empty t_data
+                plot_timing_errorbar(drift_fields=drift_fields,
+                                     means=t_data['mean'], stds=t_data['std'],
+                                     label=label, color=color, marker=marker, ax=ax )
+    
+    # Formatting
+    ax.set(xlabel='Drift Field (V/cm)', ylabel='Time (µs)', title=title)
+    ax.legend(fontsize=11, loc='best')
+    ax.grid(True, alpha=0.3)
+    
+    fig.tight_layout()
+    
+    return fig, ax
+
 # --------------------------------
 # Interactive plotters
 # --------------------------------
+
 
 def make_interactive(plot_fn):
     """Decorator that adds interactive scrolling to a waveform plotting function.
@@ -213,7 +285,6 @@ def scroll_winS2(set_pmt: SetPmt, wf: PMTWaveform, width_s2: float, ts2_tol: flo
         raise ValueError("time_drift must be provided either as argument or in set")
     
     return plot_winS2_wf(wf, t_s1, time_drift, width_s2, ts2_tol, ax)
-
 
 
 def plot_run_winS2(run: Run, ts2_tol: float = 0, scroll: bool = False):
@@ -337,42 +408,36 @@ def plot_hist_fit(s2: S2Areas, nbins=100, bin_cuts=(0, 5), ax=None):
 
     return fig, ax
 
-def plot_s2_vs_drift(run: Run, fitted: dict[str, S2Areas], normalized: bool = False):
+def plot_s2_vs_drift(df: pd.DataFrame, 
+                     run_id: str,
+                     ylabel: str = "Mean S2 Area (mV·µs)",
+                     title_suffix: str = "") -> tuple:
     """
-    Plot S2 area vs drift field.
+    Plot S2 area vs drift field from DataFrame.
+    
+    Pure plotting function - no computation or normalization.
     
     Args:
-        run: Run object
-        fitted: Dictionary of fitted S2Areas
-        normalized: If True, normalize by X-ray reference (requires run.A_x_mean and run.g_S2)
+        df: DataFrame with columns: drift_field, s2_mean, s2_ci95
+        run_id: Run identifier for title
+        ylabel: Y-axis label
+        title_suffix: Optional suffix for title
     
     Returns:
-        fig, ax: Matplotlib figure and axes objects
+        (fig, ax) tuple
     """
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    drift_fields = [s.drift_field for s in run.sets]
-    means = [fitted[s.source_dir.name].mean for s in run.sets]
-    ci95s = [fitted[s.source_dir.name].ci95 for s in run.sets]
+    ax.errorbar(df['drift_field'], df['s2_mean'], yerr=df['s2_ci95'],
+                fmt='o', capsize=5, markersize=8, linewidth=2,color='blue')
     
-    if normalized and run.A_x_mean is not None and run.g_S2 is not None:
-        # Normalize by X-ray reference
-        means = [m / run.A_x_mean for m in means]
-        ci95s = [c / run.A_x_mean for c in ci95s]
-        ylabel = "Normalized S2 Area (A_ion / A_xray)"
-        title_suffix = " (Normalized)"
-    else:
-        ylabel = "Mean S2 Area (mV·µs)"
-        title_suffix = ""
-
-    ax.errorbar(drift_fields, means, yerr=ci95s, fmt='o', capsize=5, markersize=8)
-    ax.set(xlabel="Drift field (V/cm)", 
-           ylabel=ylabel, 
-           title=f"Run {run.run_id} — Mean S2 Area vs Drift Field{title_suffix}")
-    ax.grid(True)
+    ax.set(xlabel="Drift field (V/cm)", ylabel=ylabel,
+           title=f"Run {run_id} — Mean S2 Area vs Drift Field{title_suffix}")
+    ax.grid(True, alpha=0.3)
+    
+    fig.tight_layout()
     
     return fig, ax
-
 
 def plot_xray_histogram(areas: np.ndarray, run_id: str, nbins: int = 100, 
                         bin_cuts: tuple = (0.6, 20), fit_result=None, 

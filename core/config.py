@@ -1,7 +1,6 @@
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
-from waveform.integration import integrate_trapz
 from .datatypes import PMTWaveform
 
 # -------------------------------
@@ -26,6 +25,12 @@ DRIFT_VELOCITY_PARAMS = {
 # Optionally: define common drift fields to evaluate
 DRIFT_FIELDS = [35, 50, 70, 107, 142, 178, 214, 250, 285, 321, 357, 428]  # V/cm
 
+def _default_integrator():
+    """Lazy import to avoid circular dependency."""
+    from RaTag.waveform.integration import integrate_trapz
+    return integrate_trapz
+
+
 @dataclass(frozen=True)
 class IntegrationConfig:
     bs_threshold: float = 0.8          # (mV)  -- min baseline voltage to consider
@@ -35,7 +40,7 @@ class IntegrationConfig:
     n_pedestal: int = 2000            # number of pre-trigger samples for pedestal
     ma_window: int = 9                # moving average window length (samples)
     dt: float = 2e-4                  # default unless overridden by wf spacing
-    integrator: Callable[[PMTWaveform, float], np.ndarray] = integrate_trapz
+    integrator: Callable[[PMTWaveform, float], np.ndarray] = field(default_factory=_default_integrator)
 
 
 @dataclass(frozen=True)
@@ -43,3 +48,4 @@ class FitConfig:
     bin_cuts: tuple[float, float] = (0, 4)
     nbins: int = 100
     exclude_index: int = 1
+

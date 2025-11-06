@@ -9,11 +9,11 @@ Functions for populating sets, computing fields, and transport properties.
 from dataclasses import replace
 from typing import Optional, cast
 
-from core.datatypes import Run, SetPmt
-from core.physics import with_gas_density
-from core.constructors import populate_run as _populate_run, set_from_dir, set_fields, set_transport_properties
-from core.dataIO import save_set_metadata, load_set_metadata
-from core.functional import map_over
+from RaTag.core.datatypes import Run, SetPmt
+from RaTag.core.physics import with_gas_density
+from RaTag.core.constructors import populate_run as _populate_run, set_from_dir, set_fields, set_transport_properties
+from RaTag.core.dataIO import save_set_metadata, load_set_metadata
+from RaTag.core.functional import map_over
 
 
 def add_gas_density(run: Run) -> Run:

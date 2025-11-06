@@ -138,40 +138,43 @@ def parse_filename(fname: str) -> dict:
 
 def save_set_metadata(set_pmt: SetPmt) -> None:
     """
-    Save set metadata to JSON file in processed_data directory.
+    Save complete set metadata to JSON file in processed_data directory.
     
-    Metadata includes:
-    - Transport properties (drift_field, speed_drift, time_drift, etc.)
-    - Timing estimates (t_s1, t_s2_start, s2_duration, etc.)
+    Merges with existing metadata on disk to preserve data from multiple workflows.
+    Only saves non-None values to avoid polluting cache with incomplete data.
     
     File location: {run_dir}/processed_data/{set_name}_metadata.json
     """
-    # Metadata goes in processed_data at run level
     metadata_dir = set_pmt.source_dir.parent / "processed_data"
     metadata_dir.mkdir(parents=True, exist_ok=True)
     
     metadata_file = metadata_dir / f"{set_pmt.source_dir.name}_metadata.json"
     
+    # Load existing metadata if it exists
+    existing_metadata = {}
+    if metadata_file.exists():
+        with open(metadata_file, 'r') as f:
+            existing_metadata = json.load(f)
+    
+    attrs = ['drift_field', 'EL_field', 'red_drift_field', 'red_EL_field', 'speed_drift', 'time_drift']
+
+    # Start with existing metadata, then update with new values
     metadata = {
-        # Timing parameters
-        "t_s1": set_pmt.metadata.get("t_s1"),
-        "t_s1_std": set_pmt.metadata.get("t_s1_std"),
-        "t_s2_start": set_pmt.metadata.get("t_s2_start"),
-        "t_s2_start_std": set_pmt.metadata.get("t_s2_start_std"),
-        "t_s2_end": set_pmt.metadata.get("t_s2_end"),
-        "t_s2_end_std": set_pmt.metadata.get("t_s2_end_std"),
-        "s2_duration": set_pmt.metadata.get("s2_duration"),
-        "s2_duration_std": set_pmt.metadata.get("s2_duration_std"),
-        
-        # Transport properties
-        "drift_field": float(set_pmt.drift_field) if set_pmt.drift_field else None,
-        "EL_field": float(set_pmt.EL_field) if set_pmt.EL_field else None,
-        "red_drift_field": float(set_pmt.red_drift_field) if set_pmt.red_drift_field else None,
-        "red_EL_field": float(set_pmt.red_EL_field) if set_pmt.red_EL_field else None,
-        "speed_drift": float(set_pmt.speed_drift) if set_pmt.speed_drift else None,
-        "time_drift": float(set_pmt.time_drift) if set_pmt.time_drift else None,
-        "diffusion_coefficient": float(set_pmt.diffusion_coefficient) if set_pmt.diffusion_coefficient else None,
+        **existing_metadata,  # Keep existing data
+        "set_name": set_pmt.source_dir.name,
+        "source_dir": str(set_pmt.source_dir),
     }
+    
+    # Update field/transport properties (only if not None)
+    for key in attrs:
+        value = getattr(set_pmt, key)
+        if value is not None:
+            metadata[key] = round(value, 3) if isinstance(value, float) else value
+    
+    # Update metadata fields (only if not None)
+    for key, value in set_pmt.metadata.items():
+        if value is not None:
+            metadata[key] = round(value, 3) if isinstance(value, float) else value
     
     with open(metadata_file, 'w') as f:
         json.dump(metadata, f, indent=2)
@@ -196,15 +199,16 @@ def load_set_metadata(set_pmt: SetPmt) -> Optional[SetPmt]:
     with open(metadata_file, 'r') as f:
         data = json.load(f)
     
-    # Restore metadata dict
+    # Load ALL metadata keys (not just specific ones)
     metadata = {k: v for k, v in data.items() 
-                if k in ["t_s1", "t_s1_std", "t_s2_start", "t_s2_start_std",
-                        "t_s2_end", "t_s2_end_std", "s2_duration", "s2_duration_std"]}
+                if k not in ["set_name", "source_dir", "drift_field", "EL_field", 
+                            "red_drift_field", "red_EL_field", "speed_drift", 
+                            "time_drift", "diffusion_coefficient"]}
     
     # Restore SetPmt with all properties
     return replace(
         set_pmt,
-        metadata={**set_pmt.metadata, **metadata},
+        metadata={**set_pmt.metadata, **metadata},  # Merge with existing
         drift_field=data.get("drift_field"),
         EL_field=data.get("EL_field"),
         red_drift_field=data.get("red_drift_field"),
@@ -268,20 +272,30 @@ def save_run_metadata(run: Run) -> None:
 # --- S2Areas storage and retrieval  -----
 # ----------------------------------------
 
-def store_s2area(s2: S2Areas, set_pmt: Optional[SetPmt] = None) -> None:
+def store_s2area(s2: S2Areas, 
+                 set_pmt: Optional[SetPmt] = None,
+                 output_dir: Optional[Path] = None) -> None:
     """
-    Store S2Areas object to disk, including all fit results and set metadata.
+    Store S2Areas object to disk in processed_data directory.
     
     Saves two files:
-    - s2_areas.npy: Raw area array for quick access
-    - s2_results.json: Complete metadata including fit results and analysis parameters
+    - s2_areas.npy: Raw area array
+    - s2_results.json: Fit results and metadata
     
     Args:
         s2: S2Areas object with integration and fit results
         set_pmt: Optional SetPmt to extract complete metadata from
+        output_dir: Optional custom output directory (for testing)
     """
-    # Save raw areas as numpy array (for backward compatibility)
-    path_areas = s2.source_dir / "s2_areas1.npy"
+    # Use custom directory or default to processed_data
+    if output_dir is None:
+        output_dir = s2.source_dir.parent / "processed_data"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    set_name = s2.source_dir.name
+    
+    # Save raw areas as numpy array
+    path_areas = output_dir / f"{set_name}_s2_areas.npy"
     np.save(path_areas, s2.areas)
     
     # Build complete results dictionary
@@ -301,7 +315,7 @@ def store_s2area(s2: S2Areas, set_pmt: Optional[SetPmt] = None) -> None:
             "t_s1_std": set_pmt.metadata.get("t_s1_std"),
             "t_s2_start": set_pmt.metadata.get("t_s2_start"),
             "t_s2_start_std": set_pmt.metadata.get("t_s2_start_std"),
-            "t_s2_end": set_pmt.metadata.get("t_s2_end_"),
+            "t_s2_end": set_pmt.metadata.get("t_s2_end"),
             "t_s2_end_std": set_pmt.metadata.get("t_s2_end_std"),
             "s2_duration": set_pmt.metadata.get("s2_duration"),
             "s2_duration_std": set_pmt.metadata.get("s2_duration_std"),
@@ -313,26 +327,34 @@ def store_s2area(s2: S2Areas, set_pmt: Optional[SetPmt] = None) -> None:
         }
     
     # Save complete results as JSON
-    path_results = s2.source_dir / "s2_results1.json"
+    path_results = output_dir / f"{set_name}_s2_results.json"
     with open(path_results, "w") as f:
         json.dump(results_dict, f, indent=2)
 
-def load_s2area(set_pmt: SetPmt) -> S2Areas:
+
+def load_s2area(set_pmt: SetPmt, input_dir: Optional[Path] = None) -> S2Areas:
     """
-    Load S2Areas object from disk, including fit results if available.
+    Load S2Areas object from processed_data directory.
     
     Args:
-        set_pmt: SetPmt object with source_dir pointing to data location
+        set_pmt: SetPmt object with source_dir
+        input_dir: Optional custom input directory (for testing)
         
     Returns:
         S2Areas with all saved attributes populated
     """
+    # Use custom directory or default to processed_data
+    if input_dir is None:
+        input_dir = set_pmt.source_dir.parent / "processed_data"
+    
+    set_name = set_pmt.source_dir.name
+    
     # Load raw areas
-    path_areas = set_pmt.source_dir / "s2_areas.npy"
+    path_areas = input_dir / f"{set_name}_s2_areas.npy"
     areas = np.load(path_areas)
     
     # Try to load complete results
-    path_results = set_pmt.source_dir / "s2_results.json"
+    path_results = input_dir / f"{set_name}_s2_results.json"
     if path_results.exists():
         with open(path_results, "r") as f:
             results = json.load(f)
@@ -346,10 +368,9 @@ def load_s2area(set_pmt: SetPmt) -> S2Areas:
             sigma=results.get("sigma"),
             ci95=results.get("ci95"),
             fit_success=results.get("fit_success", False),
-            fit_result=None  # fit_result object not saved in JSON
+            fit_result=None
         )
     else:
-        # Fallback for backward compatibility (old format without metadata)
         return S2Areas(
             source_dir=set_pmt.source_dir,
             areas=areas,

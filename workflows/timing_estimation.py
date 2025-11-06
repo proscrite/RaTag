@@ -4,11 +4,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Optional, Union
 
-from core.dataIO import iter_frames, save_set_metadata, load_set_metadata
-from core.datatypes import SetPmt, Run
-from waveform.s1s2_detection import detect_s1_in_frame, detect_s2_in_frame
-from plotting import plot_time_histograms
-
+from RaTag.core.dataIO import iter_frames, save_set_metadata, load_set_metadata, save_figure
+from RaTag.core.datatypes import SetPmt, Run
+from RaTag.waveform.s1s2_detection import detect_s1_in_frame, detect_s2_in_frame
+from RaTag.plotting import plot_time_histograms, plot_n_waveforms, plot_timing_vs_drift_field
 # ============================================================================
 # SHARED UTILITIES (private)
 # ============================================================================
@@ -130,7 +129,6 @@ def _estimate_timing_in_run(run: Run,
             updated_sets.append(set_pmt)
     
     return replace(run, sets=updated_sets)
-
 
 
 # ============================================================================
@@ -266,11 +264,7 @@ def workflow_s1_set(set_pmt: SetPmt,
                     threshold_s1: float = 1.0,
                     plots_dir: Optional[Path] = None,
                     data_dir: Optional[Path] = None) -> SetPmt:
-    """
-    Complete S1 workflow for a single set: compute → save → plot.
-    
-    Use this for interactive work on single sets.
-    """
+    """Complete S1 workflow for a single set: compute → save → plot."""
     # Compute
     updated_set, s1_times = compute_s1(set_pmt,
                                        max_frames=max_frames,
@@ -295,8 +289,7 @@ def workflow_s1_set(set_pmt: SetPmt,
                                std=updated_set.metadata.get("t_s1_std", None),
                                xlabel = "Time (µs)", color='blue', ax = None)
 
-    fig.savefig(plots_dir / f"{set_pmt.source_dir.name}_s1.png")
-    plt.close(fig)
+    save_figure(fig, plots_dir / f"{set_pmt.source_dir.name}_s1.png")
     return updated_set
 
 
@@ -306,11 +299,7 @@ def workflow_s2_set(set_pmt: SetPmt,
                     s2_duration_cuts: tuple = (3, 35),
                     plots_dir: Optional[Path] = None,
                     data_dir: Optional[Path] = None) -> SetPmt:
-    """
-    Complete S2 workflow for a single set: compute → save → plot.
-    
-    Use this for interactive work on single sets.
-    """
+    """Complete S2 workflow for a single set: compute → save → plot."""
     # Compute
     updated_set, s2_data = compute_s2(set_pmt,
                                       max_frames=max_frames,
@@ -338,8 +327,7 @@ def workflow_s2_set(set_pmt: SetPmt,
                              std=updated_set.metadata.get(f"{time_data}_std", None),
                              xlabel = "Time (µs)", color='blue', ax = a)
 
-    fig.savefig(str(plots_dir / f"{set_pmt.source_dir.name}_s2.png"))
-    plt.close(fig)
+    save_figure(fig, plots_dir / f"{set_pmt.source_dir.name}_s2.png")
 
     return updated_set
 
@@ -370,3 +358,132 @@ def estimate_s2_in_run(run: Run,
                                    max_frames=max_frames,
                                    threshold_s2=threshold_s2,
                                    s2_duration_cuts=s2_duration_cuts)
+
+# ============================================================================
+# VALIDATION STEP WITH PLOTTING (pure QA)
+# ============================================================================
+
+def validate_timing_windows(run: Run, n_waveforms: int = 5) -> Run:
+    """
+    Visual validation of timing windows across all sets.
+    
+    Plots sample waveforms with S1/S2 windows overlaid.
+    This is QA, not computation - doesn't modify the Run.
+    
+    Args:
+        run: Run with timing estimates
+        n_waveforms: Number of random waveforms to plot per set
+        
+    Returns:
+        Same Run (unchanged)
+    """
+    print("\n" + "="*60)
+    print("TIMING VALIDATION")
+    print("="*60)
+    
+    validation_dir = run.root_directory / "plots" / "validation"
+    validation_dir.mkdir(parents=True, exist_ok=True)
+    
+    for i, set_pmt in enumerate(run.sets, 1):
+        print(f"\nSet {i}/{len(run.sets)}: {set_pmt.source_dir.name}")
+        
+        # Check if timing is estimated
+        if "t_s1" not in set_pmt.metadata or "t_s2_start" not in set_pmt.metadata:
+            print("  ⚠ Skipping (missing timing estimates)")
+            continue
+        
+        try:
+            fig, ax = plot_n_waveforms(set_pmt, n_waveforms=n_waveforms)
+            print(f"  ✓ Saved validation plot")
+        except Exception as e:
+            print(f"  ⚠ Failed: {e}")
+
+    return run  # Unchanged run
+
+# ============================================================================,             save_figure(fig, validation_dir / f"{set_pmt.source_dir.name")
+# SUMMARY PLOT OF TIMING (pure QA)
+# ============================================================================
+
+
+def _collect_timing_data(sets: list[SetPmt], 
+                        param_names: list[str]) -> tuple[list, dict]:
+    """
+    Collect timing data from all sets for specified parameters.
+    
+    Helper function - extracts data with validation.
+    
+    Args:
+        sets: List of SetPmt objects
+        param_names: List of parameter names to extract (e.g., ['t_s1', 't_s2_start'])
+        
+    Returns:
+        (drift_fields, timing_dict) where timing_dict maps param -> {mean: [], std: []}
+    """
+    drift_fields = []
+    
+    # Initialize storage for each parameter
+    timing_dict = {param: {'mean': [], 'std': []} for param in param_names}
+
+    for set_pmt in sets:
+        # Check if ALL required parameters are present
+        missing = [p for p in param_names 
+                  if p not in set_pmt.metadata or set_pmt.metadata[p] is None]
+        
+        if missing:
+            print(f"  ⚠ Skipping {set_pmt.source_dir.name} (missing {missing})")
+            continue
+        
+        # Collect drift field
+        drift_fields.append(set_pmt.drift_field)
+        
+        # Collect each parameter's mean and std
+        for param in param_names:
+            timing_dict[param]['mean'].append(set_pmt.metadata[param])
+            timing_dict[param]['std'].append(set_pmt.metadata.get(f"{param}_std", 0))
+        
+        print(f"  ✓ {set_pmt.source_dir.name}: E_drift = {set_pmt.drift_field:.1f} V/cm")
+    
+    # Convert lists to arrays
+    drift_fields = np.array(drift_fields)
+    for param in param_names:
+        timing_dict[param]['mean'] = np.array(timing_dict[param]['mean'])
+        timing_dict[param]['std'] = np.array(timing_dict[param]['std'])
+    
+    return drift_fields, timing_dict
+
+
+def summarize_timing_vs_field(run: Run, 
+                               plots_dir: Optional[Path] = None) -> Run:
+    """Create summary plot of timing estimates vs drift field."""
+    print("\n" + "="*60)
+    print("TIMING VS FIELD SUMMARY")
+    print("="*60)
+    
+    # Set up output directory
+    if plots_dir is None:
+        plots_dir = run.root_directory / "plots" / "summary_preparation"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Collect data for all timing parameters
+    param_names = ['t_s1', 't_s2_start', 't_s2_end']
+    drift_fields, timing_data = _collect_timing_data(run.sets, param_names)
+    
+    if len(drift_fields) == 0:
+        print("  ⚠ No sets with complete timing data - skipping plot")
+        return run
+    
+    # Create plot
+    fig, ax = plot_timing_vs_drift_field(
+        drift_fields=drift_fields,
+        timing_data=timing_data,
+        title=f"Timing vs Drift Field - {run.run_id}"
+    )
+    
+    # Save
+    output_file = plots_dir / f"{run.run_id}_timing_vs_field.png"
+    save_figure(fig, output_file)
+
+    print(f"\n✓ Summary plot saved to {output_file}")
+    print(f"  Plotted {len(drift_fields)} sets with complete timing")
+    
+    return run  # Unchanged

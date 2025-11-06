@@ -5,8 +5,8 @@ from dataclasses import replace
 import itertools
 from pathlib import Path
 
-from core.dataIO import load_wfm
-from core.datatypes import PMTWaveform
+from RaTag.core.dataIO import load_wfm
+from RaTag.core.datatypes import PMTWaveform
 
 
 def subtract_pedestal(wf: PMTWaveform, n_points: int = 200) -> PMTWaveform:
