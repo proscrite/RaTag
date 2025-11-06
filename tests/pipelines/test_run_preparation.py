@@ -77,7 +77,7 @@ class TestPipelineOutputs:
         assert (test_run.root_directory / "processed_data").exists()
         assert (test_run.root_directory / "plots" / "s1_timing").exists()
         assert (test_run.root_directory / "plots" / "s2_timing").exists()
-        # assert (test_run.root_directory / "metadata").exists()
+        assert (test_run.root_directory / "plots" / "validation").exists()
     
     
     def test_pipeline_creates_all_set_outputs(self, test_run):
@@ -87,6 +87,7 @@ class TestPipelineOutputs:
         data_dir = test_run.root_directory / "processed_data"
         s1_plots = test_run.root_directory / "plots" / "s1_timing"
         s2_plots = test_run.root_directory / "plots" / "s2_timing"
+        validation_plots = test_run.root_directory / "plots" / "validation"
         
         for set_pmt in result.sets:
             set_name = set_pmt.source_dir.name
@@ -94,28 +95,31 @@ class TestPipelineOutputs:
             # Check data files
             assert (data_dir / f"{set_name}_s1.npz").exists(), f"Missing S1 data for {set_name}"
             assert (data_dir / f"{set_name}_s2.npz").exists(), f"Missing S2 data for {set_name}"
+            assert (data_dir / f"{set_name}_metadata.json").exists(), f"Missing metadata for {set_name}"
             
             # Check plots
             assert (s1_plots / f"{set_name}_s1.png").exists(), f"Missing S1 plot for {set_name}"
             assert (s2_plots / f"{set_name}_s2.png").exists(), f"Missing S2 plot for {set_name}"
+            assert (validation_plots / f"{set_name}_sample_window_wfm.png").exists(), \
+                f"Missing validation plot for {set_name}"
     
     
-    """def test_pipeline_saves_run_metadata(self, test_run):
-        "Test that pipeline saves run-level metadata JSON."
-        prepare_run(test_run, max_files=10)
+    def test_pipeline_validation_plots_show_timing_windows(self, test_run):
+        """Test that validation plots are created with timing window overlays."""
+        result = prepare_run(test_run, max_files=10)
         
-        # Check run metadata exists
-        metadata_file = test_run.root_directory / "metadata" / "run_info.json"
-        assert metadata_file.exists(), "Run metadata not saved"
+        validation_dir = test_run.root_directory / "plots" / "validation"
         
-        # Verify content
-        with open(metadata_file) as f:
-            metadata = json.load(f)
-        
-        assert metadata["run_id"] == "RUN8"
-        assert "gas_density" in metadata
-        assert "sets" in metadata
-        assert len(metadata["sets"]) >= 3"""
+        # Check that validation plots exist for all sets
+        for set_pmt in result.sets:
+            set_name = set_pmt.source_dir.name
+            plot_file = validation_dir / f"{set_name}_sample_window_wfm.png"
+            
+            assert plot_file.exists(), f"Missing validation plot for {set_name}"
+            
+            # Verify file is not empty (basic sanity check)
+            assert plot_file.stat().st_size > 1000, \
+                f"Validation plot for {set_name} seems too small (likely empty)"
     
     
     def test_pipeline_output_data_format(self, test_run):
@@ -139,6 +143,20 @@ class TestPipelineOutputs:
         assert "t_s2_end" in s2_data
         assert "s2_duration" in s2_data
         assert len(s2_data["t_s2_start"]) > 0
+        
+        # Check metadata format
+        with open(data_dir / f"{set_name}_metadata.json") as f:
+            metadata = json.load(f)
+        
+        # Should have transport properties
+        assert "drift_field" in metadata
+        assert "time_drift" in metadata
+        assert "speed_drift" in metadata
+        
+        # Should have timing estimates
+        assert "t_s1" in metadata
+        assert "t_s2_start" in metadata
+        assert "s2_duration" in metadata
 
 
 class TestPipelineCaching:

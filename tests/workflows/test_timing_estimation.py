@@ -7,14 +7,16 @@ Tests for timing estimation workflows at the set level.
 import pytest
 from pathlib import Path
 import numpy as np
+from dataclasses import replace
 
-from core.datatypes import SetPmt
 from workflows.timing_estimation import (
     compute_s1,
     compute_s2,
     workflow_s1_set,
     workflow_s2_set,
-    save_timing_results
+    save_timing_results,
+    validate_timing_windows,
+    summarize_timing_vs_field
 )
 
 class TestS1Computation:
@@ -436,5 +438,151 @@ class TestDataPersistence:
         assert "s2_duration" in loaded
 
 
+class TestValidationWorkflow:
+    """Test the validation workflow specifically."""
+    
+    def test_validation_requires_timing_estimates(self, test_run):
+        """Test that validation requires S1/S2 timing to be estimated first."""
+        
+        # Create a run with sets that have NO timing (empty metadata)
+        sets_no_timing = [replace(s, metadata={}) for s in test_run.sets]
+        run_no_timing = replace(test_run, sets=sets_no_timing)
+        
+        # Validation should skip all sets
+        result = validate_timing_windows(run_no_timing, n_waveforms=3)
+        
+        # Run unchanged
+        assert result.run_id == run_no_timing.run_id
+        assert len(result.sets) == len(run_no_timing.sets)
+    
+    
+    def test_validation_creates_plots_with_timing(self, all_sets, test_run):
+        """Test that validation creates plots when timing is available."""
+        
+        # First compute S1 and S2 for one set
+        sample_set = all_sets[0]
+        sample_set = workflow_s1_set(sample_set, max_frames=100)
+        sample_set = workflow_s2_set(sample_set, max_frames=200)
+        
+        # Create run with completed timing
+        test_run = replace(test_run, sets=[sample_set])
+        
+        # Validation should create plot
+        result = validate_timing_windows(test_run, n_waveforms=3)
+
+        validation_dir = test_run.root_directory / "plots" / "validation"
+        plot_file = validation_dir / f"{sample_set.source_dir.name}_sample_window_wfm.png"
+        
+        assert plot_file.exists(), "Validation plot should be created"
+        assert plot_file.stat().st_size > 1000, "Validation plot should not be empty"
+    
+    
+    def test_validation_plots_show_timing_windows(self, all_sets, test_run):
+        """Test that validation plots include S1/S2 window overlays."""
+        
+        # Compute timing for all sets
+        processed_sets = []
+        for set_pmt in all_sets:
+            set_pmt = workflow_s1_set(set_pmt, max_frames=100)
+            set_pmt = workflow_s2_set(set_pmt, max_frames=200)
+            processed_sets.append(set_pmt)
+        
+        # Create run with timing
+        test_run = replace(test_run, sets=processed_sets)
+        
+        # Run validation
+        validate_timing_windows(test_run, n_waveforms=3)
+
+        validation_dir = test_run.root_directory / "plots" / "validation"
+
+        # Check plots exist and are substantial
+        for set_pmt in processed_sets:
+            plot_file = validation_dir / f"{set_pmt.source_dir.name}_sample_window_wfm.png"
+            assert plot_file.exists(), f"Missing validation plot for {set_pmt.source_dir.name}"
+            assert plot_file.stat().st_size > 1000, f"Validation plot too small for {set_pmt.source_dir.name}"
+        
+        print(f"\n✓ Created {len(processed_sets)} validation plots")
+    
+    
+    def test_validation_returns_unchanged_run(self, all_sets, test_run):
+        """Test that validation is a pure QA step (doesn't modify run)."""
+        
+        # Setup: compute timing for one set
+        sample_set = all_sets[0]
+        sample_set = workflow_s1_set(sample_set, max_frames=100)
+        sample_set = workflow_s2_set(sample_set, max_frames=200)
+        
+        test_run = replace(test_run, sets=[sample_set])
+
+        # Validate
+        result = validate_timing_windows(test_run, n_waveforms=3)
+        
+        # Run should be unchanged (same object, not a copy)
+        assert result is test_run, "Validation should return the same Run object"
+        assert result.sets[0].metadata == sample_set.metadata, "Set metadata should be unchanged"
+
+
+class TestSummaryPlots:
+    """Test run-level summary visualizations."""
+    
+    def test_summarize_timing_vs_field(self, all_sets, test_run):
+        """Test timing vs field summary plot creation."""
+        from core.datatypes import Run
+        
+        # Compute timing for all sets
+        processed_sets = []
+        for set_pmt in all_sets:
+            print(f"\n  Processing {set_pmt.source_dir.name}...")
+            set_pmt = workflow_s1_set(set_pmt, max_frames=100)
+            set_pmt = workflow_s2_set(set_pmt, max_frames=200)
+            processed_sets.append(set_pmt)
+        
+        print(f"\n✓ Processed {len(processed_sets)} sets")
+        test_run = replace(test_run, sets=processed_sets)
+        
+        
+        # Create summary plot
+        result = summarize_timing_vs_field(test_run)
+        
+        # Check plot exists
+        summary_dir = test_run.root_directory / "plots" / "summary_preparation"
+        plot_file = summary_dir / f"RUN8_timing_vs_field.png"
+        
+        assert plot_file.exists(), f"Summary plot should be created at {plot_file}"
+        assert plot_file.stat().st_size > 10000, "Summary plot should not be empty"
+        
+        # Run should be unchanged
+        assert result is test_run
+
+
+    def test_summary_shows_field_dependence(self, all_sets, test_run):
+        """Test that summary plot shows expected field dependence."""
+        from core.datatypes import Run
+        
+        # Compute timing for all sets
+        processed_sets = []
+        for set_pmt in all_sets:
+            set_pmt = workflow_s1_set(set_pmt, max_frames=100)
+            set_pmt = workflow_s2_set(set_pmt, max_frames=200)
+            processed_sets.append(set_pmt)
+        test_run = replace(test_run, sets=processed_sets)
+        
+        # Create summary
+        summarize_timing_vs_field(test_run)
+        
+        # Verify data makes physical sense
+        drift_fields = [s.drift_field for s in processed_sets]
+        t_s2_starts = [s.metadata["t_s2_start"] for s in processed_sets]
+        
+        # Should have data
+        assert len(drift_fields) >= 3, f"Should have at least 3 sets with data, got {len(drift_fields)}"
+        
+        # Higher drift field → shorter drift time → earlier S2
+        assert drift_fields[0] < drift_fields[-1], "Drift fields should increase"
+        assert t_s2_starts[0] > t_s2_starts[-1], "S2 arrival should decrease with field"
+        
+        print(f"\n✓ Physical ordering verified:")
+        for s in processed_sets:
+            print(f"  {s.drift_field:.1f} V/cm → S2 at {s.metadata['t_s2_start']:.2f} µs")
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

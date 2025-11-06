@@ -69,6 +69,18 @@ def sample_set(run8_directory):
 
 
 @pytest.fixture
+def prepared_set(sample_set):
+    """Get a set with cached metadata loaded (for integration tests)."""
+    from RaTag.core.dataIO import load_set_metadata
+    
+    # Try to load existing metadata from disk
+    loaded_set = load_set_metadata(sample_set)
+    
+    # Use loaded metadata if it exists, otherwise use fresh set
+    return loaded_set # if loaded_set is not None else sample_set
+
+
+@pytest.fixture
 def fresh_set(sample_set):
     """Get a fresh set without cached metadata (for testing validation)."""
     from dataclasses import replace
@@ -84,3 +96,11 @@ def all_sets(run8_directory):
         pytest.skip(f"Need at least 3 sets, found {len(run.sets)}")
     
     return run.sets
+
+
+@pytest.fixture(autouse=True)
+def cleanup_matplotlib():
+    """Close all matplotlib figures after each test."""
+    import matplotlib.pyplot as plt
+    yield
+    plt.close('all')
