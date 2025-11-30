@@ -4,8 +4,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Optional, Union
 
-from RaTag.core.dataIO import iter_frames, save_set_metadata, load_set_metadata, save_figure
+from RaTag.core.dataIO import iter_frameproxies, save_set_metadata, load_set_metadata, save_figure
 from RaTag.core.datatypes import SetPmt, Run
+from RaTag.core.uid_utils import parse_file_seq_from_name, make_uid
+
 from RaTag.waveform.s1s2_detection import detect_s1_in_frame, detect_s2_in_frame
 from RaTag.plotting import plot_time_histograms, plot_n_waveforms, plot_timing_vs_drift_field
 # ============================================================================
@@ -15,7 +17,7 @@ from RaTag.plotting import plot_time_histograms, plot_n_waveforms, plot_timing_v
 def _extract_timing_from_frames(set_pmt: SetPmt,
                                 max_frames: int,
                                 detector_func,
-                                **detector_kwargs) -> np.ndarray:
+                                **detector_kwargs) -> tuple[np.ndarray, np.ndarray]:
     """
     Generic function to extract timing data from frames.
 
@@ -41,15 +43,25 @@ def _extract_timing_from_frames(set_pmt: SetPmt,
     
     # Iterate over frames and apply detector
     results = []
-    for frame_wf in iter_frames(set_pmt, max_files=max_files):
-        result = detector_func(frame_wf, **detector_kwargs)
-        if result is not None:
-            results.append(result)
+    uids = []
+
+    # for frame_wf in iter_frames(set_pmt, max_files=max_files):
+    for frame_wf in iter_frameproxies(set_pmt, chunk_dir=None, max_files=max_files):
+
+        uid = make_uid(frame_wf.file_seq, frame_wf.frame_idx)
+        frame_pmt = frame_wf.load_pmt_frame()
+        val = detector_func(frame_pmt, **detector_kwargs)
+        if val is not None:
+            uids.append(uid)
+            results.append(val)
     
     if not results:
         raise ValueError(f"No valid detections in {set_pmt.source_dir.name}")
     
-    return np.array(results)
+    if len(uids) == 0:
+        return np.array([], dtype=np.uint64), np.array([], dtype=np.float32)   # keep dtype explicit
+    return np.array(uids, dtype=np.uint64), np.array(results)
+
 
 def _compute_timing_statistics(times: np.ndarray,
                                name: str,
@@ -66,7 +78,7 @@ def _compute_timing_statistics(times: np.ndarray,
     times_clean = times[mask]
     
     # Compute mode from histogram
-    n, bins = np.histogram(times_clean, bins=50)
+    n, bins = np.histogram(times_clean, bins=100)
     cbins = 0.5 * (bins[1:] + bins[:-1])
     mode = round(cbins[np.argmax(n)], 3)
     std = round(np.std(times_clean), 3)
@@ -135,7 +147,8 @@ def _estimate_timing_in_run(run: Run,
 # GENERIC SIDE EFFECTS (modular)
 # ============================================================================
 
-def save_timing_results(set_pmt: SetPmt, 
+def save_timing_results(set_pmt: SetPmt,
+                        uids: np.ndarray, 
                        timing_data: Union[np.ndarray, dict],
                        data_dir: Path,
                        signal_type: str) -> None:
@@ -156,10 +169,11 @@ def save_timing_results(set_pmt: SetPmt,
     
     if isinstance(timing_data, np.ndarray):
         # S1: single array
-        np.savez(data_file, times=timing_data)
+        np.savez_compressed(data_file, uids=uids.astype(np.uint32), t_s1=timing_data)
+        # np.savez(data_file, times=timing_data)
     else:
         # S2: dict with multiple arrays
-        np.savez(data_file, **timing_data)
+        np.savez_compressed(data_file, uids=uids.astype(np.uint32), **timing_data)
     
     print(f"    💾 Saved to {data_file.name}")
 
@@ -169,7 +183,7 @@ def save_timing_results(set_pmt: SetPmt,
 
 def compute_s1(set_pmt: SetPmt,
                max_frames: int = 200,
-               threshold_s1: float = 1.0) -> tuple[SetPmt, np.ndarray]:
+               threshold_s1: float = 1.0) -> tuple[SetPmt, np.ndarray, np.ndarray]:
     """
     Compute S1 timing for a single set (pure computation).
     
@@ -178,7 +192,7 @@ def compute_s1(set_pmt: SetPmt,
     """
     print(f"  Computing S1...")
     
-    s1_times = _extract_timing_from_frames(set_pmt,
+    uids, s1_times = _extract_timing_from_frames(set_pmt,
                                            max_frames=max_frames,
                                            detector_func=detect_s1_in_frame,
                                            threshold_s1=threshold_s1)
@@ -192,7 +206,7 @@ def compute_s1(set_pmt: SetPmt,
     new_metadata = {**set_pmt.metadata, **stats}
     updated_set = replace(set_pmt, metadata=new_metadata)
     
-    return updated_set, s1_times
+    return updated_set, s1_times, uids
 
 
 # ============================================================================
@@ -204,7 +218,7 @@ def compute_s2(set_pmt: SetPmt,
                threshold_s2: float = 0.8,
                window_size: int = 9,
                threshold_bs: float = 0.02,
-               s2_duration_cuts: tuple = (3, 35)) -> tuple[SetPmt, dict]:
+               s2_duration_cuts: tuple = (3, 35)) -> tuple[SetPmt, dict, np.ndarray]:
     """
     Compute S2 timing for a single set (pure computation).
     
@@ -222,7 +236,7 @@ def compute_s2(set_pmt: SetPmt,
     expected_s2_start = t_s1 + set_pmt.time_drift
     print(f"  Computing S2 (expected start: {expected_s2_start:.2f} µs)...")
     
-    s2_boundaries = _extract_timing_from_frames(set_pmt,
+    uids, s2_boundaries = _extract_timing_from_frames(set_pmt,
                                                 max_frames=max_frames,
                                                 detector_func=detect_s2_in_frame,
                                                 t_s1=t_s1,
@@ -251,8 +265,8 @@ def compute_s2(set_pmt: SetPmt,
         't_s2_end': t_ends,     
         's2_duration': durations
     }
-    
-    return replace(set_pmt, metadata=new_metadata), s2_data
+    updated_set = replace(set_pmt, metadata=new_metadata)
+    return updated_set, s2_data, uids
 
 
 # ============================================================================
@@ -265,8 +279,9 @@ def workflow_s1_set(set_pmt: SetPmt,
                     plots_dir: Optional[Path] = None,
                     data_dir: Optional[Path] = None) -> SetPmt:
     """Complete S1 workflow for a single set: compute → save → plot."""
+    
     # Compute
-    updated_set, s1_times = compute_s1(set_pmt,
+    updated_set, s1_times, uids_s1 = compute_s1(set_pmt,
                                        max_frames=max_frames,
                                        threshold_s1=threshold_s1)
     
@@ -280,7 +295,9 @@ def workflow_s1_set(set_pmt: SetPmt,
     plots_dir.mkdir(parents=True, exist_ok=True)
     
     # Save
-    save_timing_results(updated_set, s1_times, data_dir, "s1")
+    # save_timing_results(updated_set, s1_times, data_dir, "s1")
+    save_timing_results(updated_set, uids_s1, s1_times, data_dir, signal_type='s1')
+    
     
     # Plot
     fig = plot_time_histograms(s1_times, 
@@ -301,7 +318,7 @@ def workflow_s2_set(set_pmt: SetPmt,
                     data_dir: Optional[Path] = None) -> SetPmt:
     """Complete S2 workflow for a single set: compute → save → plot."""
     # Compute
-    updated_set, s2_data = compute_s2(set_pmt,
+    updated_set, s2_data, uids_s2 = compute_s2(set_pmt,
                                       max_frames=max_frames,
                                       threshold_s2=threshold_s2,
                                       s2_duration_cuts=s2_duration_cuts)
@@ -316,7 +333,7 @@ def workflow_s2_set(set_pmt: SetPmt,
     plots_dir.mkdir(parents=True, exist_ok=True)
     
     # Save
-    save_timing_results(updated_set, s2_data, data_dir, "s2")
+    save_timing_results(updated_set, uids_s2, s2_data, data_dir, signal_type='s2')
     
     # Plot
     fig, ax = plt.subplots(3, 1, figsize=(8, 12))
