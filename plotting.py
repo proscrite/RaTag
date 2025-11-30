@@ -1,4 +1,3 @@
-import select
 import matplotlib.pyplot as plt # type: ignore
 import time
 import numpy as np 
@@ -591,6 +590,45 @@ def plot_time_histograms(times: np.ndarray,
     
     return fig
 
+# --------------------------------------------
+# -- Grouped histograms for isotope results
+# --------------------------------------------
+def plot_grouped_histograms(
+        df: pd.DataFrame,
+        value_columns: list[str],
+        bins: int = 40,
+        figsize=(10, 4)
+    ):
+    """
+    Plot grouped histograms for each isotope and each value column.
+
+    Parameters
+    ----------
+    df : DataFrame
+        Must contain 'isotope' and columns in value_columns.
+    value_columns : list[str]
+        Columns to plot (one figure per column).
+    bins : int
+        Histogram bins.
+    figsize : tuple
+        Figure size per column.
+    """
+
+    isotopes = sorted(df["isotope"].unique())
+
+    for col in value_columns:
+        fig, ax = plt.subplots(len(isotopes), 1, figsize=figsize, sharex=True)
+
+        if len(isotopes) == 1:
+            ax = [ax]
+
+        for i, iso in enumerate(isotopes):
+            vals = df[df["isotope"] == iso][col].dropna()
+            ax[i].hist(vals, bins=bins)
+            ax[i].set_title(f"{iso} – {col}", fontsize=10)
+
+        fig.tight_layout()
+        plt.show()
 # --------------------------------
 # Deprecated functions
 # --------------------------------

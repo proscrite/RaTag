@@ -4,12 +4,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Optional, Union
 
-from RaTag.core.dataIO import iter_frameproxies, save_set_metadata, load_set_metadata, save_figure
+from RaTag.core.dataIO import iter_frameproxies, save_set_metadata, load_set_metadata, store_isotope_df, save_figure
 from RaTag.core.datatypes import SetPmt, Run
-from RaTag.core.uid_utils import parse_file_seq_from_name, make_uid
+from RaTag.core.uid_utils import make_uid
+from RaTag.core.energy_map_reader import get_energies_for_uids 
 
 from RaTag.waveform.s1s2_detection import detect_s1_in_frame, detect_s2_in_frame
-from RaTag.plotting import plot_time_histograms, plot_n_waveforms, plot_timing_vs_drift_field
+from RaTag.plotting import plot_time_histograms, plot_n_waveforms, plot_timing_vs_drift_field, plot_grouped_histograms
 # ============================================================================
 # SHARED UTILITIES (private)
 # ============================================================================
@@ -277,7 +278,9 @@ def workflow_s1_set(set_pmt: SetPmt,
                     max_frames: int = 200,
                     threshold_s1: float = 1.0,
                     plots_dir: Optional[Path] = None,
-                    data_dir: Optional[Path] = None) -> SetPmt:
+                    data_dir: Optional[Path] = None,
+                    isotope_ranges: Optional[Dict[str, tuple]] = None,
+                    chunk_dir: Optional[str] = None) -> SetPmt:
     """Complete S1 workflow for a single set: compute → save → plot."""
     
     # Compute
@@ -298,6 +301,23 @@ def workflow_s1_set(set_pmt: SetPmt,
     # save_timing_results(updated_set, s1_times, data_dir, "s1")
     save_timing_results(updated_set, uids_s1, s1_times, data_dir, signal_type='s1')
     
+    # -------- NEW MULTI-ISOTOPE EXTENSION --------
+    if isotope_ranges is not None:
+        npz_path = data_dir / f"{set_pmt.source_dir.name}_s1.npz"
+        arr = np.load(npz_path, allow_pickle=True)
+        
+        df_s1 = map_results_to_isotopes(
+            uids=arr["uids"],
+            values=arr["t_s1"],
+            chunk_dir=chunk_dir or str(set_pmt.source_dir),
+            isotope_ranges=isotope_ranges,
+            value_columns=["t_s1"]
+        )
+        
+        store_results_df(df_s1, data_dir / f"{set_pmt.source_dir.name}_s1_isotopes.parquet")
+        plot_grouped_histograms(df_s1, ["t_s1"], bins=40)
+
+    # ----------------------------------------------
     
     # Plot
     fig = plot_time_histograms(s1_times, 
@@ -315,7 +335,9 @@ def workflow_s2_set(set_pmt: SetPmt,
                     threshold_s2: float = 0.8,
                     s2_duration_cuts: tuple = (3, 35),
                     plots_dir: Optional[Path] = None,
-                    data_dir: Optional[Path] = None) -> SetPmt:
+                    data_dir: Optional[Path] = None,
+                    isotope_ranges: Optional[Dict[str, tuple]] = None,
+                    chunk_dir: Optional[str] = None) -> SetPmt:
     """Complete S2 workflow for a single set: compute → save → plot."""
     # Compute
     updated_set, s2_data, uids_s2 = compute_s2(set_pmt,
@@ -335,6 +357,29 @@ def workflow_s2_set(set_pmt: SetPmt,
     # Save
     save_timing_results(updated_set, uids_s2, s2_data, data_dir, signal_type='s2')
     
+    # -------- NEW MULTI-ISOTOPE EXTENSION --------
+    if isotope_ranges is not None:
+        npz_path = data_dir / f"{set_pmt.source_dir.name}_s2.npz"
+        arr = np.load(npz_path, allow_pickle=True)
+
+        values = np.column_stack([
+            arr["t_s2_start"],
+            arr["t_s2_end"]
+        ])
+
+        df_s2 = map_results_to_isotopes(
+            uids=arr["uids"],
+            values=values,
+            chunk_dir=chunk_dir or str(set_pmt.source_dir),
+            isotope_ranges=isotope_ranges,
+            value_columns=["t_s2_start", "t_s2_end"],
+        )
+
+        store_results_df(df_s2, data_dir / f"{set_pmt.source_dir.name}_s2_isotopes.parquet")
+        plot_grouped_histograms(df_s2, ["t_s2_start", "t_s2_end"], bins=40)
+
+    # ----------------------------------------------
+
     # Plot
     fig, ax = plt.subplots(3, 1, figsize=(8, 12))
     for a, time_data in zip(ax, ['t_s2_start', 't_s2_end', 's2_duration']):

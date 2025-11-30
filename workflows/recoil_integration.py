@@ -25,8 +25,9 @@ from RaTag.core.dataIO import iter_frameproxies, store_s2area, load_s2area, stor
 from RaTag.core.uid_utils import make_uid
 from RaTag.core.fitting import fit_set_s2
 from RaTag.core.functional import map_over
+from RaTag.core.energy_map_reader import get_energies_for_uids 
 from RaTag.waveform.integration import integrate_s2_in_frame
-from RaTag.plotting import plot_s2_vs_drift, plot_hist_fit
+from RaTag.plotting import plot_s2_vs_drift, plot_hist_fit, plot_grouped_histograms
 
 
 # ============================================================================
@@ -89,7 +90,9 @@ def workflow_s2_integration(set_pmt: SetPmt,
                            integration_config: IntegrationConfig = IntegrationConfig(),
                            fit_config: FitConfig = FitConfig(),
                            plots_dir: Optional[Path] = None,
-                           data_dir: Optional[Path] = None) -> SetPmt:
+                           data_dir: Optional[Path] = None,
+                           isotope_ranges: Optional[Dict[str, tuple]] = None,
+                           chunk_dir: Optional[str] = None) -> SetPmt:
     """
     Complete S2 integration workflow for a single set.
     
@@ -162,6 +165,21 @@ def workflow_s2_integration(set_pmt: SetPmt,
     store_s2area(s2, set_pmt=set_pmt, output_dir=data_dir)
     print(f"    💾 Saved S2 areas to disk")
     
+    # -------- NEW MULTI-ISOTOPE EXTENSION --------
+    if hasattr(s2, "uids") and hasattr(s2, "areas") and isotope_ranges is not None:
+        npz_path = data_dir / f"{set_pmt.source_dir.name}_s2area.npz"
+        arr = np.load(npz_path, allow_pickle=True)
+
+        df_area = map_results_to_isotopes(uids=arr["uids"],
+                                          values=arr["areas"],
+                                          chunk_dir=chunk_dir or str(set_pmt.source_dir),
+                                          isotope_ranges=isotope_ranges,
+                                          value_columns=["s2_area"])
+
+        store_results_df(df_area, data_dir / f"{set_pmt.source_dir.name}_s2area_isotopes.parquet")
+        plot_grouped_histograms(df_area, ["s2_area"], bins=40)
+    # ----------------------------------------------
+
     # Fit Gaussian
     s2_fitted = fit_set_s2(s2,
                            bin_cuts=fit_config.bin_cuts,
@@ -341,6 +359,3 @@ def summarize_s2_vs_field(run: Run,
     print(f"    • S2 mean range: {df['s2_mean'].min():.3f} - {df['s2_mean'].max():.3f} mV·µs")
     
     return run
-
-
-

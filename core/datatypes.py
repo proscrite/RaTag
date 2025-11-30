@@ -230,7 +230,8 @@ class Run:
 @dataclass(frozen=True)
 class S2Areas:
     source_dir: Path                    
-    areas: np.ndarray               
+    areas: np.ndarray  
+    uids: np.ndarray             
     method: str                     
     params: dict[str, Any] = field(default_factory=dict)
 

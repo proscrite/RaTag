@@ -324,9 +324,12 @@ def store_s2area(s2: S2Areas,
     set_name = s2.source_dir.name
     
     # Save raw areas as numpy array
-    path_areas = output_dir / f"{set_name}_s2_areas.npy"
-    np.save(path_areas, s2.areas)
-    
+    path_areas = output_dir / f"{set_name}_s2_areas.npz"
+    # np.save(path_areas, s2.areas)
+    np.savez_compressed(path_areas, uids=s2.uids.astype(np.uint32), s2_areas=s2.areas)
+
+    save_set_metadata(set_pmt)
+"""
     # Build complete results dictionary
     results_dict = {
         "method": s2.method,
@@ -359,7 +362,7 @@ def store_s2area(s2: S2Areas,
     path_results = output_dir / f"{set_name}_s2_results.json"
     with open(path_results, "w") as f:
         json.dump(results_dict, f, indent=2)
-
+"""
 
 def load_s2area(set_pmt: SetPmt, input_dir: Optional[Path] = None) -> S2Areas:
     """
@@ -546,6 +549,14 @@ def store_xray_areas_combined(areas: np.ndarray, run: Run, output_dir: Optional[
     
     with open(output_dir / f"{run.run_id}_xray_metadata.json", "w") as f:
         json.dump(metadata, f, indent=2)
+
+
+def store_isotope_df(df: pd.DataFrame, filepath: PathLike) -> None:
+    """
+    Store the isotope-assigned dataframe in compact binary parquet format.
+    """
+    df.to_parquet(filepath, index=False)
+    print(f"Saved dataframe → {filepath}")
 
 
 # ----------------------------------------

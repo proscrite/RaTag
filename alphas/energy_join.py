@@ -1,8 +1,9 @@
 # RaTag/core/energy_join.py
 import numpy as np
+import pandas as pd
 from typing import Dict, Tuple, Optional
 
-from RaTag.alphas.energy_map_reader import load_energy_index  # returns (ids_sorted, Es_sorted)
+from RaTag.alphas.energy_map_reader import load_energy_index, get_energies_for_uids  # returns (ids_sorted, Es_sorted)
 
 def map_uids_to_energies(uids, map_dir, fmt='8b', scale=0.1):
     """
@@ -42,3 +43,56 @@ def assign_isotope_by_energy(E: float, ranges: Dict[str, Tuple[float,float]], mi
         if (E >= emin) and (E <= emax):
             return name
     return None
+
+def map_results_to_isotopes(
+        uids: np.ndarray,
+        values: np.ndarray,
+        chunk_dir: str,
+        isotope_ranges: dict,
+        value_columns: list[str],
+    ) -> pd.DataFrame:
+    """
+    Generic UID → isotope → DataFrame assignment.
+
+    Parameters
+    ----------
+    uids : np.ndarray
+        Array of uint32 UIDs.
+    values : np.ndarray
+        1D or 2D array of measurement values.
+    chunk_dir : str
+        Directory containing energy .bin chunk files.
+    isotope_ranges : dict
+        {isotope_name: (Emin, Emax)}.
+    value_columns : list[str]
+        Column names that correspond to `values` columns.
+    
+    Returns
+    -------
+    pd.DataFrame with columns: ['uid', 'isotope'] + value_columns
+    """
+    # Get energies
+    energies = get_energies_for_uids(uids, chunk_dir=chunk_dir)
+    energies = np.array(energies)
+
+    # Assign isotope labels
+    isotopes = np.full_like(energies, fill_value="", dtype=object)
+    for iso, (emin, emax) in isotope_ranges.items():
+        mask = (energies >= emin) & (energies <= emax)
+        isotopes[mask] = iso
+
+    # Build dataframe
+    df = pd.DataFrame({"uid": uids, "isotope": isotopes})
+
+    # If `values` is 1-column
+    if values.ndim == 1:
+        df[value_columns[0]] = values
+    # If multi-column (S2 start & end)
+    else:
+        for i, col in enumerate(value_columns):
+            df[col] = values[:, i]
+
+    # Keep only isotope-assigned rows
+    df = df[df["isotope"] != ""].reset_index(drop=True)
+
+    return df
