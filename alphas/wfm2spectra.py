@@ -1,11 +1,13 @@
 from glob import glob
+from cv2 import threshold
 import numpy as np
 import sys
 from scipy.signal import find_peaks
+from scipy.ndimage import median_filter
 import matplotlib.pyplot as plt
 
 # from .wfm2read_fast import wfm2read
-from RaTag.scripts.wfm2read_fast import wfm2read
+from RaTag.core.wfm2read_fast import wfm2read
 
 def get_peak_volts(V):
     """
@@ -51,12 +53,95 @@ def compute_analog_path(path):
 
 def get_baseline(V, npoints: int = 200) -> float:
     """Estimate the baseline of the waveform."""
-    return np.mean(V[:npoints])
+    return np.median(V[:npoints])
 
-def alpha_peak(V, npoints_bs = 200):
-    bs = get_baseline(V, npoints_bs)
-    V = V - bs
-    return V.max() / 1.058
+def find_peak_interpolated(V):
+    """Find peak using parabolic interpolation"""
+    max_idx = V.argmax()
+    if max_idx == 0 or max_idx == len(V)-1:
+        return V[max_idx]
+    
+    # Use 3 points around maximum for parabolic fit
+    y0, y1, y2 = V[max_idx-1], V[max_idx], V[max_idx+1]
+    
+    # Parabolic interpolation
+    denom = 2*(2*y1 - y0 - y2)
+    if abs(denom) < 1e-10:
+        return y1
+    
+    offset = (y0 - y2) / denom
+    peak = y1 - 0.25 * (y0 - y2) * offset
+    
+    return peak
+
+
+def alpha_peak(V, threshold_bs=0.3, dither_amplitude=0.02):
+    """
+    Peak detection with dithering to break ADC quantization.
+    
+    Parameters:
+    -----------
+    V : numpy.ndarray
+        Raw voltage waveform
+    threshold_bs : float
+        Voltage threshold for baseline estimation
+    smooth_window : int
+        Median filter window size
+    dither_amplitude : float
+        Amplitude of uniform dither noise (default: 0.02V, ~1/4 ADC step)
+    
+    Returns:
+    --------
+    float
+        Peak energy in MeV
+    """
+    # Threshold-based baseline
+    Vbs = V[V < threshold_bs]
+    if len(Vbs) < 10:
+        baseline = np.median(V[:200])
+    else:
+        baseline = np.mean(Vbs)
+    
+    # Baseline-corrected waveform
+    V_corrected = V - baseline
+
+    
+    # **KEY**: Add uniform dither noise BEFORE filtering
+    # This breaks the quantization and allows interpolation to work
+    if dither_amplitude > 0:
+        dither = np.random.uniform(-dither_amplitude, dither_amplitude, size=V_corrected.shape)
+        V_dithered = V_corrected + dither
+    else:
+        V_dithered = V_corrected
+    # Parabolic interpolation on filtered peak
+    peak_value = find_peak_interpolated(V_dithered)
+    
+    # Convert to MeV
+    energy = peak_value / 1.058
+    
+    return energy
+
+def alpha_peak_vectorized(V_batch, threshold_bs=0.3, smooth_window=21, dither_amplitude=0.02):
+    """
+    Vectorized peak detection for multiple waveforms.
+    
+    Parameters:
+    -----------
+    V_batch : numpy.ndarray
+        2D array of waveforms (n_waveforms, n_samples)
+    
+    Returns:
+    --------
+    numpy.ndarray
+        Array of energies for each waveform
+    """
+    n_wfms = V_batch.shape[0]
+    energies = np.zeros(n_wfms, dtype=np.float32)
+    
+    for i in range(n_wfms):
+        energies[i] = alpha_peak(V_batch[i, :], threshold_bs, smooth_window, dither_amplitude)
+    
+    return energies
 
 def analyze_file_source(file):
     wf = wfm2read(file)
@@ -94,7 +179,6 @@ def process_alpha_waveforms(path_sca: str) -> np.ndarray:
         if len(V.shape) > 1:
             # Multiple waveforms in the file
             for v in V:
-                V_trigger
                 bs = get_baseline(v)
                 peak = v.max() - bs
                 peak_volts.append(peak)
