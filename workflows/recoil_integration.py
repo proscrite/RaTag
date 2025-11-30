@@ -21,7 +21,8 @@ import matplotlib.pyplot as plt
 
 from RaTag.core.datatypes import SetPmt, S2Areas, Run
 from RaTag.core.config import IntegrationConfig, FitConfig
-from RaTag.core.dataIO import iter_frames, store_s2area, load_s2area, save_figure
+from RaTag.core.dataIO import iter_frameproxies, store_s2area, load_s2area, store_isotope_df, save_figure
+from RaTag.core.uid_utils import make_uid
 from RaTag.core.fitting import fit_set_s2
 from RaTag.core.functional import map_over
 from RaTag.waveform.integration import integrate_s2_in_frame
@@ -125,10 +126,14 @@ def workflow_s2_integration(set_pmt: SetPmt,
     
     # Integrate all frames
     areas = []
-    for wf in iter_frames(set_pmt, max_files=max_files):
+    uids = []
+    for frame_wf in iter_frameproxies(set_pmt, chunk_dir=None, max_files=max_files):
         try:
-            area = integrate_s2_in_frame(wf, s2_start, s2_end, integration_config)
+            uid = make_uid(frame_wf.file_seq, frame_wf.frame_idx)
+            frame_pmt = frame_wf.load_pmt_frame()
+            area = integrate_s2_in_frame(frame_pmt, s2_start, s2_end, integration_config)
             areas.append(area)
+            uids.append(uid)
         except Exception as e:
             print(f"    ⚠ Frame integration failed: {e}")
             continue
@@ -141,6 +146,7 @@ def workflow_s2_integration(set_pmt: SetPmt,
     # Create S2Areas object
     s2 = S2Areas(source_dir=set_pmt.source_dir,
                  areas=np.array(areas).flatten(),
+                 uids=np.array(uids).flatten(),
                  method="recoil_integration",
                  params={
                     "s2_window": (s2_start, s2_end),
