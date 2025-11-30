@@ -1,0 +1,44 @@
+# RaTag/core/energy_join.py
+import numpy as np
+from typing import Dict, Tuple, Optional
+
+from RaTag.alphas.energy_map_reader import load_energy_index  # returns (ids_sorted, Es_sorted)
+
+def map_uids_to_energies(uids, map_dir, fmt='8b', scale=0.1):
+    """
+    uids: 1D numpy array uint32
+    returns: energies array same shape (float32) with np.nan for missing entries
+    """
+    ids, Es = load_energy_index(map_dir, fmt=fmt, scale=scale)  # cached in memory
+    i = np.searchsorted(ids, uids)
+    out = np.full(uids.shape, np.nan, dtype=np.float32)
+    # need to guard for i == len(ids) and mismatches
+    mask = (i < len(ids)) & (ids[i] == uids)
+    out[mask] = Es[i[mask]]
+    return out
+
+def assign_uids_to_isotopes(uids, map_dir, isotope_ranges, fmt='8b', scale=0.1):
+    """
+    Returns dict isotope -> indices (into uids) that belong to that isotope.
+    Overlaps: if a uid's energy falls into multiple ranges, it will be included in multiple lists.
+    """
+    Es = map_uids_to_energies(uids, map_dir, fmt=fmt, scale=scale)
+    
+    assignments = {}
+    for name, (emin, emax) in isotope_ranges.items():
+        mask = (~np.isnan(Es)) & (Es >= emin) & (Es <= emax)
+        assignments[name] = np.nonzero(mask)[0]   # indices into the uids array
+    return assignments
+
+def assign_isotope_by_energy(E: float, ranges: Dict[str, Tuple[float,float]], min_prob=0.5) -> Optional[str]:
+    """
+    Simple deterministic mapping: returns the first isotope whose energy range contains E.
+    ranges: {"Th228": (Emin, Emax), "Ra226": (...)}
+    Returns isotope name or None if none matched.
+    """
+    if E is None or (not (E==E)):  # nan check
+        return None
+    for name, (emin, emax) in ranges.items():
+        if (E >= emin) and (E <= emax):
+            return name
+    return None
