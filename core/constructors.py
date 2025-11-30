@@ -1,6 +1,6 @@
 from dataclasses import replace
 from pathlib import Path
-from typing import  Optional
+from typing import  Optional, List
 
 from .dataIO import load_wfm, parse_subdir_name
 from .datatypes import SetPmt, Run
@@ -44,10 +44,34 @@ def populate_run(run: Run, nfiles: Optional[int] = None) -> Run:
 # --- Set constructors ---
 # ------------------------
 
+def _find_ch1_files(source_dir: Path) -> tuple[List, bool]:
+    """
+    Find all *Ch1.wfm files (PMT signal) in directory.
+    Raise ValueError if None is found
+    """
+    all_files = sorted(source_dir.glob("*_Ch1.wfm"))
+    if not all_files:
+        raise TypeError('No Ch1 files')
+
+    return all_files, True
+
+def _find_noCh_files(source_dir: Path) -> tuple[List, bool]:
+    """
+    Find any *.wfm files (PMT signal in single-isotope runs) in directory.
+    Raise ValueError if None is found
+    """
+    all_files = sorted(source_dir.glob("*.wfm"))
+    if not all_files:
+        raise ValueError('No .wfm files')
+
+    return all_files, False
+
+
 def set_from_dir(source_dir: Path, nfiles: Optional[int] = None) -> SetPmt:
     """
     Create SetPmt from directory by lazy-loading filenames.
-    
+    Keep only Ch1 files in multi-isotope runs
+
     Automatically detects FastFrame properties from the first file.
     
     Args:
@@ -59,11 +83,13 @@ def set_from_dir(source_dir: Path, nfiles: Optional[int] = None) -> SetPmt:
     """
     source_dir = Path(source_dir)
     
-    # Get all .wfm files
-    all_files = sorted(source_dir.glob("*.wfm"))
-    
-    if not all_files:
-        raise FileNotFoundError(f"No .wfm files found in {source_dir}")
+    # Get all .wfm files, first look for Ch1 (multi-isotope set)
+    try:
+        all_files, multiiso = _find_ch1_files(source_dir)
+        print('Detected multi-isotope files...')
+    except TypeError:
+        print('Detected single-isotope files...')
+        all_files, multiiso = _find_noCh_files(source_dir)
     
     # Limit files if requested
     files_to_use = all_files[:nfiles] if nfiles is not None else all_files
@@ -77,13 +103,12 @@ def set_from_dir(source_dir: Path, nfiles: Optional[int] = None) -> SetPmt:
     # Parse metadata from directory name
     metadata = parse_subdir_name(source_dir.name)
     
-    return SetPmt(
-        source_dir=source_dir,
-        filenames=filenames,
-        metadata=metadata,
-        ff=ff,
-        nframes=nframes
-    )
+    return SetPmt(source_dir=source_dir,
+                  filenames=filenames,
+                  metadata=metadata,
+                  multiiso=multiiso,
+                  ff=ff,
+                  nframes=nframes)
 
 
 def set_fields(set_pmt: SetPmt, drift_gap_cm: float, el_gap_cm: float,

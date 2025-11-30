@@ -1,18 +1,21 @@
 from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from functools import lru_cache
+
 from typing import Callable, Optional, Any, List, TYPE_CHECKING
 import numpy as np
 
 import matplotlib.pyplot as plt     # type: ignore[import]
 from matplotlib.ticker import ScalarFormatter # type: ignore[import]
 
+from RaTag.alphas.energy_map_reader import get_energy_for_frame
 if TYPE_CHECKING:
     from typing import List as ListType
 
-# -------------------------------
-# Dataclasses for waveforms
-# -------------------------------
+# -------------------------------#
+# Dataclasses for waveforms    --#
+# -------------------------------#
 
 @dataclass
 class Waveform:
@@ -58,6 +61,90 @@ class SiliconWaveform(Waveform):
         area = self.area(t_min, t_max)
         return area * self.sensitivity if self.sensitivity else area
 
+
+# -----------------------------------------------#
+# Tracker for individual frames in FF files   ---#
+# -----------------------------------------------#
+
+@dataclass
+class FrameProxy:
+    file_path: Path 
+    file_seq: int
+    frame_idx: int
+    chunk_dir: Optional[str] = None
+    fmt: str = '8b'   # format of maps
+    scale: float = 0.1
+
+    # small cache of loaded waveform per-file handled by module-level loader
+    def uid(self) -> int:
+        return int(self.file_seq) * 64 + int(self.frame_idx)
+
+    @property
+    def energy(self) -> float:
+        """Get energy from energy_map (cached by energy_map module)."""
+        from RaTag.alphas.energy_map_reader import get_energy_for_frame
+        if self.chunk_dir is None:
+            raise RuntimeError("chunk_dir not provided to FrameProxy")
+        e = get_energy_for_frame(self.chunk_dir, self.file_seq, self.frame_idx, fmt=self.fmt, scale=self.scale)
+        return e
+
+    @staticmethod
+    def _check_channel(file_path: str, which: str = 'pmt'):
+        if which == 'pmt':
+            return 'Ch1' in file_path
+        elif which == 'alpha':
+            return 'Ch4' in file_path
+        else:
+            raise TypeError('Waveform type error')
+        
+    @staticmethod
+    def _swap_ch_filepath(file_path: str)->Path:
+        if 'Ch1' in file_path:
+            return Path(file_path.replace('Ch1', 'Ch4'))
+        elif 'Ch4' in file_path:
+            return Path(file_path.replace('Ch4', 'Ch1'))
+
+    # LRU loader for waveform arrays (per file path)
+    @staticmethod
+    @lru_cache(maxsize=64)
+    def _load_file_waveforms_cached(file_path: str, which: str = 'pmt'):
+        """
+        Should return numpy array shape (n_frames, n_samples) for channel4 or whatever.
+        Implement or import your existing loader here: e.g. load_alpha(file_path).v
+        Keep this function small and replace the internals with your repo's loader.
+        """
+        from RaTag.core.dataIO import load_alpha, load_wfm
+        if which == 'alpha':
+            wf_alpha = load_alpha(file_path)
+            return wf_alpha
+        elif which == 'pmt':
+            wf_pmt = load_wfm(file_path)
+            return wf_pmt
+
+    def load_alpha_frame(self) -> Waveform:
+        """Return waveform array for this frame (1D)."""
+        from RaTag.core.dataIO import extract_single_frame
+
+        if FrameProxy._check_channel(str(self.file_path), which='alpha'):
+            load_path = self.file_path
+        else:
+            load_path = FrameProxy._swap_ch_filepath(str(self.file_path))
+        
+        wf_alpha = FrameProxy._load_file_waveforms_cached(load_path, which='alpha')
+        frame = extract_single_frame(wf_alpha, self.frame_idx)        # guard in case file has fewer frames done internally
+        return frame
+
+    def load_pmt_frame(self) -> Waveform:
+        """Return waveform array for this frame (1D)."""
+        from RaTag.core.dataIO import extract_single_frame
+        if FrameProxy._check_channel(str(self.file_path), which='pmt'):
+            load_path = self.file_path
+        else:
+            load_path = FrameProxy._swap_ch_filepath(str(self.file_path))
+        
+        wf_pmt = FrameProxy._load_file_waveforms_cached(load_path, which='pmt')
+        frame = extract_single_frame(wf_pmt, self.frame_idx)        # guard in case file has fewer frames done internally
+        return frame
 # -------------------------------
 # Dataclasses for measurement sets
 # -------------------------------
@@ -69,6 +156,7 @@ class SetPmt:
     source_dir: Path
     filenames: list[str]     # lazy list of filenames (not waveforms!)
     metadata: dict
+    multiiso: bool = False   # Multi-isotope set
 
     # --- FastFrame properties ---
     ff: bool = False                 # Whether this set uses FastFrame files

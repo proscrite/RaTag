@@ -7,9 +7,8 @@ import itertools
 from dataclasses import replace
 
 from .units import V_to_mV, s_to_us
-from .datatypes import Waveform, SetPmt, Run, S2Areas, PMTWaveform, XRayResults
+from .datatypes import SiliconWaveform, Waveform, SetPmt, Run, S2Areas, PMTWaveform, XRayResults, FrameProxy
 from .wfm2read_fast import wfm2read # type: ignore
-
 PathLike = Union[str, Path]
 
 # -------------------------------------
@@ -40,6 +39,15 @@ def load_wfm(path: PathLike) -> PMTWaveform:
     return PMTWaveform(t=t_us, v=v_mV, source=wf.source, ff=wf.ff, nframes=wf.nframes)
 
 
+def load_alpha(path: PathLike) -> SiliconWaveform:
+    """Load waveform from a .wfm file storing (t, -v)."""
+    wf = _load_wfm_V_s(path)
+    t_s, v_V = wf.t, -wf.v
+
+    t_us = s_to_us(t_s)
+
+    return SiliconWaveform(t=t_us, v=v_V, source=wf.source, ff=wf.ff, nframes=wf.nframes)
+
 # --- Lazy loader ---
 def iter_waveforms(set_pmt: SetPmt) -> Iterator[PMTWaveform]:
     """Yield PMTWaveform objects lazily, one by one."""
@@ -49,17 +57,17 @@ def iter_waveforms(set_pmt: SetPmt) -> Iterator[PMTWaveform]:
 
 
 # --- Extract single waveform from FastFrame ---
-def extract_single_frame(wf: Waveform, frame: int = 0) -> PMTWaveform:
+def extract_single_frame(wf: Waveform, frame: int = 0) -> Waveform:
     """Extract a single frame from a FastFrame waveform."""
     if not wf.ff:
         raise ValueError("Waveform is not FastFrame format")
     if frame < 0 or frame >= wf.nframes:
         raise ValueError(f"Frame index {frame} out of range [0, {wf.nframes})")
     v_single = wf.v[frame, :]
-    return PMTWaveform(t=wf.t, v=v_single, source=wf.source, ff=False, nframes=1)
+    return Waveform(t=wf.t, v=v_single, source=wf.source, ff=False, nframes=1)
 
 
-def iter_frames(set_pmt, max_files: int = None) -> Iterator[PMTWaveform]:
+def iter_frames(set_pmt, max_files: int = None) -> Iterator[Waveform]:
     """
     Iterate over individual frames from a set, handling both FastFrame and single-frame.
     
@@ -87,6 +95,27 @@ def iter_frames(set_pmt, max_files: int = None) -> Iterator[PMTWaveform]:
             # Single frame: yield as-is
             yield wf
 
+def iter_frameproxies(set_pmt: SetPmt, chunk_dir: str = None, fmt='8b', scale=0.1, max_files: int=None) -> Iterator[FrameProxy]:
+    """
+    Iterate over files in the SetPmt and yield FrameProxy objects.
+    - set_pmt.filenames must be list of file paths
+    - parse file_seq via your existing logic (use parse_file_seq_from_name or sequential)
+    """
+    from RaTag.alphas.energy_map_writer import parse_file_seq_from_name
+    
+    if chunk_dir == None:     # Handle custom chunk_dirs, if None, default is the set_pmt raw_data loc
+        chunk_dir = set_pmt.source_dir
+
+    files = set_pmt.filenames if max_files is None else set_pmt.filenames[:max_files]
+    for p in files:
+        file_seq = parse_file_seq_from_name(p)  # or use manifest mapping if you used it earlier
+        # optionally verify path exists
+        for frame_idx in range(set_pmt.nframes):
+            yield FrameProxy(file_path=set_pmt.source_dir / p, 
+                             file_seq=file_seq, 
+                             frame_idx=frame_idx, 
+                             chunk_dir=chunk_dir, 
+                             fmt=fmt, scale=scale)
 # ----------------------------------------
 # --- Subdirectory parsers for set constructions  ---
 # -------------------------------------
