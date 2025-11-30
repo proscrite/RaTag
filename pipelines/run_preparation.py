@@ -4,10 +4,10 @@ from functools import partial
 from typing import Optional
 from pathlib import Path
 
-from core.datatypes import Run
-from core.functional import pipe_run
-from workflows.run_construction import initialize_run
-from workflows.timing_estimation import estimate_s1_in_run, estimate_s2_in_run, validate_timing_windows, summarize_timing_vs_field
+from RaTag.core.datatypes import Run
+from RaTag.core.functional import pipe_run
+from RaTag.workflows.run_construction import initialize_run
+from RaTag.workflows.timing_estimation import estimate_s1_in_run, estimate_s2_in_run, validate_timing_windows, summarize_timing_vs_field
 
 # ============================================================================
 # MAIN PIPELINE - FUNCTIONAL COMPOSITION

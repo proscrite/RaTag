@@ -70,12 +70,10 @@ def compute_fields_and_transport(run: Run,
                 return loaded
         
         # Compute fields
-        s_with_fields = set_fields(
-            s,
-            drift_gap_cm=run.drift_gap,
-            el_gap_cm=run.el_gap,
-            gas_density=cast(float, run.gas_density)
-        )
+        s_with_fields = set_fields(s,
+                                   drift_gap_cm=run.drift_gap,
+                                   el_gap_cm=run.el_gap,
+                                   gas_density=cast(float, run.gas_density))
         
         # Compute transport properties
         s_with_transport = set_transport_properties(
