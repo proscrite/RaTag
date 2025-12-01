@@ -7,7 +7,9 @@ from pathlib import Path
 from RaTag.core.datatypes import Run
 from RaTag.core.functional import pipe_run
 from RaTag.workflows.run_construction import initialize_run
-from RaTag.workflows.timing_estimation import estimate_s1_in_run, estimate_s2_in_run, validate_timing_windows, summarize_timing_vs_field
+from RaTag.workflows.timing_estimation import (estimate_s1_in_run, estimate_s2_in_run, 
+                                               validate_timing_windows, summarize_timing_vs_field,
+                                                run_s1_multiiso, run_s2_multiiso)
 
 # ============================================================================
 # MAIN PIPELINE - FUNCTIONAL COMPOSITION
@@ -60,4 +62,40 @@ def prepare_run(run: Run,
         summarize_timing_vs_field
     ]
     
+    return pipe_run(run, *steps)
+
+def prepare_run_multiiso(run: Run,
+                         isotope_ranges: dict,
+                         max_files: Optional[int] = None,
+                         max_frames_s1: int = 200,
+                         max_frames_s2: int = 500,
+                         threshold_s1: float = 1.0,
+                         threshold_s2: float = 0.8,
+                         s2_duration_cuts: tuple = (3, 35)) -> Run:
+    """Full multi-isotope run preparation pipeline."""
+
+    print("=" * 60)
+    print(f"PREPARING MULTI-ISOTOPE RUN: {run.run_id}")
+    print("=" * 60)
+
+    steps = [
+        partial(initialize_run, max_files=max_files),
+        partial(estimate_s1_in_run,
+                max_frames=max_frames_s1,
+                threshold_s1=threshold_s1),
+        partial(estimate_s2_in_run,
+                max_frames=max_frames_s2,
+                threshold_s2=threshold_s2,
+                s2_duration_cuts=s2_duration_cuts),
+
+
+        partial(run_s1_multiiso,
+                isotope_ranges=isotope_ranges),
+        partial(run_s2_multiiso,
+                isotope_ranges=isotope_ranges),
+
+        partial(validate_timing_windows, n_waveforms=5),
+        summarize_timing_vs_field
+    ]
+
     return pipe_run(run, *steps)

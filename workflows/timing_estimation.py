@@ -1,14 +1,15 @@
 import numpy as np # type: ignore
+import pandas as pd
 import matplotlib.pyplot as plt # type: ignore
 from dataclasses import replace
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, Dict
 
 from RaTag.core.dataIO import iter_frameproxies, save_set_metadata, load_set_metadata, store_isotope_df, save_figure
 from RaTag.core.datatypes import SetPmt, Run
 from RaTag.core.uid_utils import make_uid
-from RaTag.core.energy_map_reader import get_energies_for_uids 
-
+from RaTag.core.functional import apply_workflow_to_run, map_isotopes_in_run
+from RaTag.alphas.energy_join import map_results_to_isotopes, generic_multiiso_workflow
 from RaTag.waveform.s1s2_detection import detect_s1_in_frame, detect_s2_in_frame
 from RaTag.plotting import plot_time_histograms, plot_n_waveforms, plot_timing_vs_drift_field, plot_grouped_histograms
 # ============================================================================
@@ -89,63 +90,8 @@ def _compute_timing_statistics(times: np.ndarray,
     return {name: mode, f"{name}_std": std}
 
 
-def _estimate_timing_in_run(run: Run,
-                           workflow_func,
-                           param_name: str,
-                           **workflow_kwargs) -> Run:
-    """
-    Generic run-level timing estimation with caching.
-    
-    Args:
-        run: Run to process
-        workflow_func: Set-level workflow function (e.g., s1_set_workflow)
-        param_name: Name for logging (e.g., "s1")
-        **workflow_kwargs: Arguments passed to workflow_func
-        
-    Returns:
-        Updated Run
-    """
-    print("\n" + "="*60)
-    print(f"{param_name.upper()} TIMING ESTIMATION")
-    print("="*60)
-    
-    # Setup directories
-    plots_dir = run.root_directory / "plots" / f"{param_name}_timing"
-    plots_dir.mkdir(parents=True, exist_ok=True)
-    
-    data_dir = run.root_directory / "processed_data"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    
-    updated_sets = []
-    for i, set_pmt in enumerate(run.sets, 1):
-        print(f"\nSet {i}/{len(run.sets)}: {set_pmt.source_dir.name}")
-        
-        # Check cache (metadata contains timing stats)
-        cache_key = f"t_{param_name}" if param_name == "s1" else f"t_{param_name}_start"
-        data_file = data_dir / f"{set_pmt.source_dir.name}_{param_name}.npz"
-
-        loaded = load_set_metadata(set_pmt)
-        if loaded and cache_key in loaded.metadata and data_file.exists():
-            print(f"  📂 Loaded from cache")
-            updated_sets.append(loaded)
-            continue
-        
-        # Run complete workflow
-        try:
-            updated_set = workflow_func(set_pmt,
-                                       plots_dir=plots_dir,
-                                       data_dir=data_dir,
-                                       **workflow_kwargs)
-            updated_sets.append(updated_set)
-        except Exception as e:
-            print(f"  ⚠ Failed: {e}")
-            updated_sets.append(set_pmt)
-    
-    return replace(run, sets=updated_sets)
-
-
 # ============================================================================
-# GENERIC SIDE EFFECTS (modular)
+# SET-LEVEL WORKFLOWS (complete ETL with side effects)
 # ============================================================================
 
 def save_timing_results(set_pmt: SetPmt,
@@ -159,14 +105,16 @@ def save_timing_results(set_pmt: SetPmt,
     Args:
         set_pmt: SetPmt with updated metadata
         timing_data: Raw timing data (array for S1, dict for S2)
-        data_dir: Directory for processed data
+        data_dir: Directory for processed data (base directory)
         signal_type: "s1" or "s2"
     """
-    # Save metadata
+    # Save metadata (at root level)
     save_set_metadata(set_pmt)
     
-    # Save raw data as npz (consistent format)
-    data_file = data_dir / f"{set_pmt.source_dir.name}_{signal_type}.npz"
+    # Save raw data as npz in all/ subdirectory
+    all_dir = data_dir / "all"
+    all_dir.mkdir(parents=True, exist_ok=True)
+    data_file = all_dir / f"{set_pmt.source_dir.name}_{signal_type}.npz"
     
     if isinstance(timing_data, np.ndarray):
         # S1: single array
@@ -176,7 +124,7 @@ def save_timing_results(set_pmt: SetPmt,
         # S2: dict with multiple arrays
         np.savez_compressed(data_file, uids=uids.astype(np.uint32), **timing_data)
     
-    print(f"    💾 Saved to {data_file.name}")
+    print(f"    💾 Saved to {data_file.relative_to(data_dir.parent)}")
 
 # ============================================================================
 # S1 COMPUTATION (pure)
@@ -274,13 +222,9 @@ def compute_s2(set_pmt: SetPmt,
 # COMPLETE SET-LEVEL WORKFLOWS (composable)
 # ============================================================================
 
-def workflow_s1_set(set_pmt: SetPmt,
+def workflow_s1_timing(set_pmt: SetPmt,
                     max_frames: int = 200,
-                    threshold_s1: float = 1.0,
-                    plots_dir: Optional[Path] = None,
-                    data_dir: Optional[Path] = None,
-                    isotope_ranges: Optional[Dict[str, tuple]] = None,
-                    chunk_dir: Optional[str] = None) -> SetPmt:
+                    threshold_s1: float = 1.0) -> SetPmt:
     """Complete S1 workflow for a single set: compute → save → plot."""
     
     # Compute
@@ -289,55 +233,30 @@ def workflow_s1_set(set_pmt: SetPmt,
                                        threshold_s1=threshold_s1)
     
     # Default directories
-    if data_dir is None:
-        data_dir = set_pmt.source_dir.parent / "processed_data"
+    data_dir = set_pmt.source_dir.parent / "processed_data"
     data_dir.mkdir(parents=True, exist_ok=True)
     
-    if plots_dir is None:
-        plots_dir = set_pmt.source_dir.parent / "plots" / "s1_timing"
+    plots_dir = set_pmt.source_dir.parent / "plots" / "all" / "t_s1"
     plots_dir.mkdir(parents=True, exist_ok=True)
     
     # Save
-    # save_timing_results(updated_set, s1_times, data_dir, "s1")
-    save_timing_results(updated_set, uids_s1, s1_times, data_dir, signal_type='s1')
-    
-    # -------- NEW MULTI-ISOTOPE EXTENSION --------
-    if isotope_ranges is not None:
-        npz_path = data_dir / f"{set_pmt.source_dir.name}_s1.npz"
-        arr = np.load(npz_path, allow_pickle=True)
-        
-        df_s1 = map_results_to_isotopes(
-            uids=arr["uids"],
-            values=arr["t_s1"],
-            chunk_dir=chunk_dir or str(set_pmt.source_dir),
-            isotope_ranges=isotope_ranges,
-            value_columns=["t_s1"]
-        )
-        
-        store_results_df(df_s1, data_dir / f"{set_pmt.source_dir.name}_s1_isotopes.parquet")
-        plot_grouped_histograms(df_s1, ["t_s1"], bins=40)
-
-    # ----------------------------------------------
+    save_timing_results(updated_set, uids_s1, s1_times, data_dir, signal_type='t_s1')
     
     # Plot
     fig = plot_time_histograms(s1_times, 
-                               title=f"{'S1'} - {set_pmt.source_dir.name}",
-                               mean=updated_set.metadata.get("t_s1", None),
-                               std=updated_set.metadata.get("t_s1_std", None),
-                               xlabel = "Time (µs)", color='blue', ax = None)
+                            title=f"{'S1'} - {set_pmt.source_dir.name}",
+                            mean=updated_set.metadata.get("t_s1", None),
+                            std=updated_set.metadata.get("t_s1_std", None),
+                            xlabel = "Time (µs)", color='blue', ax = None)
 
-    save_figure(fig, plots_dir / f"{set_pmt.source_dir.name}_s1.png")
+    save_figure(fig, plots_dir / f"{set_pmt.source_dir.name}_t_s1.png")
+    plt.close(fig)
     return updated_set
 
-
-def workflow_s2_set(set_pmt: SetPmt,
+def workflow_s2_timing(set_pmt: SetPmt,
                     max_frames: int = 500,
                     threshold_s2: float = 0.8,
-                    s2_duration_cuts: tuple = (3, 35),
-                    plots_dir: Optional[Path] = None,
-                    data_dir: Optional[Path] = None,
-                    isotope_ranges: Optional[Dict[str, tuple]] = None,
-                    chunk_dir: Optional[str] = None) -> SetPmt:
+                    s2_duration_cuts: tuple = (3, 35),) -> SetPmt:
     """Complete S2 workflow for a single set: compute → save → plot."""
     # Compute
     updated_set, s2_data, uids_s2 = compute_s2(set_pmt,
@@ -346,39 +265,14 @@ def workflow_s2_set(set_pmt: SetPmt,
                                       s2_duration_cuts=s2_duration_cuts)
     
     # Default directories
-    if data_dir is None:
-        data_dir = set_pmt.source_dir.parent / "processed_data"
+    data_dir = set_pmt.source_dir.parent / "processed_data"
     data_dir.mkdir(parents=True, exist_ok=True)
     
-    if plots_dir is None:
-        plots_dir = set_pmt.source_dir.parent / "plots" / "s2_timing"
+    plots_dir = set_pmt.source_dir.parent / "plots" / "all" / "t_s2"
     plots_dir.mkdir(parents=True, exist_ok=True)
     
     # Save
-    save_timing_results(updated_set, uids_s2, s2_data, data_dir, signal_type='s2')
-    
-    # -------- NEW MULTI-ISOTOPE EXTENSION --------
-    if isotope_ranges is not None:
-        npz_path = data_dir / f"{set_pmt.source_dir.name}_s2.npz"
-        arr = np.load(npz_path, allow_pickle=True)
-
-        values = np.column_stack([
-            arr["t_s2_start"],
-            arr["t_s2_end"]
-        ])
-
-        df_s2 = map_results_to_isotopes(
-            uids=arr["uids"],
-            values=values,
-            chunk_dir=chunk_dir or str(set_pmt.source_dir),
-            isotope_ranges=isotope_ranges,
-            value_columns=["t_s2_start", "t_s2_end"],
-        )
-
-        store_results_df(df_s2, data_dir / f"{set_pmt.source_dir.name}_s2_isotopes.parquet")
-        plot_grouped_histograms(df_s2, ["t_s2_start", "t_s2_end"], bins=40)
-
-    # ----------------------------------------------
+    save_timing_results(updated_set, uids_s2, s2_data, data_dir, signal_type='t_s2')
 
     # Plot
     fig, ax = plt.subplots(3, 1, figsize=(8, 12))
@@ -389,9 +283,33 @@ def workflow_s2_set(set_pmt: SetPmt,
                              std=updated_set.metadata.get(f"{time_data}_std", None),
                              xlabel = "Time (µs)", color='blue', ax = a)
 
-    save_figure(fig, plots_dir / f"{set_pmt.source_dir.name}_s2.png")
-
+    save_figure(fig, plots_dir / f"{set_pmt.source_dir.name}_t_s2.png")
+    plt.close(fig)
     return updated_set
+
+
+def workflow_s1_multiiso(set_pmt: SetPmt,
+                         isotope_ranges: Dict[str, tuple]) -> pd.DataFrame:
+    """Multi-isotope S1 workflow: load → map → plot."""
+    return generic_multiiso_workflow(set_pmt,
+                                     data_filename="t_s1.npz",
+                                     value_keys=["t_s1"],
+                                     isotope_ranges=isotope_ranges,
+                                     output_suffix="t_s1_multi",
+                                     plot_columns=["t_s1"],
+                                     bins=40)
+
+
+def workflow_s2_multiiso(set_pmt: SetPmt,
+                         isotope_ranges: Dict[str, tuple]) -> pd.DataFrame:
+    """Multi-isotope S2 workflow: load → map → plot."""
+    return generic_multiiso_workflow(set_pmt,
+                                     data_filename="t_s2.npz",
+                                     value_keys=["t_s2_start", "t_s2_end"],
+                                     isotope_ranges=isotope_ranges,
+                                     output_suffix="t_s2_multi",
+                                     plot_columns=["t_s2_start", "t_s2_end"],
+                                     bins=40)
 
 
 # ============================================================================
@@ -402,11 +320,13 @@ def estimate_s1_in_run(run: Run,
                        max_frames: int = 200,
                        threshold_s1: float = 1.0) -> Run:
     """Estimate S1 timing for all sets in a run."""
-    return _estimate_timing_in_run(run,
-                                   workflow_func=workflow_s1_set,
-                                   param_name="s1",
-                                   max_frames=max_frames,
-                                   threshold_s1=threshold_s1)
+    return apply_workflow_to_run(run,
+                                 workflow_func=workflow_s1_timing,
+                                 workflow_name="S1 timing estimation",
+                                 cache_key="t_s1",
+                                 data_file_suffix="s1.npz",
+                                 max_frames=max_frames,
+                                 threshold_s1=threshold_s1)
 
 
 def estimate_s2_in_run(run: Run,
@@ -414,12 +334,34 @@ def estimate_s2_in_run(run: Run,
                        threshold_s2: float = 0.8,
                        s2_duration_cuts: tuple = (3, 35)) -> Run:
     """Estimate S2 timing for all sets in a run."""
-    return _estimate_timing_in_run(run,
-                                   workflow_func=workflow_s2_set,
-                                   param_name="s2",
-                                   max_frames=max_frames,
-                                   threshold_s2=threshold_s2,
-                                   s2_duration_cuts=s2_duration_cuts)
+    return apply_workflow_to_run(run,
+                                 workflow_func=workflow_s2_timing,
+                                 workflow_name="S2 timing estimation",
+                                 cache_key="t_s2_start",
+                                 data_file_suffix="s2.npz",
+                                 max_frames=max_frames,
+                                 threshold_s2=threshold_s2,
+                                 s2_duration_cuts=s2_duration_cuts)
+
+
+# ============================================================================
+# MULTI-ISOTOPE RUN-LEVEL WORKFLOWS
+# ============================================================================
+
+def run_s1_multiiso(run: Run, isotope_ranges: dict) -> Run:
+    """Run-level wrapper for distributing S1 timings by isotope."""
+    return map_isotopes_in_run(run,
+                               workflow_func=workflow_s1_multiiso,
+                               workflow_name="S1 isotope mapping",
+                               isotope_ranges=isotope_ranges)
+
+
+def run_s2_multiiso(run: Run, isotope_ranges: dict) -> Run:
+    """Run-level wrapper for distributing S2 timings by isotope."""
+    return map_isotopes_in_run(run,
+                               workflow_func=workflow_s2_multiiso,
+                               workflow_name="S2 isotope mapping",
+                               isotope_ranges=isotope_ranges)
 
 # ============================================================================
 # VALIDATION STEP WITH PLOTTING (pure QA)
@@ -443,7 +385,7 @@ def validate_timing_windows(run: Run, n_waveforms: int = 5) -> Run:
     print("TIMING VALIDATION")
     print("="*60)
     
-    validation_dir = run.root_directory / "plots" / "validation"
+    validation_dir = run.root_directory / "plots" / "all" / "validation"
     validation_dir.mkdir(parents=True, exist_ok=True)
     
     for i, set_pmt in enumerate(run.sets, 1):
@@ -456,13 +398,16 @@ def validate_timing_windows(run: Run, n_waveforms: int = 5) -> Run:
         
         try:
             fig, ax = plot_n_waveforms(set_pmt, n_waveforms=n_waveforms)
+            plot_path = validation_dir / f"{set_pmt.source_dir.name}_validation.png"
+            save_figure(fig, plot_path)
             print(f"  ✓ Saved validation plot")
         except Exception as e:
             print(f"  ⚠ Failed: {e}")
 
     return run  # Unchanged run
 
-# ============================================================================,             save_figure(fig, validation_dir / f"{set_pmt.source_dir.name")
+
+# ============================================================================
 # SUMMARY PLOT OF TIMING (pure QA)
 # ============================================================================
 
@@ -523,7 +468,7 @@ def summarize_timing_vs_field(run: Run,
     
     # Set up output directory
     if plots_dir is None:
-        plots_dir = run.root_directory / "plots" / "summary_preparation"
+        plots_dir = run.root_directory / "plots" / "all" / "summary_preparation"
     plots_dir.mkdir(parents=True, exist_ok=True)
     
     # Collect data for all timing parameters

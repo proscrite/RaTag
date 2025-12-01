@@ -2,6 +2,8 @@
 
 from typing import Callable, TypeVar
 from functools import reduce
+from dataclasses import replace
+from pathlib import Path
 
 T = TypeVar('T')
 
@@ -98,3 +100,131 @@ def with_persistence(fn: Callable[[T], T],
         save_fn(result)
         return result
     return wrapped
+
+
+# ============================================================================
+# RUN-LEVEL ORCHESTRATION
+# ============================================================================
+
+def apply_workflow_to_run(run,
+                          workflow_func: Callable,
+                          workflow_name: str,
+                          cache_key: str,
+                          data_file_suffix: str,
+                          **workflow_kwargs):
+    """
+    Generic run-level workflow orchestration with caching.
+    
+    Applies a set-level workflow to all sets in a run, with automatic:
+    - Directory setup (plots_dir, data_dir)
+    - Metadata-based caching
+    - Error handling
+    
+    Args:
+        run: Run object to process
+        workflow_func: Set-level workflow function
+        workflow_name: Display name for logging (e.g., "S1 TIMING ESTIMATION")
+        cache_key: Metadata key to check for caching (e.g., "t_s1")
+        data_file_suffix: Suffix for data file (e.g., "s1.npz")
+        **workflow_kwargs: Additional arguments passed to workflow_func
+        
+    Returns:
+        Updated Run with processed sets
+        
+    Example:
+        >>> run = apply_workflow_to_run(
+        ...     run,
+        ...     workflow_s1_timing,
+        ...     "S1 TIMING ESTIMATION",
+        ...     cache_key="t_s1",
+        ...     data_file_suffix="s1.npz",
+        ...     max_frames=200
+        ... )
+    """
+    from RaTag.core.dataIO import load_set_metadata
+    
+    print("\n" + "="*60)
+    print(workflow_name.upper())
+    print("="*60)
+    
+    # Setup data directory (always needed)
+    data_dir = run.root_directory / "processed_data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Setup plots directory
+    plots_dir = run.root_directory / "plots"
+    
+    updated_sets = []
+    for i, set_pmt in enumerate(run.sets, 1):
+        print(f"\nSet {i}/{len(run.sets)}: {set_pmt.source_dir.name}")
+        
+        # Check cache
+        data_file = data_dir / f"{set_pmt.source_dir.name}_{data_file_suffix}"
+        print(f"  Checking cache at {data_file}...")
+        loaded = load_set_metadata(set_pmt)
+        
+        if loaded and cache_key in loaded.metadata and data_file.exists():
+            print(f"  📂 Loaded from cache")
+            updated_sets.append(loaded)
+            continue
+        # Run workflow
+        try:
+            updated_set = workflow_func(set_pmt, **workflow_kwargs)
+            updated_sets.append(updated_set)
+        except Exception as e:
+            print(f"  ⚠ Failed: {e}")
+            updated_sets.append(set_pmt)
+    
+    return replace(run, sets=updated_sets)
+
+
+def map_isotopes_in_run(run,
+                       workflow_func: Callable,
+                       workflow_name: str,
+                       isotope_ranges: dict,
+                       **workflow_kwargs):
+    """
+    Generic run-level isotope mapping orchestration.
+    
+    Applies an isotope mapping workflow to all sets in a run.
+    Typically used after initial processing to split results by isotope.
+    
+    Args:
+        run: Run object to process
+        workflow_func: Set-level isotope mapping function
+        workflow_name: Display name for logging (e.g., "S1 ISOTOPE MAPPING")
+        isotope_ranges: Dictionary of {isotope: (Emin, Emax)}
+        **workflow_kwargs: Additional arguments passed to workflow_func
+        
+    Returns:
+        Updated Run (sets typically unchanged, side effects are saved files)
+        
+    Example:
+        >>> run = map_isotopes_in_run(
+        ...     run,
+        ...     workflow_s1_multiiso,
+        ...     "S1 ISOTOPE MAPPING",
+        ...     isotope_ranges={"Th228": (5000, 7000)}
+        ... )
+    """
+    print("\n" + "="*60)
+    print(workflow_name.upper())
+    print("="*60)
+
+    updated_sets = []
+    for i, set_pmt in enumerate(run.sets, 1):
+        print(f"\nSet {i}/{len(run.sets)}: {set_pmt.source_dir.name}")
+
+        try:
+            workflow_func(set_pmt,
+                         isotope_ranges=isotope_ranges,
+                         **workflow_kwargs)
+        except Exception as e:
+            import traceback
+            print(f"  ⚠ Failed: {e}")
+            # print(f"  Full traceback:")
+            # traceback.print_exc()
+
+        updated_sets.append(set_pmt)
+
+    return replace(run, sets=updated_sets)
