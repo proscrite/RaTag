@@ -1,0 +1,47 @@
+# RUN Analysis Configuration Template
+# Copy this file and customize for your specific run
+# Example: cp run_analysis_template.yaml ../../configs/run8_analysis.yaml
+
+run_id: "RUN_X"
+description: "Description of this run"
+
+# Data location
+data:
+  raw_data_path: "/path/to/raw/data"
+  output_base: "/path/to/output"  # Optional, defaults to raw_data_path
+
+# Run parameters
+experiment:
+  el_field: 2350.0          # V/cm - EL field
+  target_isotope: "Th228"   # Isotope being studied
+  pressure: 2.0             # bar - Gas pressure
+  temperature: 297.0        # K - Temperature
+  sampling_rate: 5.0e9      # Hz - Oscilloscope sampling rate
+  el_gap: 0.8               # cm - EL gap distance
+  drift_gap: 1.4            # cm - Drift gap distance
+  width_s2: 1.1             # µs - S2 signal width
+  W_value: 22.0             # eV - Mean energy per ion pair
+  E_gamma_xray: 12300.0     # eV - X-ray energy
+
+# Pipeline configuration
+pipeline:
+  # Preparation stage (S1/S2 timing estimation)
+  preparation:
+    max_frames_s1: 1000       # Number of frames for S1 estimation
+    max_frames_s2: 1000       # Number of frames for S2 estimation
+    threshold_s1: 1.0         # mV - S1 detection threshold
+    threshold_s2: 0.8         # mV - S2 detection threshold
+    s2_duration_cuts: [3, 35] # µs - Min/max S2 duration
+  
+  # Integration stage (S2 area calculation)
+  integration:
+    max_files: null           # null = all files, or specify number
+    integration_config:
+      n_pedestal: 100         # Samples for pedestal calculation
+      ma_window: 9            # Moving average window size
+      bs_threshold: 0.03      # mV - Baseline subtraction threshold
+      dt: 0.2                 # µs - Time step for integration
+    fit_config:
+      bin_cuts: [0, 10]       # mV·µs - Histogram range
+      nbins: 100              # Number of histogram bins
+      exclude_index: []       # Bins to exclude from fit
