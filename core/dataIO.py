@@ -1,4 +1,5 @@
-import numpy as np # type: ignore
+import numpy as np 
+import pandas as pd
 from pathlib import Path
 from typing import Union, Iterator, Optional
 import re
@@ -305,7 +306,7 @@ def store_s2area(s2: S2Areas,
                  set_pmt: Optional[SetPmt] = None,
                  output_dir: Optional[Path] = None) -> None:
     """
-    Store S2Areas object to disk in processed_data directory.
+    Store S2Areas object to disk in processed_data/all/ directory.
     
     Saves two files:
     - s2_areas.npy: Raw area array
@@ -316,17 +317,23 @@ def store_s2area(s2: S2Areas,
         set_pmt: Optional SetPmt to extract complete metadata from
         output_dir: Optional custom output directory (for testing)
     """
-    # Use custom directory or default to processed_data
+    # Determine base directory
     if output_dir is None:
-        output_dir = s2.source_dir.parent / "processed_data"
-    output_dir.mkdir(parents=True, exist_ok=True)
+        base_dir = s2.source_dir.parent / "processed_data"
+    else:
+        base_dir = output_dir
+    
+    # Always save to all/ subdirectory
+    all_dir = base_dir / "all"
+    all_dir.mkdir(parents=True, exist_ok=True)
     
     set_name = s2.source_dir.name
     
-    # Save raw areas as numpy array
-    path_areas = output_dir / f"{set_name}_s2_areas.npz"
+    # Save raw areas as numpy array to all/ subdirectory
+    path_areas = all_dir / f"{set_name}_s2_areas.npz"
     # np.save(path_areas, s2.areas)
     np.savez_compressed(path_areas, uids=s2.uids.astype(np.uint32), s2_areas=s2.areas)
+    print(f"    💾 Saved S2 areas to all/{path_areas.name}")
 
     save_set_metadata(set_pmt)
 """
@@ -366,7 +373,7 @@ def store_s2area(s2: S2Areas,
 
 def load_s2area(set_pmt: SetPmt, input_dir: Optional[Path] = None) -> S2Areas:
     """
-    Load S2Areas object from processed_data directory.
+    Load S2Areas object from processed_data/all/ directory.
     
     Args:
         set_pmt: SetPmt object with source_dir
@@ -375,26 +382,33 @@ def load_s2area(set_pmt: SetPmt, input_dir: Optional[Path] = None) -> S2Areas:
     Returns:
         S2Areas with all saved attributes populated
     """
-    # Use custom directory or default to processed_data
+    # Determine base directory
     if input_dir is None:
-        input_dir = set_pmt.source_dir.parent / "processed_data"
+        base_dir = set_pmt.source_dir.parent / "processed_data"
+    else:
+        base_dir = input_dir
+    
+    # Always load from all/ subdirectory
+    all_dir = base_dir / "all"
     
     set_name = set_pmt.source_dir.name
     
-    # Load raw areas
-    path_areas = input_dir / f"{set_name}_s2_areas.npy"
-    areas = np.load(path_areas)
+    # Load raw areas from all/ subdirectory
+    path_areas = all_dir / f"{set_name}_s2_areas.npz"
+    arr = np.load(path_areas, allow_pickle=True)
     
     # Try to load complete results
-    path_results = input_dir / f"{set_name}_s2_results.json"
+    # Note: metadata.json is at root level, not in all/ subdirectory
+    path_results = base_dir / f"{set_name}_metadata.json"
     if path_results.exists():
         with open(path_results, "r") as f:
             results = json.load(f)
         
         return S2Areas(
             source_dir=set_pmt.source_dir,
-            areas=areas,
-            method=results.get("method", "loaded_from_npy"),
+            areas=arr['s2_areas'],
+            uids=arr['uids'],
+            method=results.get("method", "loaded_from_npz"),
             params=results.get("params", {"set_metadata": set_pmt.metadata}),
             mean=results.get("mean"),
             sigma=results.get("sigma"),
@@ -406,7 +420,7 @@ def load_s2area(set_pmt: SetPmt, input_dir: Optional[Path] = None) -> S2Areas:
         return S2Areas(
             source_dir=set_pmt.source_dir,
             areas=areas,
-            method="loaded_from_npy",
+            method="loaded_from_npz",
             params={"set_metadata": set_pmt.metadata}
         )
 

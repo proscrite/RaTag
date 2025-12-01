@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Any
 from dataclasses import replace
 import numpy as np # type: ignore
 import matplotlib.pyplot as plt # type: ignore
@@ -50,12 +50,10 @@ def compute_hist_variance(hist_array: np.ndarray,
         raise ValueError(f"Unknown method: {method}")
 
 
-def _fit_gaussian_to_histogram(
-    data: np.ndarray,
-    bin_cuts: Tuple[float, float],
-    nbins: int = 100,
-    exclude_index: int = 0
-):
+def _fit_gaussian_to_histogram(data: np.ndarray,
+                               bin_cuts: Tuple[float, float],
+                               nbins: int = 100,
+                               exclude_index: int = 0) -> Tuple[float, float, float, np.ndarray, np.ndarray, Any]:
     """
     Helper function to fit Gaussian to histogram data using lmfit.
     
@@ -69,6 +67,8 @@ def _fit_gaussian_to_histogram(
         Tuple of (mean, sigma, ci95, bin_centers, bin_counts, fitted_model_result)
     """
     # Filter data within range
+    data = np.array(data)
+
     filtered = data[(data >= bin_cuts[0]) & (data <= bin_cuts[1])]
     
     if len(filtered) == 0:
@@ -78,11 +78,13 @@ def _fit_gaussian_to_histogram(
     n, bins = np.histogram(filtered, bins=nbins, range=bin_cuts)
     cbins = 0.5 * (bins[1:] + bins[:-1])
     
+
     # Exclude first bins if requested (for pedestal removal)
     if exclude_index > 0:
         n = n[exclude_index:]
         cbins = cbins[exclude_index:]
 
+    
     # Fit Gaussian model using lmfit
     model = GaussianModel()
     params = model.make_params(
@@ -96,8 +98,8 @@ def _fit_gaussian_to_histogram(
     mean = result.params["center"].value
     sigma = result.params["sigma"].value
     stderr = result.params["center"].stderr
-    ci95 = 1.96 * stderr if stderr else None
-
+    ci95 = 1.96 * stderr if stderr else mean
+    
     return mean, sigma, ci95, cbins, n, result
 
 
@@ -159,13 +161,11 @@ def _plot_gaussian_fit(
 #  S1/S2 timing histogram fit
 # -------------------------------------------------
 
-def fit_s2_timing_histogram(
-    data: np.ndarray,
-    bin_cuts: Tuple[float, float],
-    nbins: int = 100,
-    flag_plot: bool = False,
-    timing_type: str = "duration"
-) -> Tuple[float, float, float]:
+def fit_s2_timing_histogram(data: np.ndarray,
+                            bin_cuts: Tuple[float, float],
+                            nbins: int = 100, 
+                            flag_plot: bool = False,
+                            timing_type: str = "duration") -> Tuple[float, float, float]:
     """
     Fit Gaussian to S2 timing histogram (start, end, or duration).
     
@@ -203,15 +203,13 @@ def fit_s2_timing_histogram(
     if timing_type not in labels:
         raise ValueError(f"timing_type must be one of {list(labels.keys())}")
     
-    mean, sigma, ci95, cbins, n, fit_result = _fit_gaussian_to_histogram(
-        data, bin_cuts, nbins
-    )
+    mean, sigma, ci95, cbins, n, fit_result = _fit_gaussian_to_histogram(data=data,
+                                                                          bin_cuts=bin_cuts, nbins=nbins, 
+                                                                            exclude_index=0)
     
     if flag_plot:
-        _plot_gaussian_fit(
-            data, bin_cuts, nbins, fit_result,
-            **labels[timing_type]
-        )
+        _plot_gaussian_fit(data, bin_cuts, nbins, fit_result,
+                           **labels[timing_type])
     
     return mean, sigma, ci95
 
@@ -247,9 +245,9 @@ def fit_set_s2(s2: S2Areas,
 
     # Use shared Gaussian fitting function
     try:
-        mean, sigma, ci95, cbins, n, result = _fit_gaussian_to_histogram(
-            s2.areas, bin_cuts, nbins, exclude_index
-        )
+        mean, sigma, ci95, cbins, n, result = _fit_gaussian_to_histogram(data=s2.areas, 
+                                                                         bin_cuts=bin_cuts, 
+                                                                         nbins=nbins, exclude_index=exclude_index)
     except Exception as e:
         print(f"Warning: Gaussian fit failed for {s2.source_dir.name}: {e}")
         return replace(s2, fit_success=False)

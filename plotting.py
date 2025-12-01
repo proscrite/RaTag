@@ -593,12 +593,9 @@ def plot_time_histograms(times: np.ndarray,
 # --------------------------------------------
 # -- Grouped histograms for isotope results
 # --------------------------------------------
-def plot_grouped_histograms(
-        df: pd.DataFrame,
-        value_columns: list[str],
-        bins: int = 40,
-        figsize=(10, 4)
-    ):
+def plot_grouped_histograms(df: pd.DataFrame,
+                            value_columns: list[str],
+                            bins: int = 40, figsize=(10, 4)):
     """
     Plot grouped histograms for each isotope and each value column.
 
@@ -607,28 +604,39 @@ def plot_grouped_histograms(
     df : DataFrame
         Must contain 'isotope' and columns in value_columns.
     value_columns : list[str]
-        Columns to plot (one figure per column).
+        Columns to plot (one subplot per column).
     bins : int
         Histogram bins.
     figsize : tuple
-        Figure size per column.
+        Figure size.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        Figure with subplots for all value columns
     """
 
     isotopes = sorted(df["isotope"].unique())
+    n_isotopes = len(isotopes)
+    n_cols = len(value_columns)
+    
+    # Create figure with grid: rows = isotopes, columns = value_columns
+    fig, axes = plt.subplots(n_isotopes, n_cols, 
+                             figsize=(figsize[0] * n_cols, figsize[1] * n_isotopes),
+                             sharex='col', squeeze=False)
 
-    for col in value_columns:
-        fig, ax = plt.subplots(len(isotopes), 1, figsize=figsize, sharex=True)
-
-        if len(isotopes) == 1:
-            ax = [ax]
-
+    for j, col in enumerate(value_columns):
         for i, iso in enumerate(isotopes):
             vals = df[df["isotope"] == iso][col].dropna()
-            ax[i].hist(vals, bins=bins)
-            ax[i].set_title(f"{iso} – {col}", fontsize=10)
+            axes[i, j].hist(vals, bins=bins)
+            axes[i, j].set_title(f"{iso} – {col}", fontsize=10)
+            
+            # Add x-label only on bottom row
+            if i == n_isotopes - 1:
+                axes[i, j].set_xlabel(col)
 
-        fig.tight_layout()
-        plt.show()
+    fig.tight_layout()
+    return fig
 # --------------------------------
 # Deprecated functions
 # --------------------------------

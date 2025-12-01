@@ -1,7 +1,9 @@
 # RaTag/core/energy_join.py
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from typing import Dict, Tuple, Optional
+from pathlib import Path
 
 from RaTag.alphas.energy_map_reader import load_energy_index, get_energies_for_uids  # returns (ids_sorted, Es_sorted)
 
@@ -81,18 +83,102 @@ def map_results_to_isotopes(
         mask = (energies >= emin) & (energies <= emax)
         isotopes[mask] = iso
 
-    # Build dataframe
-    df = pd.DataFrame({"uid": uids, "isotope": isotopes})
-
-    # If `values` is 1-column
+    # Filter to only isotope-assigned entries BEFORE creating DataFrame
+    assigned_mask = isotopes != ""
+    filtered_uids = uids[assigned_mask]
+    filtered_isotopes = isotopes[assigned_mask]
+    
+    # Filter values using the same mask
     if values.ndim == 1:
-        df[value_columns[0]] = values
-    # If multi-column (S2 start & end)
+        filtered_values = values[assigned_mask]
+    else:
+        filtered_values = values[assigned_mask, :]
+
+    # Build dataframe with filtered data
+    df = pd.DataFrame({"uid": filtered_uids, "isotope": filtered_isotopes})
+
+    # Add value columns
+    if values.ndim == 1:
+        df[value_columns[0]] = filtered_values
     else:
         for i, col in enumerate(value_columns):
-            df[col] = values[:, i]
+            df[col] = filtered_values[:, i]
 
-    # Keep only isotope-assigned rows
-    df = df[df["isotope"] != ""].reset_index(drop=True)
+    return df
 
+
+def generic_multiiso_workflow(set_pmt,
+                              data_filename: str,
+                              value_keys: list[str],
+                              isotope_ranges: dict,
+                              output_suffix: str,
+                              plot_columns: list[str],
+                              bins: int = 40):
+    """
+    Generic multi-isotope workflow: load NPZ → map → save → plot.
+    
+    Abstracts the common pattern in all workflow_xxx_multiiso functions.
+    
+    Args:
+        set_pmt: SetPmt object
+        data_filename: NPZ filename (e.g., "s1.npz", "s2.npz", "s2area.npz")
+        value_keys: Keys in NPZ for values (e.g., ["t_s1"], ["areas"], ["t_s2_start", "t_s2_end"])
+        isotope_ranges: {isotope: (Emin, Emax)}
+        output_suffix: Output filename suffix (e.g., "s1_isotopes", "s2area_isotopes")
+        plot_columns: Columns to plot in grouped histograms
+        bins: Number of bins for histograms
+        
+    Returns:
+        DataFrame with isotope assignments
+        
+    Example:
+        >>> df = generic_multiiso_workflow(
+        ...     set_pmt,
+        ...     data_filename="s1.npz",
+        ...     value_keys=["t_s1"],
+        ...     isotope_ranges={"Th228": (5000, 7000)},
+        ...     output_suffix="s1_isotopes",
+        ...     plot_columns=["t_s1"]
+        ... )
+    """
+    from RaTag.core.dataIO import store_isotope_df, save_figure
+    from RaTag.plotting import plot_grouped_histograms
+    
+    # Setup directories
+    data_dir = set_pmt.source_dir.parent / "processed_data"
+    plots_dir = set_pmt.source_dir.parent / "plots" / "multiiso" / f"{output_suffix}"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Load NPZ from all/ subdirectory
+    all_dir = data_dir / "all"
+    npz_path = all_dir / f"{set_pmt.source_dir.name}_{data_filename}"
+    arr = np.load(npz_path, allow_pickle=True)
+    print(f"  Loaded data from all/{npz_path.name}")
+    # Extract values
+    if len(value_keys) == 1:
+        values = arr[value_keys[0]]
+    else:
+        values = np.column_stack([arr[key] for key in value_keys])
+    
+    # Map to isotopes
+    df = map_results_to_isotopes(uids=arr["uids"],
+                                 values=values,
+                                 chunk_dir=str(set_pmt.source_dir),
+                                 isotope_ranges=isotope_ranges,
+                                 value_columns=value_keys)
+    
+    # Save DataFrame to multiiso/ subdirectory
+    multiiso_dir = data_dir / "multiiso"
+    multiiso_dir.mkdir(parents=True, exist_ok=True)
+    output_path = multiiso_dir / f"{set_pmt.source_dir.name}_{output_suffix}.parquet"
+    store_isotope_df(df, output_path)
+    print(f"  💾 Saved isotope data to multiiso/{output_path.name}")
+    
+    # Plot grouped histograms
+    fig = plot_grouped_histograms(df, plot_columns, bins=bins)
+    plot_path = plots_dir / f"{set_pmt.source_dir.name}_{output_suffix}.png"
+    save_figure(fig, plot_path)
+    plt.close(fig)
+    print(f"  📊 Saved plot to {plot_path.name}")
+    
     return df
