@@ -146,7 +146,10 @@ def compute_s1(set_pmt: SetPmt,
                                            detector_func=detect_s1_in_frame,
                                            threshold_s1=threshold_s1)
     
-    s1_times = s1_times[s1_times < -0.5]
+    # Filter both uids and s1_times with the same mask
+    mask = s1_times < -0.5
+    uids = uids[mask]
+    s1_times = s1_times[mask]
     
     stats = _compute_timing_statistics(s1_times, 
                                       name="t_s1", 
