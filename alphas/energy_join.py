@@ -160,10 +160,11 @@ def generic_multiiso_workflow(set_pmt,
     else:
         values = np.column_stack([arr[key] for key in value_keys])
     
-    # Map to isotopes
+    # Map to isotopes using energy maps from energy_maps/ directory
+    energy_maps_dir = set_pmt.source_dir.parent / "energy_maps" / set_pmt.source_dir.name
     df = map_results_to_isotopes(uids=arr["uids"],
                                  values=values,
-                                 chunk_dir=str(set_pmt.source_dir),
+                                 chunk_dir=str(energy_maps_dir),
                                  isotope_ranges=isotope_ranges,
                                  value_columns=value_keys)
     

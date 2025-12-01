@@ -29,6 +29,7 @@ from RaTag.core.config import IntegrationConfig, FitConfig
 from RaTag.workflows.run_construction import initialize_run
 from RaTag.pipelines.run_preparation import prepare_run, prepare_run_multiiso
 from RaTag.pipelines.recoil_only import recoil_pipeline, recoil_pipeline_multiiso
+from RaTag.pipelines.isotope_preparation import prepare_isotope_separation
 
 
 def load_config(config_path: Path) -> dict:
@@ -65,6 +66,9 @@ def main():
         epilog=__doc__
     )
     parser.add_argument('config', type=Path, help='Path to YAML config file')
+    parser.add_argument('--alphas-only', action='store_true',
+                       help='Only run alpha energy mapping and calibration')
+    
     parser.add_argument('--prepare-only', action='store_true',
                        help='Only run preparation (skip integration)')
     parser.add_argument('--integrate-only', action='store_true',
@@ -84,6 +88,12 @@ def main():
     is_multiiso = config.get('multi_isotope', {}).get('enabled', False)
     isotope_ranges = None
     
+    # Create Run object
+    run = create_run_from_config(config)
+    print("\nInitializing run (populating sets from directory)...")    
+    run = initialize_run(run, max_files=None)
+    print(f"Found {len(run.sets)} sets")
+
     if is_multiiso:
         # Convert isotope ranges from list to tuple
         isotope_ranges = {
@@ -91,12 +101,20 @@ def main():
             for isotope, range_vals in config['multi_isotope']['isotope_ranges'].items()
         }
         print(f"Multi-isotope mode enabled with ranges: {isotope_ranges}")
-    
-    # Create Run object
-    run = create_run_from_config(config)
-    print("\nInitializing run (populating sets from directory)...")    
-    run = initialize_run(run, max_files=None)
-    print(f"Found {len(run.sets)} sets")
+        
+        # Generate energy maps if configured
+        energy_cfg = config['multi_isotope'].get('energy_mapping', {})
+        if energy_cfg.get('generate', True):
+            run = prepare_isotope_separation(run,
+                                            files_per_chunk=energy_cfg.get('files_per_chunk', 10),
+                                            fmt=energy_cfg.get('format', '8b'),
+                                            scale=energy_cfg.get('scale', 0.1),
+                                            pattern=energy_cfg.get('pattern', '*Ch4.wfm'))
+        if args.alphas_only:
+            print(f"\n{'='*60}")
+            print("STOPPING AFTER ALPHA ENERGY MAPPING (--alphas-only flag)")
+            print(f"{'='*60}")
+            return
     
     # Log start
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

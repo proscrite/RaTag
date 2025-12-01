@@ -67,7 +67,7 @@ def recoil_pipeline(run: Run,
     
     # Build pipeline stages
     steps = [
-        # Stage 1: Complete set-level ETL (integration + fitting + storage + plots)
+        # Stage 1: Complete set-level ETL (integration + storage + plots)
         partial(integrate_s2_in_run,
                 range_sets=range_sets,
                 max_files=max_files,
