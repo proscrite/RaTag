@@ -24,8 +24,8 @@ from RaTag.core.config import IntegrationConfig, FitConfig
 from RaTag.core.dataIO import iter_frameproxies, store_s2area, load_s2area, store_isotope_df, save_figure
 from RaTag.core.uid_utils import make_uid
 from RaTag.core.fitting import fit_set_s2
-from RaTag.core.functional import map_over
-from RaTag.core.energy_map_reader import get_energies_for_uids 
+from RaTag.core.functional import map_over, apply_workflow_to_run, map_isotopes_in_run
+from RaTag.alphas.energy_join import map_results_to_isotopes, generic_multiiso_workflow
 from RaTag.waveform.integration import integrate_s2_in_frame
 from RaTag.plotting import plot_s2_vs_drift, plot_hist_fit, plot_grouped_histograms
 
@@ -34,45 +34,39 @@ from RaTag.plotting import plot_s2_vs_drift, plot_hist_fit, plot_grouped_histogr
 # DIRECTORY MANAGEMENT HELPERS
 # ============================================================================
 
-def _setup_set_directories(set_pmt: SetPmt,
-                          plots_dir: Optional[Path] = None,
-                          data_dir: Optional[Path] = None) -> tuple[Path, Path]:
+def _setup_set_directories(set_pmt: SetPmt) -> tuple[Path, Path]:
     """
     Setup output directories for set-level processing.
     
     Args:
         set_pmt: Source set
-        plots_dir: Optional custom plots directory
-        data_dir: Optional custom data directory
         
     Returns:
         Tuple of (plots_dir, data_dir)
     """
-    if plots_dir is None:
-        plots_dir = set_pmt.source_dir.parent / "plots" / "s2_histograms"
+
+    plots_dir = set_pmt.source_dir.parent / "plots" / "all" / "s2_areas"
     plots_dir.mkdir(parents=True, exist_ok=True)
     
-    if data_dir is None:
-        data_dir = set_pmt.source_dir.parent / "processed_data"
+
+    data_dir = set_pmt.source_dir.parent / "processed_data"
     data_dir.mkdir(parents=True, exist_ok=True)
     
     return plots_dir, data_dir
 
 
-def _setup_run_directories(run: Run,
-                          plots_dir: Optional[Path] = None) -> tuple[Path, Path]:
+def _setup_run_directories(run: Run) -> tuple[Path, Path]:
     """
     Setup output directories for run-level processing.
     
     Args:
         run: Source run
-        plots_dir: Optional custom plots directory
         
     Returns:
         Tuple of (plots_dir, data_dir)
     """
-    if plots_dir is None:
-        plots_dir = run.root_directory / "plots"
+
+    plots_dir = run.root_directory / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
     
     data_dir = run.root_directory / "processed_data"
@@ -81,39 +75,19 @@ def _setup_run_directories(run: Run,
     return plots_dir, data_dir
 
 
-# ============================================================================
-# SET-LEVEL WORKFLOW (Complete ETL with immediate persistence)
-# ============================================================================
-
-def workflow_s2_integration(set_pmt: SetPmt,
-                           max_files: Optional[int] = None,
-                           integration_config: IntegrationConfig = IntegrationConfig(),
-                           fit_config: FitConfig = FitConfig(),
-                           plots_dir: Optional[Path] = None,
-                           data_dir: Optional[Path] = None,
-                           isotope_ranges: Optional[Dict[str, tuple]] = None,
-                           chunk_dir: Optional[str] = None) -> SetPmt:
+def _integrate_s2_in_set(set_pmt: SetPmt,
+                          max_files: Optional[int],
+                          integration_config: IntegrationConfig) -> S2Areas:
     """
-    Complete S2 integration workflow for a single set.
-    
-    1. Integrate S2 areas from all frames
-    2. Fit Gaussian to distribution
-    3. Save results + histogram plot immediately
-    4. Store fit results in set metadata
-    
-    Prerequisites:
-    - Set metadata must contain t_s2_start and t_s2_end
+    Integrate S2 areas for all frames in a set.
     
     Args:
-        set_pmt: Set with S2 timing metadata
-        max_files: Optional limit on number of files
+        set_pmt: Source set
+        max_files: Optional limit on number of files (for testing)
         integration_config: Integration parameters
-        fit_config: Fitting parameters
-        plots_dir: Directory for histogram plots
-        data_dir: Directory for S2 areas data
         
     Returns:
-        SetPmt with updated metadata containing area_s2_mean, area_s2_ci95, area_s2_sigma
+        S2Areas object with integrated areas
     """
     # Check preconditions
     if 't_s2_start' not in set_pmt.metadata or 't_s2_end' not in set_pmt.metadata:
@@ -123,9 +97,6 @@ def workflow_s2_integration(set_pmt: SetPmt,
     s2_end = set_pmt.metadata['t_s2_end']
     
     print(f"  Integrating S2 window: [{s2_start:.2f}, {s2_end:.2f}] µs")
-    
-    # Setup directories
-    plots_dir, data_dir = _setup_set_directories(set_pmt, plots_dir, data_dir)
     
     # Integrate all frames
     areas = []
@@ -160,25 +131,58 @@ def workflow_s2_integration(set_pmt: SetPmt,
                     "dt": integration_config.dt,
                 }
             )
+    return s2
+
+# ============================================================================
+# SET-LEVEL WORKFLOW (Complete ETL with immediate persistence)
+# ============================================================================
+
+def workflow_s2_integration(set_pmt: SetPmt,
+                           max_files: Optional[int] = None,
+                           integration_config: IntegrationConfig = IntegrationConfig(),
+                           plots_dir: Optional[Path] = None,
+                           data_dir: Optional[Path] = None) -> SetPmt:
+    """
+    Complete S2 integration workflow for a single set.
     
-    # Save raw areas immediately
+    1. Integrate S2 areas from all frames
+    2. Save raw S2 areas to disk
+    
+    Note: Fitting is done separately via fit_s2_in_run()
+    
+    Prerequisites:
+    - Set metadata must contain t_s2_start and t_s2_end
+    
+    Args:
+        set_pmt: Set with S2 timing metadata
+        max_files: Optional limit on number of files
+        integration_config: Integration parameters
+        plots_dir: Directory for plots (unused here, for compatibility)
+        data_dir: Directory for S2 areas data
+        
+    Returns:
+        SetPmt (unchanged - data saved to disk)
+    """
+    
+    # Setup directories if not provided
+    if data_dir is None:
+        _, data_dir = _setup_set_directories(set_pmt)
+    
+    # Integrate
+    s2 = _integrate_s2_in_set(set_pmt, max_files=max_files, 
+                              integration_config=integration_config)
+
+    # Save raw areas immediately (store_s2area prints the save message)
     store_s2area(s2, set_pmt=set_pmt, output_dir=data_dir)
-    print(f"    💾 Saved S2 areas to disk")
     
-    # -------- NEW MULTI-ISOTOPE EXTENSION --------
-    if hasattr(s2, "uids") and hasattr(s2, "areas") and isotope_ranges is not None:
-        npz_path = data_dir / f"{set_pmt.source_dir.name}_s2area.npz"
-        arr = np.load(npz_path, allow_pickle=True)
+    return set_pmt
 
-        df_area = map_results_to_isotopes(uids=arr["uids"],
-                                          values=arr["areas"],
-                                          chunk_dir=chunk_dir or str(set_pmt.source_dir),
-                                          isotope_ranges=isotope_ranges,
-                                          value_columns=["s2_area"])
 
-        store_results_df(df_area, data_dir / f"{set_pmt.source_dir.name}_s2area_isotopes.parquet")
-        plot_grouped_histograms(df_area, ["s2_area"], bins=40)
-    # ----------------------------------------------
+def _fit_and_save_s2_histogram(set_pmt: SetPmt,
+                               s2: S2Areas,
+                               fit_config: FitConfig,
+                               plots_dir: Path) -> SetPmt:
+    """ Fit Gaussian to S2 area distribution and save histogram plot.  """
 
     # Fit Gaussian
     s2_fitted = fit_set_s2(s2,
@@ -219,6 +223,18 @@ def workflow_s2_integration(set_pmt: SetPmt,
     return updated_set
 
 
+def workflow_s2_area_multiiso(set_pmt: SetPmt,
+                              isotope_ranges: Dict[str, tuple]) -> pd.DataFrame:
+    """Multi-isotope S2 area workflow: load → map → plot."""
+    return generic_multiiso_workflow(set_pmt,
+                                     data_filename="s2_areas.npz",
+                                     value_keys=["s2_areas"],
+                                     isotope_ranges=isotope_ranges,
+                                     output_suffix="s2_areas_multi",
+                                     plot_columns=["s2_areas"],
+                                     bins=40)
+
+
 # ============================================================================
 # RUN-LEVEL ORCHESTRATION (with caching)
 # ============================================================================
@@ -226,60 +242,67 @@ def workflow_s2_integration(set_pmt: SetPmt,
 def integrate_s2_in_run(run: Run,
                        range_sets: slice = None,
                        max_files: Optional[int] = None,
-                       integration_config: IntegrationConfig = IntegrationConfig(),
-                       fit_config: FitConfig = FitConfig()) -> Run:
-    """
-    Integrate S2 areas for all sets in a run with caching.
+                       integration_config: IntegrationConfig = IntegrationConfig()) -> Run:
+    """Integrate S2 areas for all sets (no fitting yet)."""
     
-    Args:
-        run: Run with prepared sets (must have S2 window metadata)
-        range_sets: Optional slice to select subset of sets
-        max_files: Optional limit on files per set (testing)
-        integration_config: Integration parameters
-        fit_config: Fitting parameters
-        
-    Returns:
-        Run with updated sets containing area_s2_mean in metadata
-    """
+    # Filter sets if range specified
+    if range_sets is not None:
+        filtered_run = replace(run, sets=run.sets[range_sets])
+    else:
+        filtered_run = run
+    
+    return apply_workflow_to_run(filtered_run,
+                                 workflow_func=workflow_s2_integration,
+                                 workflow_name="S2 area integration",
+                                 cache_key="area_s2_mean",
+                                 data_file_suffix="metadata.json",
+                                 max_files=max_files,
+                                 integration_config=integration_config)
+
+
+def fit_s2_in_run(run: Run,
+                  fit_config: FitConfig = FitConfig()) -> Run:
+    """Fit Gaussian to S2 area distributions for all sets."""
     print("\n" + "="*60)
-    print("S2 AREA INTEGRATION AND FITTING")
+    print("S2 AREA FITTING")
     print("="*60)
     
-    # Setup directories
-    plots_dir = run.root_directory / "plots" / "s2_histograms"
-    data_dir = run.root_directory / "processed_data"
+    plots_dir = run.root_directory / "plots" / "all" / "s2_areas"
+    plots_dir.mkdir(parents=True, exist_ok=True)
     
-    # Select sets to process
-    sets_to_process = run.sets[range_sets] if range_sets else run.sets
-    
-    # Process each set with caching
     updated_sets = []
-    for i, set_pmt in enumerate(sets_to_process, 1):
-        print(f"\nSet {i}/{len(sets_to_process)}: {set_pmt.source_dir.name}")
+    for i, set_pmt in enumerate(run.sets, 1):
+        print(f"\nSet {i}/{len(run.sets)}: {set_pmt.source_dir.name}")
         
-        # Check cache via metadata
+        # Check cache
         if 'area_s2_mean' in set_pmt.metadata:
             print(f"  📂 Loaded from cache")
             updated_sets.append(set_pmt)
             continue
         
-        # Run complete workflow
-        try:
-            updated_set = workflow_s2_integration(set_pmt,
-                                                 max_files=max_files,
-                                                 integration_config=integration_config,
-                                                 fit_config=fit_config,
-                                                 plots_dir=plots_dir,
-                                                 data_dir=data_dir)
-            updated_sets.append(updated_set)
-        except Exception as e:
-            print(f"  ⚠ Failed: {e}")
+        # Load S2 areas
+        data_dir = set_pmt.source_dir.parent / "processed_data"
+        s2 = load_s2area(set_pmt, input_dir=data_dir)
+        
+        if s2 is None:
+            print(f"  ⚠ No S2 areas found - run integration first")
             updated_sets.append(set_pmt)
-    
-    print(f"\n✓ Integration complete: {len(updated_sets)}/{len(sets_to_process)} sets")
+            continue
+        
+        # Fit and save
+        updated_set = _fit_and_save_s2_histogram(set_pmt, s2, fit_config, plots_dir)
+        updated_sets.append(updated_set)
     
     return replace(run, sets=updated_sets)
 
+
+def run_s2_area_multiiso(run: Run, 
+                        isotope_ranges: dict) -> Run:
+    """Run-level wrapper for distributing S2 areas by isotope."""
+    return map_isotopes_in_run(run,
+                               workflow_func=workflow_s2_area_multiiso,
+                               workflow_name="S2 area isotope mapping",
+                               isotope_ranges=isotope_ranges)
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -330,7 +353,7 @@ def summarize_s2_vs_field(run: Run,
     print("="*60)
     
     # Setup directories
-    plots_dir, data_dir = _setup_run_directories(run, plots_dir)
+    plots_dir, data_dir = _setup_run_directories(run)
     
     # Collect data from set metadata
     df = _collect_s2_data(run)

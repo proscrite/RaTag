@@ -16,7 +16,10 @@ from dataclasses import replace
 from RaTag.core.datatypes import Run
 from RaTag.core.config import IntegrationConfig, FitConfig
 from RaTag.core.functional import pipe_run
-from RaTag.workflows.recoil_integration import integrate_s2_in_run, summarize_s2_vs_field
+from RaTag.workflows.recoil_integration import (integrate_s2_in_run,
+                                                fit_s2_in_run,
+                                                summarize_s2_vs_field,
+                                                run_s2_area_multiiso)
 
 
 # ============================================================================
@@ -68,10 +71,13 @@ def recoil_pipeline(run: Run,
         partial(integrate_s2_in_run,
                 range_sets=range_sets,
                 max_files=max_files,
-                integration_config=integration_config,
+                integration_config=integration_config),
+        
+        # Stage 2: Fit S2 area distributions in each set
+        partial(fit_s2_in_run,
                 fit_config=fit_config),
         
-        # Stage 2: Run-level summary plot
+        # Stage 3: Run-level summary plot
         summarize_s2_vs_field
     ]
     
@@ -84,6 +90,51 @@ def recoil_pipeline(run: Run,
     
     return result
 
+
+
+# ============================================================================
+# MULTI-ISOTOPE PIPELINE
+# ============================================================================
+
+def recoil_pipeline_multiiso(run: Run,
+                             isotope_ranges: dict,
+                             range_sets: slice = None,
+                             max_files: Optional[int] = None,
+                             integration_config: IntegrationConfig = IntegrationConfig(),
+                             fit_config: FitConfig = FitConfig()) -> Run:
+    """
+    Complete ion recoil S2 analysis pipeline (multi-isotope).
+    
+    Pipeline stages:
+    1. Integrate S2 areas for all sets (aggregated)
+    2. Map S2 areas to isotopes by energy
+    3. Fit Gaussian to distributions (per isotope)
+    4. Summarize S2 vs drift field
+    """
+    print("\n" + "="*60)
+    print(f"MULTI-ISOTOPE RECOIL PIPELINE: {run.run_id}")
+    print("="*60)
+    
+    steps = [
+        # Standard integration (all events together)
+        partial(integrate_s2_in_run,
+                range_sets=range_sets,
+                max_files=max_files,
+                integration_config=integration_config),
+        
+        # Standard fitting (aggregated)
+        partial(fit_s2_in_run,
+                fit_config=fit_config),
+        
+        # Map to isotopes
+        partial(run_s2_area_multiiso,
+                isotope_ranges=isotope_ranges),
+        
+        # Summary plot
+        summarize_s2_vs_field
+    ]
+    
+    return pipe_run(run, *steps)
 
 # ============================================================================
 # EXAMPLE: Custom Pipeline Variations
