@@ -42,7 +42,7 @@ from core.physics import with_gas_density
 from core.dataIO import save_figure, store_s2area
 from core.fitting import fit_run_s2
 from workflows.unified_processing import integrate_run_unified
-from workflows.xrays import calibrate_and_analyze
+from workflows.xrays_calibration import calibrate_and_analyze
 from .. import plotting as plotting
 
 

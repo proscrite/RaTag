@@ -49,3 +49,16 @@ class FitConfig:
     nbins: int = 100
     exclude_index: int = 1
 
+
+@dataclass(frozen=True)
+class XRayConfig:
+    """Configuration for X-ray event classification and integration."""
+    bs_threshold: float = 0.5          # (mV)  -- baseline threshold for signal detection
+    max_area_s2: float = 1e5          # (mV·µs) -- max allowed area in S2 window (reject if exceeded)
+    min_s2_sep: float = 1.0           # (µs)   -- min required separation before S2 window
+    min_s1_sep: float = 0.5           # (µs)   -- min required separation after S1
+    n_pedestal: int = 200             # number of pre-trigger samples for pedestal subtraction
+    ma_window: int = 10               # moving average window length (samples)
+    dt: float = 2e-4                  # integration timestep (µs)
+    integrator: Callable[[PMTWaveform, float], np.ndarray] = field(default_factory=_default_integrator)
+

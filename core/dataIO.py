@@ -304,18 +304,19 @@ def save_run_metadata(run: Run) -> None:
 
 def store_s2area(s2: S2Areas, 
                  set_pmt: Optional[SetPmt] = None,
-                 output_dir: Optional[Path] = None) -> None:
+                 output_dir: Optional[Path] = None,
+                 suffix: str = "s2_areas") -> None:
     """
     Store S2Areas object to disk in processed_data/all/ directory.
     
-    Saves two files:
-    - s2_areas.npy: Raw area array
-    - s2_results.json: Fit results and metadata
+    Saves NPZ file with areas and UIDs. Can be used for both recoil S2 areas
+    and X-ray areas by changing the suffix.
     
     Args:
         s2: S2Areas object with integration and fit results
-        set_pmt: Optional SetPmt to extract complete metadata from
+        set_pmt: Optional SetPmt to save metadata from
         output_dir: Optional custom output directory (for testing)
+        suffix: Filename suffix (default: "s2_areas", use "xray_areas" for X-rays)
     """
     # Determine base directory
     if output_dir is None:
@@ -329,13 +330,20 @@ def store_s2area(s2: S2Areas,
     
     set_name = s2.source_dir.name
     
-    # Save raw areas as numpy array to all/ subdirectory
-    path_areas = all_dir / f"{set_name}_s2_areas.npz"
-    # np.save(path_areas, s2.areas)
-    np.savez_compressed(path_areas, uids=s2.uids.astype(np.uint32), s2_areas=s2.areas)
-    print(f"    💾 Saved S2 areas to all/{path_areas.name}")
+    # Save areas with appropriate key name
+    # For "s2_areas" suffix -> key is "s2_areas"
+    # For "xray_areas" suffix -> key is "xray_areas"
+    path_areas = all_dir / f"{set_name}_{suffix}.npz"
+    area_key = suffix if suffix.endswith('_areas') else f"{suffix}_areas"
+    
+    np.savez_compressed(path_areas, 
+                       uids=s2.uids.astype(np.uint32), 
+                       **{area_key: s2.areas})
+    
+    print(f"    💾 Saved {suffix.replace('_', ' ')} to all/{path_areas.name}")
 
-    save_set_metadata(set_pmt)
+    if set_pmt is not None:
+        save_set_metadata(set_pmt)
 """
     # Build complete results dictionary
     results_dict = {
@@ -419,7 +427,8 @@ def load_s2area(set_pmt: SetPmt, input_dir: Optional[Path] = None) -> S2Areas:
     else:
         return S2Areas(
             source_dir=set_pmt.source_dir,
-            areas=areas,
+            areas=arr['s2_areas'],
+            uids=arr['uids'],
             method="loaded_from_npz",
             params={"set_metadata": set_pmt.metadata}
         )
@@ -427,29 +436,31 @@ def load_s2area(set_pmt: SetPmt, input_dir: Optional[Path] = None) -> S2Areas:
 # ------------------------------------------
 # --- XRayResults storage and retrieval  ---
 # ------------------------------------------
+# NOTE: These functions are obsolete and kept for backward compatibility only.
+# New X-ray workflow uses store_s2area() with suffix="xray_areas" instead.
 
-def store_xray_results(xr: XRayResults, path: Optional[PathLike] = None) -> None:
-    """Store XRayResults in .npy file inside the set's directory."""
-    if path is None:
-        path = xr.set_id / "xray_results.npy"
-    np.save(path, xr.events)
-
-
-def store_xrayset(xrays: XRayResults, outdir: Optional[Path] = None) -> None:
+def store_xray_results(xr, path: Optional[PathLike] = None) -> None:
     """
-    Store results of X-ray classification.
-
-    Saves:
-      - accepted areas as a .npy array (fast reload for histograms)
-      - summary statistics as a .json (compact metadata)
+    DEPRECATED: Store XRayResults in .npy file inside the set's directory.
+    
+    This function is obsolete. Use store_s2area() with suffix="xray_areas" instead.
     """
-    if outdir is None:
-        outdir = Path(xrays.set_id)  # assume set_id is a directory name
-    outdir = Path(outdir)
+    raise NotImplementedError(
+        "store_xray_results() is deprecated. "
+        "Use store_s2area(s2_areas, set_pmt, suffix='xray_areas') instead."
+    )
 
-    # Extract numeric data (only accepted areas)
-    accepted_areas = [ev.area for ev in xrays.events if ev.accepted and ev.area is not None]
-    np.save(outdir / "xray_areas.npy", np.array(accepted_areas))
+
+def store_xrayset(xrays, outdir: Optional[Path] = None) -> None:
+    """
+    DEPRECATED: Store results of X-ray classification.
+    
+    This function is obsolete. Use store_s2area() with suffix="xray_areas" instead.
+    """
+    raise NotImplementedError(
+        "store_xrayset() is deprecated. "
+        "Use store_s2area(s2_areas, set_pmt, suffix='xray_areas') instead."
+    )
 
     # Aggregate rejection reasons
     rejection_reasons = {}
