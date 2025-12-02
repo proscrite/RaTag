@@ -8,7 +8,7 @@ from typing import Optional, Union, Dict
 from RaTag.core.dataIO import iter_frameproxies, save_set_metadata, load_set_metadata, store_isotope_df, save_figure
 from RaTag.core.datatypes import SetPmt, Run
 from RaTag.core.uid_utils import make_uid
-from RaTag.core.functional import apply_workflow_to_run, map_isotopes_in_run
+from RaTag.core.functional import apply_workflow_to_run, map_isotopes_in_run, compute_max_files
 from RaTag.alphas.energy_join import map_results_to_isotopes, generic_multiiso_workflow
 from RaTag.waveform.s1s2_detection import detect_s1_in_frame, detect_s2_in_frame
 from RaTag.plotting import plot_time_histograms, plot_n_waveforms, plot_timing_vs_drift_field, plot_grouped_histograms
@@ -38,8 +38,7 @@ def _extract_timing_from_frames(set_pmt: SetPmt,
     """
 
     # Compute how many files to process (rounds up to complete files)
-    max_files = int(np.ceil(max_frames / set_pmt.nframes))
-    actual_frames = max_files * set_pmt.nframes
+    max_files, actual_frames = compute_max_files(max_frames, set_pmt.nframes)
     
     print(f"  Processing {max_files} files (~{actual_frames} frames)")
     

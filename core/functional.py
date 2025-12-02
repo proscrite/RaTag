@@ -1,9 +1,10 @@
 """Functional programming utilities for pipeline composition."""
 
-from typing import Callable, TypeVar
+from typing import Callable, TypeVar, Optional
 from functools import reduce
 from dataclasses import replace
 from pathlib import Path
+import numpy as np
 
 T = TypeVar('T')
 
@@ -50,6 +51,35 @@ def compose(*funcs: Callable) -> Callable:
     """
     return lambda x: reduce(lambda v, f: f(v), reversed(funcs), x)
 
+
+def compute_max_files(max_frames: Optional[int], nframes_per_file: int) -> tuple[Optional[int], Optional[int]]:
+    """
+    Convert max_frames to max_files by rounding up to complete files.
+    
+    This helper ensures consistent handling of frame limits across workflows.
+    Since files contain multiple frames, we must process complete files to
+    avoid partial file reads.
+    
+    Args:
+        max_frames: Target maximum number of frames (None = process all)
+        nframes_per_file: Number of frames per file (from SetPmt.nframes)
+        
+    Returns:
+        Tuple of (max_files, actual_frames) where:
+        - max_files: Number of files to process (None if max_frames is None)
+        - actual_frames: Actual number of frames that will be processed
+        
+    Example:
+        >>> compute_max_files(100, 64)  # 100 frames, 64 per file
+        (2, 128)  # Process 2 complete files = 128 frames
+    """
+    if max_frames is None:
+        return None, None
+    
+    max_files = int(np.ceil(max_frames / nframes_per_file))
+    actual_frames = max_files * nframes_per_file
+    
+    return max_files, actual_frames
 
 
 def map_over(items: list[T], fn: Callable[[T], T], 

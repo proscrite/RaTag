@@ -24,7 +24,7 @@ from RaTag.core.config import IntegrationConfig, FitConfig
 from RaTag.core.dataIO import iter_frameproxies, store_s2area, load_s2area, store_isotope_df, save_figure
 from RaTag.core.uid_utils import make_uid
 from RaTag.core.fitting import fit_set_s2
-from RaTag.core.functional import map_over, apply_workflow_to_run, map_isotopes_in_run
+from RaTag.core.functional import map_over, apply_workflow_to_run, map_isotopes_in_run, compute_max_files
 from RaTag.alphas.energy_join import map_results_to_isotopes, generic_multiiso_workflow
 from RaTag.waveform.integration import integrate_s2_in_frame
 from RaTag.plotting import plot_s2_vs_drift, plot_hist_fit, plot_grouped_histograms
@@ -76,14 +76,14 @@ def _setup_run_directories(run: Run) -> tuple[Path, Path]:
 
 
 def _integrate_s2_in_set(set_pmt: SetPmt,
-                          max_files: Optional[int],
+                          max_frames: Optional[int],
                           integration_config: IntegrationConfig) -> S2Areas:
     """
     Integrate S2 areas for all frames in a set.
     
     Args:
         set_pmt: Source set
-        max_files: Optional limit on number of files (for testing)
+        max_frames: Optional limit on number of frames (None = process all)
         integration_config: Integration parameters
         
     Returns:
@@ -97,6 +97,12 @@ def _integrate_s2_in_set(set_pmt: SetPmt,
     s2_end = set_pmt.metadata['t_s2_end']
     
     print(f"  Integrating S2 window: [{s2_start:.2f}, {s2_end:.2f}] µs")
+    
+    # Compute how many files to process (rounds up to complete files)
+    max_files, actual_frames = compute_max_files(max_frames, set_pmt.nframes)
+    
+    if max_frames is not None:
+        print(f"  Processing {max_files} files (~{actual_frames} frames)")
     
     # Integrate all frames
     areas = []
@@ -138,10 +144,8 @@ def _integrate_s2_in_set(set_pmt: SetPmt,
 # ============================================================================
 
 def workflow_s2_integration(set_pmt: SetPmt,
-                           max_files: Optional[int] = None,
-                           integration_config: IntegrationConfig = IntegrationConfig(),
-                           plots_dir: Optional[Path] = None,
-                           data_dir: Optional[Path] = None) -> SetPmt:
+                           max_frames: Optional[int] = None,
+                           integration_config: IntegrationConfig = IntegrationConfig()) -> SetPmt:
     """
     Complete S2 integration workflow for a single set.
     
@@ -155,7 +159,7 @@ def workflow_s2_integration(set_pmt: SetPmt,
     
     Args:
         set_pmt: Set with S2 timing metadata
-        max_files: Optional limit on number of files
+        max_frames: Optional limit on number of frames (None = process all)
         integration_config: Integration parameters
         plots_dir: Directory for plots (unused here, for compatibility)
         data_dir: Directory for S2 areas data
@@ -165,11 +169,10 @@ def workflow_s2_integration(set_pmt: SetPmt,
     """
     
     # Setup directories if not provided
-    if data_dir is None:
-        _, data_dir = _setup_set_directories(set_pmt)
+    plot_dir, data_dir = _setup_set_directories(set_pmt)
     
     # Integrate
-    s2 = _integrate_s2_in_set(set_pmt, max_files=max_files, 
+    s2 = _integrate_s2_in_set(set_pmt, max_frames=max_frames, 
                               integration_config=integration_config)
 
     # Save raw areas immediately (store_s2area prints the save message)
@@ -241,9 +244,20 @@ def workflow_s2_area_multiiso(set_pmt: SetPmt,
 
 def integrate_s2_in_run(run: Run,
                        range_sets: slice = None,
-                       max_files: Optional[int] = None,
+                       max_frames: Optional[int] = None,
                        integration_config: IntegrationConfig = IntegrationConfig()) -> Run:
-    """Integrate S2 areas for all sets (no fitting yet)."""
+    """
+    Integrate S2 areas for all sets (no fitting yet).
+    
+    Args:
+        run: Run object with timing already estimated
+        range_sets: Optional slice to process subset of sets
+        max_frames: Optional limit on frames per set (None = process all)
+        integration_config: Integration configuration
+        
+    Returns:
+        Updated Run (data saved to disk)
+    """
     
     # Filter sets if range specified
     if range_sets is not None:
@@ -256,7 +270,7 @@ def integrate_s2_in_run(run: Run,
                                  workflow_name="S2 area integration",
                                  cache_key="area_s2_mean",
                                  data_file_suffix="metadata.json",
-                                 max_files=max_files,
+                                 max_frames=max_frames,
                                  integration_config=integration_config)
 
 
