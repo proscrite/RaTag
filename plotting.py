@@ -83,7 +83,7 @@ def _plot_window_shading(ax: plt.Axes, kwargs: dict, key: str, y_max: float, col
 
 def plot_set_windows(set_pmt: SetPmt, 
                      file_index: int = None, frame: int = None, # type: ignore
-                     ax = None, **kwargs) -> tuple:
+                     ax = None, color: str = "b", **kwargs) -> tuple:
     """
     Plot multiple waveforms with S1 and S2 timing markers.
     
@@ -91,6 +91,8 @@ def plot_set_windows(set_pmt: SetPmt,
         set_pmt: SetPmt object
         file_index: index of file in the set to plot (if None, assigned randomly)
         frame: index of the frame in the FF file to plot (if None, assigned randomly)
+        ax: Optional axes to plot on
+        color: Waveform color
         **kwargs: Optional timing parameters:
             t_s1: Mean S1 time (µs)
             t_s1_std: Std dev of S1 time (µs)
@@ -115,7 +117,7 @@ def plot_set_windows(set_pmt: SetPmt,
         ax = plt.gca()
 
     wf = load_wfm(set_pmt.source_dir / fn)
-    _, v_max = plot_waveform(wf, frame=frame, ax=ax, title=f"Gate {set_pmt.metadata['gate']} V")
+    _, v_max = plot_waveform(wf, frame=frame, ax=ax, title=f"Gate {set_pmt.metadata['gate']} V", color=color)
 
     _plot_window_shading(ax, kwargs, "t_s1", v_max, "green")
     _plot_window_shading(ax, kwargs, "t_s2_start", v_max, "red")
@@ -728,3 +730,59 @@ def plot_winS2_wf(wf: PMTWaveform, t_s1: float, time_drift: float, width_s2: flo
     ax.axvline(s2_end, color="r", ls="--", lw=0.5, zorder=-1)
     ax.fill_betweenx(ax.get_ylim(), s2_start, s2_end, color='m', alpha=0.3, label="S2 window")
     ax.legend()
+
+
+def plot_xray_validation(set_pmt: SetPmt,
+                        accepted_sample: list,
+                        rejected_sample: list,
+                        title: str = "X-ray Classification Validation"):
+    """
+    Plot validation figure showing accepted vs rejected X-ray candidates.
+    
+    Creates 2-column layout: left column shows accepted examples,
+    right column shows rejected examples.
+    
+    Args:
+        set_pmt: SetPmt to load waveforms from
+        accepted_sample: List of (file_seq, frame_idx) tuples for accepted frames
+        rejected_sample: List of (file_seq, frame_idx) tuples for rejected frames
+        title: Figure title
+        
+    Returns:
+        Matplotlib figure
+    """
+    n_frames = len(accepted_sample)  # Both samples have same length
+    
+    if n_frames == 0:
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.text(0.5, 0.5, "No frames to plot", ha='center', va='center')
+        ax.axis('off')
+        return fig
+    
+    # Create 2-column layout
+    fig, axes = plt.subplots(n_frames, 2, figsize=(14, 3.5 * n_frames))
+    if n_frames == 1:
+        axes = axes.reshape(1, -1)  # Ensure 2D array
+    
+    fig.suptitle(title, fontsize=14, y=0.995)
+    
+    # Plot both columns in single loop
+    for i in range(n_frames):
+        # Left column: accepted (green)
+        file_seq, frame_idx = accepted_sample[i]
+        ax_left = axes[i, 0]
+        plot_set_windows(set_pmt, file_index=file_seq, frame=frame_idx, 
+                        ax=ax_left, color='green')
+        ax_left.set_title(f"✓ Accepted (File {file_seq}, Frame {frame_idx})", 
+                         fontsize=10, color='darkgreen')
+        
+        # Right column: rejected (red)
+        file_seq, frame_idx = rejected_sample[i]
+        ax_right = axes[i, 1]
+        plot_set_windows(set_pmt, file_index=file_seq, frame=frame_idx, 
+                        ax=ax_right, color='red')
+        ax_right.set_title(f"✗ Rejected (File {file_seq}, Frame {frame_idx})", 
+                          fontsize=10, color='darkred')
+    
+    plt.tight_layout()
+    return fig

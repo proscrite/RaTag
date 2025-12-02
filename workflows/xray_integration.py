@@ -17,11 +17,12 @@ from typing import Optional
 from pathlib import Path
 from dataclasses import replace
 import numpy as np
+import matplotlib.pyplot as plt
 
 from RaTag.core.datatypes import PMTWaveform, SetPmt, Run, S2Areas
 from RaTag.core.config import XRayConfig
-from RaTag.core.dataIO import iter_frameproxies, save_set_metadata, store_s2area
-from RaTag.core.uid_utils import make_uid
+from RaTag.core.dataIO import iter_frameproxies, save_set_metadata, store_s2area, save_figure
+from RaTag.core.uid_utils import make_uid, decode_uid
 from RaTag.core.functional import apply_workflow_to_run, compute_max_files
 from RaTag.waveform.preprocessing import subtract_pedestal
 from RaTag.waveform.xray_classification import classify_xray_in_frame
@@ -187,7 +188,8 @@ def _classify_xrays_in_set(set_pmt: SetPmt,
     if max_frames is not None:
         print(f"  Processing {max_files} files (~{actual_frames} frames)")
     
-    for frame_wf in iter_frameproxies(set_pmt, max_files=max_files):
+    # Type ignore: iter_frameproxies accepts max_files=None per its signature
+    for frame_wf in iter_frameproxies(set_pmt, max_files=max_files):  # type: ignore[arg-type]
         try:
             uid = make_uid(frame_wf.file_seq, frame_wf.frame_idx)
             frame_pmt = frame_wf.load_pmt_frame()  # type: ignore[assignment]
@@ -296,6 +298,158 @@ def workflow_xray_classification(set_pmt: SetPmt,
     
     return updated_set
 
+
+
+# ============================================================================
+# VALIDATION AND QA
+# ============================================================================
+
+def _load_accepted_uids(set_pmt: SetPmt) -> np.ndarray:
+    """
+    Load accepted X-ray UIDs from stored NPZ file.
+    
+    Args:
+        set_pmt: Set to load results from
+        
+    Returns:
+        Array of accepted UIDs (empty if file doesn't exist)
+    """
+    data_dir = set_pmt.source_dir.parent / "processed_data" / "all"
+    xray_file = data_dir / f"{set_pmt.source_dir.name}_xray_areas.npz"
+    
+    if not xray_file.exists():
+        return np.array([], dtype=np.uint32)
+    
+    data = np.load(xray_file)
+    return data['uids']
+
+
+def _generate_all_possible_uids(set_pmt: SetPmt) -> np.ndarray:
+    """
+    Generate all possible UIDs for a set.
+    
+    Computes the complete UID space: all (file_seq, frame_idx) combinations.
+    
+    Args:
+        set_pmt: Set to generate UIDs for
+        
+    Returns:
+        Array of all possible UIDs for this set
+    """
+    from RaTag.alphas.energy_map_writer import parse_file_seq_from_name
+    
+    file_seqs = np.array([parse_file_seq_from_name(fn) for fn in set_pmt.filenames])
+    frame_indices = np.arange(set_pmt.nframes)
+    
+    # Create all possible UIDs using list comprehension
+    all_uids = np.array([make_uid(fs, fi) 
+                        for fs in file_seqs 
+                        for fi in frame_indices], dtype=np.uint32)
+    
+    return all_uids
+
+
+def _sample_uids(uids: np.ndarray, n_frames: int) -> list:
+    """
+    Sample random UIDs and decode to (file_seq, frame_idx) tuples.
+    
+    Args:
+        uids: Array of UIDs to sample from
+        n_frames: Number of frames to sample
+        
+    Returns:
+        List of (file_seq, frame_idx) tuples
+    """
+    if len(uids) == 0:
+        return []
+    
+    n_sample = min(n_frames, len(uids))
+    sampled_uids = np.random.choice(uids, size=n_sample, replace=False)
+    return [decode_uid(uid) for uid in sampled_uids]
+
+
+def _sample_xray_frames(set_pmt: SetPmt, n_frames: int = 5) -> tuple[list, list]:
+    """
+    Sample random accepted and rejected X-ray candidate frames.
+    
+    Exploits UID system: accepted UIDs are stored, rejected = all_possible - accepted.
+    No iteration needed - pure set arithmetic and random sampling.
+    
+    Args:
+        set_pmt: Set to sample from
+        n_frames: Number of frames to sample for each category
+        
+    Returns:
+        (accepted_sample, rejected_sample) - lists of (file_seq, frame_idx) tuples
+    """
+    # Load accepted UIDs
+    accepted_uids = _load_accepted_uids(set_pmt)
+    
+    # Generate all possible UIDs and compute rejected set
+    all_uids = _generate_all_possible_uids(set_pmt)
+    rejected_uids = np.setdiff1d(all_uids, accepted_uids)
+    
+    # Sample both categories
+    accepted_sample = _sample_uids(accepted_uids, n_frames)
+    rejected_sample = _sample_uids(rejected_uids, n_frames)
+    
+    return accepted_sample, rejected_sample
+
+
+def validate_xray_classification(run: Run,
+                                 n_waveforms: int = 5) -> Run:
+    """
+    Visual validation of X-ray classification across all sets.
+    
+    Plots sample waveforms showing accepted vs rejected X-ray candidates.
+    This is QA, not computation - doesn't modify the Run.
+    
+    Args:
+        run: Run with X-ray classification completed
+        n_waveforms: Number of waveforms to show per category (accepted/rejected)
+        
+    Returns:
+        Same Run (unchanged)
+    """
+    print("\n" + "="*60)
+    print("X-RAY CLASSIFICATION VALIDATION")
+    print("="*60)
+    
+    validation_dir = run.root_directory / "plots" / "all" / "xray_validation"
+    validation_dir.mkdir(parents=True, exist_ok=True)
+    
+    for i, set_pmt in enumerate(run.sets, 1):
+        print(f"\nSet {i}/{len(run.sets)}: {set_pmt.source_dir.name}")
+        
+        # Check if classification was done
+        if 'n_accepted' not in set_pmt.metadata:
+            print(f"  ⚠ No X-ray classification results - skipping")
+            continue
+        
+        # Sample frames using UID system
+        accepted_sample, rejected_sample = _sample_xray_frames(set_pmt, n_frames=n_waveforms)
+        
+        if len(accepted_sample) == 0 and len(rejected_sample) == 0:
+            print(f"  ⚠ No frames to plot")
+            continue
+        
+        # Import here to avoid circular dependency
+        from RaTag.plotting import plot_xray_validation
+        
+        # Generate validation plot
+        fig = plot_xray_validation(set_pmt, accepted_sample, rejected_sample,
+                                   title=f"X-ray Classification — {set_pmt.source_dir.name}")
+        
+        # Save
+        save_figure(fig, validation_dir / f"{set_pmt.source_dir.name}_xray_validation.png")
+        
+        plt.close(fig)
+        
+        print(f"  ✓ Plotted {len(accepted_sample)} accepted, {len(rejected_sample)} rejected")
+    
+    print(f"\n  📊 Saved validation plots to {validation_dir.relative_to(run.root_directory)}")
+    
+    return run  # Unchanged run
 
 
 # ============================================================================
