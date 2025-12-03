@@ -545,35 +545,61 @@ def load_xray_results(run: Run) -> dict[str, XRayResults]:
     return xray_results
 
 
-def store_xray_areas_combined(areas: np.ndarray, run: Run, output_dir: Optional[Path] = None) -> None:
+def aggregate_xray_areas(run: Run, output_dir: Optional[Path] = None) -> Run:
     """
-    Store combined X-ray areas from all sets in a run.
+    Aggregate X-ray areas from all sets in a run and save combined result.
+    
+    X-rays are not affected by drift field (except statistics), so we combine
+    all accepted X-ray events across all sets to improve statistics for fitting.
     
     Args:
-        areas: Combined X-ray areas array
-        run: Run object
-        output_dir: Directory to save to (defaults to run.root_directory)
+        run: Run object with X-ray classification completed
+        output_dir: Optional output directory (defaults to run.root_directory/processed_data)
+        
+    Returns:
+        Unchanged run object (pure side effect: saves combined areas to disk)
+        
+    Raises:
+        FileNotFoundError: If no X-ray results found for any set
     """
+    all_areas = []
+    all_uids = []
+    
+    for set_pmt in run.sets:
+        xray_file = set_pmt.source_dir.parent / "processed_data" / "all" / f"{set_pmt.source_dir.name}_xray_areas.npz"
+        
+        if not xray_file.exists():
+            print(f"  ⚠ No X-ray results for {set_pmt.source_dir.name} - skipping")
+            continue
+        
+        data = np.load(xray_file)
+        areas = data['xray_areas']
+        uids = data['uids']
+        all_areas.append(areas)
+        all_uids.append(uids)
+        print(f"  ✓ Loaded {len(areas)} X-ray events from {set_pmt.source_dir.name}")
+    
+    if not all_areas:
+        raise FileNotFoundError("No X-ray results found for any set in run")
+    
+    combined_areas = np.concatenate(all_areas)
+    combined_uids = np.concatenate(all_uids)
+    print(f"\n  📊 Combined: {len(combined_areas)} total X-ray events")
+    
+    # Save combined areas and UIDs
     if output_dir is None:
-        output_dir = run.root_directory
+        output_dir = run.root_directory / "processed_data"
     
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Save areas
-    np.save(output_dir / f"{run.run_id}_xray_areas_combined.npy", areas)
+    output_file = output_dir / f"{run.run_id}_xray_areas_combined.npz"
+    np.savez_compressed(output_file,
+                       xray_areas=combined_areas,
+                       uids=combined_uids.astype(np.uint32))
+    print(f"  💾 Saved combined areas and UIDs to {output_file.name}")
     
-    # Save metadata
-    metadata = {
-        "run_id": run.run_id,
-        "n_areas": len(areas),
-        "sets": [s.source_dir.name for s in run.sets],
-        "mean": float(np.mean(areas)),
-        "std": float(np.std(areas)),
-    }
-    
-    with open(output_dir / f"{run.run_id}_xray_metadata.json", "w") as f:
-        json.dump(metadata, f, indent=2)
+    return run  # ← Return run unchanged
 
 
 def store_isotope_df(df: pd.DataFrame, filepath: PathLike) -> None:

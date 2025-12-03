@@ -121,7 +121,7 @@ def generic_multiiso_workflow(set_pmt,
     
     Args:
         set_pmt: SetPmt object
-        data_filename: NPZ filename (e.g., "s1.npz", "s2.npz", "s2area.npz")
+        data_filename: NPZ filename (e.g., "s1.npz", "s2.npz", "s2area.npz", "xray_areas.npz")
         value_keys: Keys in NPZ for values (e.g., ["t_s1"], ["areas"], ["t_s2_start", "t_s2_end"])
         isotope_ranges: {isotope: (Emin, Emax)}
         output_suffix: Output filename suffix (e.g., "s1_isotopes", "s2area_isotopes")

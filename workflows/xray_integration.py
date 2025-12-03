@@ -13,17 +13,20 @@ Structure mirrors recoil_integration.py and timing_estimation.py:
 - Frame-level classification functions are in waveform/xray_classification.py
 """
 
-from typing import Optional
+from typing import Optional, Dict
 from pathlib import Path
 from dataclasses import replace
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 
-from RaTag.core.datatypes import PMTWaveform, SetPmt, Run, S2Areas
-from RaTag.core.config import XRayConfig
-from RaTag.core.dataIO import iter_frameproxies, save_set_metadata, store_s2area, save_figure
+from RaTag.core.datatypes import SetPmt, Run, S2Areas
+from RaTag.core.config import XRayConfig, FitConfig
+from RaTag.core.dataIO import iter_frameproxies, save_set_metadata, store_s2area, save_figure, save_run_metadata
 from RaTag.core.uid_utils import make_uid, decode_uid
-from RaTag.core.functional import apply_workflow_to_run, compute_max_files
+from RaTag.core.functional import apply_workflow_to_run, compute_max_files, map_isotopes_in_run
+from RaTag.core.fitting import fit_gaussian_to_histogram, plot_gaussian_fit
+from RaTag.alphas.energy_join import  generic_multiiso_workflow
 from RaTag.waveform.preprocessing import subtract_pedestal
 from RaTag.waveform.xray_classification import classify_xray_in_frame
 
@@ -228,7 +231,7 @@ def _classify_xrays_in_set(set_pmt: SetPmt,
 
 
 # ============================================================================
-# SET-LEVEL WORKFLOW (Complete ETL with immediate persistence)
+# SET-LEVEL CLASSIFICATION WORKFLOW (Complete ETL with immediate persistence)
 # ============================================================================
 
 def workflow_xray_classification(set_pmt: SetPmt,
@@ -297,6 +300,18 @@ def workflow_xray_classification(set_pmt: SetPmt,
     save_set_metadata(updated_set)
     
     return updated_set
+
+
+def workflow_xray_area_multiiso(set_pmt: SetPmt,
+                                isotope_ranges: Dict[str, tuple]) -> pd.DataFrame:
+    """Multi-isotope X-ray area workflow (set-level): load → map → plot."""
+    return generic_multiiso_workflow(set_pmt,
+                                     data_filename="xray_areas.npz",
+                                     value_keys=["xray_areas"],
+                                     isotope_ranges=isotope_ranges,
+                                     output_suffix="xray_areas_multi",
+                                     plot_columns=["xray_areas"],
+                                     bins=40)
 
 
 
@@ -453,6 +468,86 @@ def validate_xray_classification(run: Run,
 
 
 # ============================================================================
+# FITTING AND PLOTTING
+# ============================================================================
+
+def fit_xray_areas(run: Run,
+                   fit_config: FitConfig = FitConfig()) -> Run:
+    """
+    Fit Gaussian to combined X-ray area distribution.
+    
+    Loads aggregated X-ray areas, fits Gaussian, and saves histogram plot.
+    
+    Args:
+        run: Run with X-ray classification and aggregation completed
+        fit_config: Fit configuration (bin_cuts, nbins, etc.)
+        
+    Returns:
+        Updated Run with fit results in metadata
+    """
+    print("\n" + "="*60)
+    print("X-RAY AREA FITTING")
+    print("="*60)
+    
+    # Load combined X-ray areas
+    data_dir = run.root_directory / "processed_data"
+    combined_file = data_dir / f"{run.run_id}_xray_areas_combined.npz"
+    
+    if not combined_file.exists():
+        print(f"  ⚠ No combined X-ray areas found - run aggregation first")
+        return run
+    
+    data = np.load(combined_file)
+    xray_areas = data['xray_areas']
+    print(f"  📂 Loaded {len(xray_areas)} combined X-ray events")
+    
+    # Fit Gaussian using existing function
+    mean, sigma, ci95, cbins, n, fit_result = fit_gaussian_to_histogram(data=xray_areas,
+                                                                         bin_cuts=fit_config.bin_cuts,
+                                                                         nbins=fit_config.nbins,
+                                                                         exclude_index=fit_config.exclude_index)
+    
+    print(f"  ✓ Fit: μ={mean:.3f} ± {ci95:.3f} mV·µs, σ={sigma:.3f} mV·µs")
+    
+    # Plot using existing function
+    fig = plot_gaussian_fit(data=xray_areas,
+                            bin_cuts=fit_config.bin_cuts,
+                            nbins=fit_config.nbins,
+                            fit_result=fit_result,
+                            title=f'{run.run_id} — X-ray S2 Area Distribution',
+                            xlabel='S2 Area (mV·µs)',
+                            color='green')
+    
+    # Save plot
+    plots_dir = run.root_directory / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    save_figure(fig, plots_dir / f"{run.run_id}_xray_area_histogram.png")
+    
+    # Save fit results to run metadata JSON
+    metadata_dir = run.root_directory / "metadata"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    
+    import json
+    metadata_file = metadata_dir / "xray_fit_results.json"
+    
+    fit_metadata = {
+        'xray_area_mean': float(mean),
+        'xray_area_sigma': float(sigma),
+        'xray_area_ci95': float(ci95),
+        'xray_n_events': int(len(xray_areas)),
+        'bin_cuts': fit_config.bin_cuts,
+        'nbins': fit_config.nbins
+    }
+    
+    with open(metadata_file, 'w') as f:
+        json.dump(fit_metadata, f, indent=2)
+    
+    print(f"  💾 Saved fit results to metadata/xray_fit_results.json")
+    
+    return run
+
+
+# ============================================================================
 # RUN-LEVEL ORCHESTRATION (with caching)
 # ============================================================================
 
@@ -485,3 +580,12 @@ def classify_xrays_in_run(run: Run,
                                  data_file_suffix="xray_areas.npz",
                                  max_frames=max_frames,
                                  xray_config=xray_config)
+
+
+def run_xray_multiiso(run: Run, 
+                      isotope_ranges: dict) -> Run:
+    """Run-level wrapper for distributing X-ray areas by isotope (per-set)."""
+    return map_isotopes_in_run(run,
+                               workflow_func=workflow_xray_area_multiiso,
+                               workflow_name="X-ray area isotope mapping",
+                               isotope_ranges=isotope_ranges)

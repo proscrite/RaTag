@@ -50,10 +50,10 @@ def compute_hist_variance(hist_array: np.ndarray,
         raise ValueError(f"Unknown method: {method}")
 
 
-def _fit_gaussian_to_histogram(data: np.ndarray,
-                               bin_cuts: Tuple[float, float],
-                               nbins: int = 100,
-                               exclude_index: int = 0) -> Tuple[float, float, float, np.ndarray, np.ndarray, Any]:
+def fit_gaussian_to_histogram(data: np.ndarray,
+                              bin_cuts: Tuple[float, float],
+                              nbins: int = 100,
+                              exclude_index: int = 0) -> Tuple[float, float, float, np.ndarray, np.ndarray, Any]:
     """
     Helper function to fit Gaussian to histogram data using lmfit.
     
@@ -103,13 +103,11 @@ def _fit_gaussian_to_histogram(data: np.ndarray,
     return mean, sigma, ci95, cbins, n, result
 
 
-def _plot_gaussian_fit(
-    data: np.ndarray,
-    bin_cuts: Tuple[float, float],
-    nbins: int,
-    fit_result,
-    **plot_kwargs
-):
+def plot_gaussian_fit(data: np.ndarray,
+                      bin_cuts: Tuple[float, float],
+                      nbins: int,
+                      fit_result,
+                      **plot_kwargs):
     """
     Helper function to plot histogram with Gaussian fit.
     
@@ -203,13 +201,14 @@ def fit_s2_timing_histogram(data: np.ndarray,
     if timing_type not in labels:
         raise ValueError(f"timing_type must be one of {list(labels.keys())}")
     
-    mean, sigma, ci95, cbins, n, fit_result = _fit_gaussian_to_histogram(data=data,
-                                                                          bin_cuts=bin_cuts, nbins=nbins, 
-                                                                            exclude_index=0)
+    mean, sigma, ci95, cbins, n, fit_result = fit_gaussian_to_histogram(data=data,
+                                                                         bin_cuts=bin_cuts,
+                                                                         nbins=nbins, 
+                                                                         exclude_index=0)
     
     if flag_plot:
-        _plot_gaussian_fit(data, bin_cuts, nbins, fit_result,
-                           **labels[timing_type])
+        plot_gaussian_fit(data, bin_cuts, nbins, fit_result,
+                          **labels[timing_type])
     
     return mean, sigma, ci95
 
@@ -245,9 +244,10 @@ def fit_set_s2(s2: S2Areas,
 
     # Use shared Gaussian fitting function
     try:
-        mean, sigma, ci95, cbins, n, result = _fit_gaussian_to_histogram(data=s2.areas, 
-                                                                         bin_cuts=bin_cuts, 
-                                                                         nbins=nbins, exclude_index=exclude_index)
+        mean, sigma, ci95, cbins, n, result = fit_gaussian_to_histogram(data=s2.areas,
+                                                                         bin_cuts=bin_cuts,
+                                                                         nbins=nbins,
+                                                                         exclude_index=exclude_index)
     except Exception as e:
         print(f"Warning: Gaussian fit failed for {s2.source_dir.name}: {e}")
         return replace(s2, fit_success=False)
@@ -296,36 +296,4 @@ def fit_run_s2(areas: Dict[str, S2Areas], fit_config: FitConfig = FitConfig(),
 #  X-RAY AREA FITTING
 # -------------------------------------------------
 
-def fit_xray_histogram(
-    xray_areas: np.ndarray,
-    bin_cuts: Tuple[float, float] = (0.6, 20),
-    nbins: int = 100,
-    flag_plot: bool = False
-) -> Tuple[float, float, float]:
-    """
-    Fit Gaussian to X-ray S2 area distribution.
-
-    Args:
-        xray_areas: Array of X-ray S2 areas (mV·µs)
-        bin_cuts: (min, max) range for histogram
-        nbins: Number of histogram bins
-        flag_plot: If True, display fit result
-
-    Returns:
-        Tuple of (mean, sigma, ci95) where ci95 is 95% confidence interval
-    """
-    mean, sigma, ci95, cbins, n, fit_result = _fit_gaussian_to_histogram(
-        xray_areas, bin_cuts, nbins
-    )
-    
-    if flag_plot:
-        _plot_gaussian_fit(
-            xray_areas, bin_cuts, nbins, fit_result,
-            xlabel='S2 Area (mV·µs)',
-            title='X-ray S2 Area Distribution',
-            data_label='X-ray events',
-            color='green'
-        )
-
-    return mean, sigma, ci95
 

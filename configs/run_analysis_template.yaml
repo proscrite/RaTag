@@ -23,6 +23,24 @@ experiment:
   W_value: 22.0             # eV - Mean energy per ion pair
   E_gamma_xray: 12300.0     # eV - X-ray energy
 
+#  Multi-isotope configuration (optional)
+multi_isotope:
+  enabled: true
+  isotope_ranges:
+    Th228: [4.0, 4.7]       # keV
+    Ra224: [4.7, 5.0]       # keV
+    Rn220: [5.2, 5.5]       # keV
+    Po216: [5.5, 6.0]       # keV
+    Po212: [6.0, 10.0]     # keV  
+  # Energy mapping configuration
+  energy_mapping:
+    generate: true            # Set to false to skip regeneration if maps exist
+    files_per_chunk: 10       # Files per binary chunk (10-100 typical)
+    format: "8b"              # "8b" (float32, accurate) or "6b" (uint16, compact)
+    scale: 0.1                # For "6b" format: keV per LSB
+    pattern: "*Ch4.wfm"       # Glob pattern for alpha channel files
+
+
 # Pipeline configuration
 pipeline:
   # Preparation stage (S1/S2 timing estimation)
