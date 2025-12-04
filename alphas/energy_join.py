@@ -113,7 +113,7 @@ def generic_multiiso_workflow(set_pmt,
                               isotope_ranges: dict,
                               output_suffix: str,
                               plot_columns: list[str],
-                              bins: int = 40):
+                              bins: int = 100):
     """
     Generic multi-isotope workflow: load NPZ → map → save → plot.
     

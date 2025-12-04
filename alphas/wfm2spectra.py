@@ -1,5 +1,4 @@
 from glob import glob
-from cv2 import threshold
 import numpy as np
 import sys
 from scipy.signal import find_peaks

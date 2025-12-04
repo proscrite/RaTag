@@ -707,9 +707,119 @@ def plot_time_histograms(times: np.ndarray,
 # --------------------------------------------
 # -- Grouped histograms for isotope results
 # --------------------------------------------
+
+def _compute_histogram_range(data: pd.Series, percentile: float = 95.0) -> tuple:
+    """
+    Compute auto-range for histogram based on percentile.
+    
+    Parameters
+    ----------
+    data : pd.Series
+        Data to compute range for
+    percentile : float, optional
+        Percentile to use as upper limit (default: 95.0)
+        
+    Returns
+    -------
+    tuple of (lower, upper) or None if no data
+    """
+    clean_data = data.dropna()
+    if len(clean_data) == 0:
+        return None
+    
+    upper_limit = np.percentile(clean_data, percentile)
+    mean_val = np.mean(clean_data)
+    median_val = np.median(clean_data)
+    
+    # print(f"Histogram range: (0, {upper_limit:.2f}) [{percentile}th percentile] "
+    #       f"(mean={mean_val:.2f}, median={median_val:.2f})")
+    
+    return (0, upper_limit)
+
+
+def _get_fit_curve(fit_result: dict) -> tuple:
+    """
+    Extract fit curve from result dict (handles both simple and two_stage methods).
+    
+    Parameters
+    ----------
+    fit_result : dict
+        Fit result from fit_multiiso_s2
+        
+    Returns
+    -------
+    tuple of (x_smooth, fit_curve) or (None, None) if no histogram data
+    """
+    hist_data = fit_result.get('histogram', {})
+    bin_centers = hist_data.get('bin_centers', np.array([]))
+    
+    if len(bin_centers) == 0:
+        return None, None
+    
+    # Create smooth x-axis
+    x_smooth = np.linspace(bin_centers[0], bin_centers[-1], 500)
+    
+    # Get appropriate result based on method
+    if fit_result.get('method') == 'two_stage':
+        fit_curve = fit_result['result_sig'].eval(x=x_smooth)
+    else:
+        fit_curve = fit_result['result'].eval(x=x_smooth)
+    
+    return x_smooth, fit_curve
+
+
+def _plot_isotope_histogram(ax: plt.Axes,
+                            data: np.ndarray,
+                            bins: int,
+                            hist_range: tuple,
+                            isotope: str,
+                            column: str,
+                            fit_result: dict = None) -> None:
+    """
+    Plot histogram for a single isotope with optional fit overlay.
+    
+    Parameters
+    ----------
+    ax : plt.Axes
+        Axes to plot on
+    data : np.ndarray
+        Data values to histogram
+    bins : int
+        Number of bins
+    hist_range : tuple
+        (min, max) range for histogram
+    isotope : str
+        Isotope name for title
+    column : str
+        Column name for title
+    fit_result : dict, optional
+        Fit result from fit_multiiso_s2 (if None, plots histogram only)
+    """
+    # Plot histogram
+    ax.hist(data, bins=bins, range=hist_range, alpha=0.6, color='blue', label='Data')
+    ax.set_title(f"{isotope} – {column}", fontsize=10)
+    
+    # Early return if no fit
+    if fit_result is None:
+        return
+    
+    # Get and plot fit curve
+    x_smooth, fit_curve = _get_fit_curve(fit_result)
+    if x_smooth is None:
+        return
+    
+    ax.plot(x_smooth, fit_curve, 'r-', linewidth=2,
+           label=f"Fit: μ={fit_result['peak_position']:.2f}")
+    ax.axvline(fit_result['peak_position'], color='red', 
+              linestyle=':', alpha=0.7)
+    ax.legend(fontsize=8)
+
+
 def plot_grouped_histograms(df: pd.DataFrame,
                             value_columns: list[str],
-                            bins: int = 40, figsize=(10, 4)):
+                            bins: int = 100, 
+                            figsize=(10, 4),
+                            fit_results: dict = None):
     """
     Plot grouped histograms for each isotope and each value column.
 
@@ -723,13 +833,15 @@ def plot_grouped_histograms(df: pd.DataFrame,
         Histogram bins.
     figsize : tuple
         Figure size.
+    fit_results : dict, optional
+        Dictionary of {isotope: fit_result_dict} from fit_multiiso_s2.
+        If provided, will overlay fit curves on histograms.
 
     Returns
     -------
     fig : matplotlib.figure.Figure
         Figure with subplots for all value columns
     """
-
     isotopes = sorted(df["isotope"].unique())
     n_isotopes = len(isotopes)
     n_cols = len(value_columns)
@@ -740,17 +852,28 @@ def plot_grouped_histograms(df: pd.DataFrame,
                              sharex='col', squeeze=False)
 
     for j, col in enumerate(value_columns):
+        # Determine auto-range for this column
+        print(f"Column '{col}':")
+        hist_range = _compute_histogram_range(df[col])
+        
         for i, iso in enumerate(isotopes):
-            vals = df[df["isotope"] == iso][col].dropna()
-            axes[i, j].hist(vals, bins=bins)
-            axes[i, j].set_title(f"{iso} – {col}", fontsize=10)
+            # Get data and fit result for this isotope
+            vals = df[df["isotope"] == iso][col].dropna().values
+            fit_result = fit_results.get(iso) if fit_results else None
             
-            # Add x-label only on bottom row
-            if i == n_isotopes - 1:
-                axes[i, j].set_xlabel(col)
+            # Plot histogram with optional fit
+            _plot_isotope_histogram(ax=axes[i, j], data=vals,
+                                    bins=bins, hist_range=hist_range, 
+                                    isotope=iso, column=col,
+                                    fit_result=fit_result)
+        
+        # Add x-label to bottom row (after loop)
+        axes[n_isotopes - 1, j].set_xlabel(col)
 
     fig.tight_layout()
     return fig
+
+
 # --------------------------------
 # Deprecated functions
 # --------------------------------

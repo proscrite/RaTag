@@ -21,13 +21,13 @@ import matplotlib.pyplot as plt
 
 from RaTag.core.datatypes import SetPmt, S2Areas, Run
 from RaTag.core.config import IntegrationConfig, FitConfig
-from RaTag.core.dataIO import iter_frameproxies, store_s2area, load_s2area, save_figure
+from RaTag.core.dataIO import iter_frameproxies, store_s2area, load_s2area, save_figure, save_set_metadata
 from RaTag.core.uid_utils import make_uid
-from RaTag.core.fitting import fit_set_s2
+from RaTag.core.fitting import fit_set_s2, fit_multiiso_s2
 from RaTag.core.functional import apply_workflow_to_run, map_isotopes_in_run, compute_max_files
 from RaTag.alphas.energy_join import  generic_multiiso_workflow
 from RaTag.waveform.integration import integrate_s2_in_frame
-from RaTag.plotting import plot_s2_vs_drift, plot_hist_fit
+from RaTag.plotting import plot_s2_vs_drift, plot_hist_fit, plot_grouped_histograms
 
 
 # ============================================================================
@@ -75,6 +75,37 @@ def _setup_run_directories(run: Run) -> tuple[Path, Path]:
     return plots_dir, data_dir
 
 
+def _extract_fit_metadata(fit_result: dict, isotope: str) -> dict:
+    """
+    Extract key fit metrics from fit result for metadata storage.
+    
+    Extracts only essential values:
+    - mean (peak_position)
+    - ci95 (95% confidence interval from peak_stderr)
+    - lower_bound (only if two_stage method was used)
+    
+    Args:
+        fit_result: Dictionary containing fit results
+        isotope: Isotope name for key prefixing
+        
+    Returns:
+        Dictionary with metadata keys ready for storage
+    """
+    mean = fit_result['peak_position']
+    ci95 = 1.96 * fit_result['peak_stderr'] if fit_result['peak_stderr'] else 0.0
+    
+    metadata = {
+        f'area_s2_{isotope}_mean': mean,
+        f'area_s2_{isotope}_ci95': ci95
+    }
+    
+    # Only store lower_bound if two_stage method was used
+    if fit_result.get('method') == 'two_stage' and 'lower_bound' in fit_result:
+        metadata[f'area_s2_{isotope}_lower_bound'] = fit_result['lower_bound']
+    
+    return metadata
+
+
 def _integrate_s2_in_set(set_pmt: SetPmt,
                           max_frames: Optional[int],
                           integration_config: IntegrationConfig) -> S2Areas:
@@ -93,8 +124,9 @@ def _integrate_s2_in_set(set_pmt: SetPmt,
     if 't_s2_start' not in set_pmt.metadata or 't_s2_end' not in set_pmt.metadata:
         raise ValueError(f"Set {set_pmt.source_dir.name} missing S2 window metadata")
     
-    s2_start = set_pmt.metadata['t_s2_start']
-    s2_end = set_pmt.metadata['t_s2_end']
+    # Extract and ensure proper float type (metadata might store as string)
+    s2_start = float(set_pmt.metadata['t_s2_start'])
+    s2_end = float(set_pmt.metadata['t_s2_end'])
     
     print(f"  Integrating S2 window: [{s2_start:.2f}, {s2_end:.2f}] µs")
     
@@ -243,7 +275,77 @@ def workflow_s2_area_multiiso(set_pmt: SetPmt,
                                      isotope_ranges=isotope_ranges,
                                      output_suffix="s2_areas_multi",
                                      plot_columns=["s2_areas"],
-                                     bins=40)
+                                     bins=100)
+
+
+def workflow_fit_multiiso_s2(set_pmt: SetPmt,
+                              isotope_ranges: Dict[str, tuple],
+                              fit_config: FitConfig = FitConfig()) -> Dict[str, dict]:
+    """
+    Fit S2 area distributions for each isotope and save plot with fits.
+    
+    Loads isotope-separated data, fits each isotope distribution, and creates
+    a plot with histograms overlaid with fit curves.
+    
+    Args:
+        set_pmt: Set with isotope-mapped data
+        isotope_ranges: Dictionary of {isotope: (Emin, Emax)}
+        fit_config: Fitting configuration
+        
+    Returns:
+        Dictionary of {isotope: fit_result_dict}
+    """
+    
+    # Load parquet file
+    data_dir = set_pmt.source_dir.parent / "processed_data"
+    multiiso_dir = data_dir / "multiiso"
+    parquet_path = multiiso_dir / f"{set_pmt.source_dir.name}_s2_areas_multi.parquet"
+    
+    if not parquet_path.exists():
+        raise FileNotFoundError(f"Isotope data not found: {parquet_path}")
+    
+    df = pd.read_parquet(parquet_path)
+    
+    print(f"\n  Fitting isotope distributions for {set_pmt.source_dir.name}...")
+    
+    fit_results = {}
+    metadata_updates = {}
+    
+    for isotope in sorted(df['isotope'].unique()):
+        try:
+            result = fit_multiiso_s2(df, isotope,
+                                     bin_cuts=fit_config.bin_cuts,
+                                     nbins=fit_config.nbins,
+                                     bg_cutoff=getattr(fit_config, 'bg_cutoff', 1.0),
+                                     n_sigma=getattr(fit_config, 'n_sigma', 2.5))
+            fit_results[isotope] = result
+            
+            # Extract key metrics for metadata storage
+            isotope_metadata = _extract_fit_metadata(result, isotope)
+            metadata_updates.update(isotope_metadata)
+            
+        except Exception as e:
+            print(f"    ⚠ {isotope} fit failed: {e}")
+            continue
+    
+    # Plot histograms with fit overlays and save metadata
+    if fit_results:
+        print(f"    ✓ Fitted {len(fit_results)} isotopes: {', '.join(fit_results.keys())}")
+        
+        # Save fit results to metadata
+        updated_set = replace(set_pmt, metadata={**set_pmt.metadata, **metadata_updates})
+        save_set_metadata(updated_set)
+        
+        # Generate plot with fit overlays
+        plots_dir = set_pmt.source_dir.parent / "plots" / "multiiso" / "s2_areas_multi"
+        plots_dir.mkdir(parents=True, exist_ok=True)
+        
+        fig = plot_grouped_histograms(df, ['s2_areas'], bins=100, fit_results=fit_results)
+        save_figure(fig, plots_dir / f"{set_pmt.source_dir.name}_s2_areas_multi.png")
+        plt.close(fig)
+        print(f"    📊 Saved multi-isotope fit plot")
+    
+    return fit_results
 
 
 # ============================================================================
@@ -277,7 +379,7 @@ def integrate_s2_in_run(run: Run,
                                  workflow_func=workflow_s2_integration,
                                  workflow_name="S2 area integration",
                                  cache_key="area_s2_mean",
-                                 data_file_suffix="metadata.json",
+                                 data_file_suffix="s2_areas.npz",
                                  max_frames=max_frames,
                                  integration_config=integration_config)
 
@@ -320,11 +422,30 @@ def fit_s2_in_run(run: Run,
 
 def run_s2_area_multiiso(run: Run, 
                         isotope_ranges: dict) -> Run:
-    """Run-level wrapper for distributing S2 areas by isotope."""
+    """
+    Run-level wrapper for distributing S2 areas by isotope.
+    
+    Maps S2 areas to isotopes and saves parquet files + plots.
+    """
     return map_isotopes_in_run(run,
                                workflow_func=workflow_s2_area_multiiso,
                                workflow_name="S2 area isotope mapping",
                                isotope_ranges=isotope_ranges)
+
+
+def fit_multiiso_s2_in_run(run: Run,
+                           isotope_ranges: dict,
+                           fit_config: FitConfig = FitConfig()) -> Run:
+    """
+    Run-level wrapper for fitting isotope-separated S2 distributions.
+    
+    Fits each isotope distribution and saves plots with fit overlays.
+    """
+    return map_isotopes_in_run(run,
+                               workflow_func=workflow_fit_multiiso_s2,
+                               workflow_name="Multi-isotope S2 fitting",
+                               isotope_ranges=isotope_ranges,
+                               fit_config=fit_config)
 
 # ============================================================================
 # HELPER FUNCTIONS

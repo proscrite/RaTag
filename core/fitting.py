@@ -4,6 +4,7 @@ import numpy as np # type: ignore
 import matplotlib.pyplot as plt # type: ignore
 from lmfit.models import GaussianModel # type: ignore
 import lmfit # type: ignore
+import pandas as pd # type: ignore
 
 from .datatypes import S2Areas
 from .config import FitConfig
@@ -148,9 +149,7 @@ def plot_gaussian_fit(data: np.ndarray,
             'r--', linewidth=2, 
             label=f'Gaussian fit\n$\\mu={mean:.2f}$ ± ${ci95_str}$ {unit}')
     
-    plt.xlabel(xlabel, fontsize=12)
-    plt.ylabel('Counts', fontsize=12)
-    plt.title(title, fontsize=14)
+    plt.gca().set(xlabel=xlabel, ylabel='Counts', title=title)
     plt.legend(fontsize=11)
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -642,65 +641,25 @@ def fit_s2_two_stage(data, bin_cuts=(0, 10), nbins=100, bg_cutoff=1.0,
     n, bins = np.histogram(filtered, bins=nbins, range=bin_cuts)
     cbins = 0.5 * (bins[1:] + bins[:-1])
     
-    # ===== STAGE 1: Fit background in restricted range =====
-    bg_mask = cbins <= bg_cutoff
-    cbins_bg = cbins[bg_mask]
-    n_bg = n[bg_mask]
-    
-    gauss_bg = GaussianModel(prefix='bg_')
-    params_bg = gauss_bg.make_params(
-        bg_amplitude=n_bg.max(),
-        bg_center=0.3,
-        bg_sigma=0.2
-    )
-    params_bg['bg_center'].set(min=0, max=bg_cutoff)
-    params_bg['bg_sigma'].set(min=0.05, max=0.5)
-    
-    result_bg = gauss_bg.fit(n_bg, params=params_bg, x=cbins_bg)
-    
-    # Extract background parameters
-    bg_center = result_bg.params['bg_center'].value
-    bg_sigma = result_bg.params['bg_sigma'].value
+    # ===== STAGE 1: Fit background =====
+    bg_center, bg_sigma, result_bg = _fit_background_gaussian(cbins, n, bg_cutoff)
     
     # ===== STAGE 2: Subtract background and fit signal =====
     # Subtract background from full histogram
+    from lmfit.models import GaussianModel
+    gauss_bg = GaussianModel(prefix='bg_')
     bg_full = gauss_bg.eval(x=cbins, params=result_bg.params)
     n_subtracted = np.maximum(n - bg_full, 0)  # No negative counts
     
     # Calculate smart lower bound based on background statistics
     lower_bound = bg_center + n_sigma * bg_sigma
     
-    # Apply cluster detection + lower bound
-    main_cluster_mask = find_main_cluster(n_subtracted, threshold_fraction=0.01)
-    signal_mask = main_cluster_mask & (cbins >= lower_bound) & (cbins <= upper_limit)
-    
-    cbins_sig = cbins[signal_mask]
-    n_sig = n_subtracted[signal_mask]
-    
-    # Fit Crystal Ball to signal
-    cb_sig = lmfit.Model(v_crystalball_right, prefix='sig_')
-    params_sig = cb_sig.make_params(
-        sig_N=n_sig.max(),
-        sig_x0=1.8,
-        sig_sigma=0.5,
-        sig_beta=1.0,
-        sig_m=2.0
-    )
-    params_sig['sig_x0'].set(min=lower_bound, max=3.5)
-    params_sig['sig_sigma'].set(min=0.2, max=1.5)
-    params_sig['sig_beta'].set(min=0.3, max=5.0)
-    params_sig['sig_m'].set(min=1.1, max=10.0)
-    
-    result_sig = cb_sig.fit(n_sig, params=params_sig, x=cbins_sig)
+    # Fit signal region
+    signal_params, result_sig = _fit_signal_crystalball(cbins, n_subtracted, 
+                                                         lower_bound, upper_limit)
     
     return {
-        'peak_position': result_sig.params['sig_x0'].value,
-        'peak_stderr': result_sig.params['sig_x0'].stderr,
-        'sigma': result_sig.params['sig_sigma'].value,
-        'beta': result_sig.params['sig_beta'].value,
-        'm': result_sig.params['sig_m'].value,
-        'chi2': result_sig.chisqr,
-        'redchi': result_sig.redchi,
+        **signal_params,  # Unpack peak_position, peak_stderr, sigma, beta, m, chi2, redchi
         'bg_center': bg_center,
         'bg_sigma': bg_sigma,
         'lower_bound': lower_bound,
@@ -850,7 +809,59 @@ def fit_run_s2(areas: Dict[str, S2Areas], fit_config: FitConfig = FitConfig(),
 
 
 # -------------------------------------------------
-#  X-RAY AREA FITTING
+#  MULTI-ISOTOPE DATAFRAME FITTING
 # -------------------------------------------------
+
+def fit_multiiso_s2(df: pd.DataFrame,
+                    isotope: str,
+                    bin_cuts: tuple[float, float] = (0, 10),
+                    nbins: int = 100,
+                    **fit_kwargs) -> dict:
+    """
+    Fit S2 area distribution for a single isotope from multi-isotope DataFrame.
+    
+    Uses automatic method selection (simple vs two-stage) based on background detection.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Multi-isotope DataFrame with 's2_areas' column
+    isotope : str
+        Isotope name to filter and fit
+    bin_cuts : tuple, optional
+        (min, max) range for histogram
+    nbins : int, optional
+        Number of bins
+    **fit_kwargs : dict
+        Additional arguments for fit_s2_area_auto (bg_cutoff, n_sigma, etc.)
+        
+    Returns
+    -------
+    dict
+        Fit results with keys matching fit_s2_area_auto output, plus:
+        - 'isotope': str, the isotope name
+        - 'n_events': int, number of events used
+        
+    Raises
+    ------
+    ValueError
+        If no data found for isotope or fit fails
+    """
+    # Filter to isotope
+    iso_data = df[df['isotope'] == isotope]['s2_areas'].dropna()
+    
+    if len(iso_data) == 0:
+        raise ValueError(f"No data found for isotope {isotope}")
+    
+    print(f"  Fitting {isotope}: {len(iso_data)} events")
+    
+    # Use automatic fitting
+    result = fit_s2_area_auto(iso_data.values, bin_cuts=bin_cuts, nbins=nbins, **fit_kwargs)
+    
+    # Add isotope metadata
+    result['isotope'] = isotope
+    result['n_events'] = len(iso_data)
+    
+    return result
 
 

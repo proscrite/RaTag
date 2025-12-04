@@ -3,7 +3,7 @@ Complete ion recoil analysis pipeline.
 
 This pipeline executes the full workflow using functional composition:
 1. S2 area integration, fitting, and storage (set-level workflows)
-2. Field-dependent summary plot (run-level)
+3. Field-dependent summary plot (run-level)
 
 Structure mirrors run_preparation.py for consistency.
 All stages are explicit and composable - no hidden flags or conditionals.
@@ -19,7 +19,8 @@ from RaTag.core.functional import pipe_run
 from RaTag.workflows.recoil_integration import (integrate_s2_in_run,
                                                 fit_s2_in_run,
                                                 summarize_s2_vs_field,
-                                                run_s2_area_multiiso)
+                                                run_s2_area_multiiso,
+                                                fit_multiiso_s2_in_run)
 
 
 # ============================================================================
@@ -28,7 +29,7 @@ from RaTag.workflows.recoil_integration import (integrate_s2_in_run,
 
 def recoil_pipeline(run: Run,
                     range_sets: slice = None,
-                    max_files: Optional[int] = None,
+                    max_frames: Optional[int] = None,
                     integration_config: IntegrationConfig = IntegrationConfig(),
                     fit_config: FitConfig = FitConfig()) -> Run:
     """
@@ -49,7 +50,7 @@ def recoil_pipeline(run: Run,
     Args:
         run: Prepared Run object
         range_sets: Optional slice to process subset of sets
-        max_files: Optional limit on files per set (testing)
+        max_frames: Optional limit on frames per set (testing)
         integration_config: S2 integration parameters
         fit_config: Gaussian fitting parameters
         
@@ -59,7 +60,7 @@ def recoil_pipeline(run: Run,
     Example:
         >>> from RaTag.pipelines import prepare_run, recoil_pipeline
         >>> run = prepare_run(my_run)
-        >>> run = recoil_pipeline(run, max_files=100)
+        >>> run = recoil_pipeline(run, max_frames=100)
     """
     print("\n" + "="*60)
     print(f"ION RECOIL ANALYSIS PIPELINE: {run.run_id}")
@@ -70,7 +71,7 @@ def recoil_pipeline(run: Run,
         # Stage 1: Complete set-level ETL (integration + storage + plots)
         partial(integrate_s2_in_run,
                 range_sets=range_sets,
-                max_files=max_files,
+                max_frames=max_frames,
                 integration_config=integration_config),
         
         # Stage 2: Fit S2 area distributions in each set
@@ -99,17 +100,18 @@ def recoil_pipeline(run: Run,
 def recoil_pipeline_multiiso(run: Run,
                              isotope_ranges: dict,
                              range_sets: slice = None,
-                             max_files: Optional[int] = None,
+                             max_frames: Optional[int] = None,
                              integration_config: IntegrationConfig = IntegrationConfig(),
                              fit_config: FitConfig = FitConfig()) -> Run:
     """
-    Complete ion recoil S2 analysis pipeline (multi-isotope).
+    Complete ion recoil S2 analysis pipeline (multi-isotope with fitting).
     
     Pipeline stages:
     1. Integrate S2 areas for all sets (aggregated)
-    2. Map S2 areas to isotopes by energy
-    3. Fit Gaussian to distributions (per isotope)
-    4. Summarize S2 vs drift field
+    2. Fit aggregated S2 area distributions
+    3. Map S2 areas to isotopes by energy
+    4. Fit each isotope distribution separately
+    5. Summarize S2 vs drift field
     """
     print("\n" + "="*60)
     print(f"MULTI-ISOTOPE RECOIL PIPELINE: {run.run_id}")
@@ -119,7 +121,7 @@ def recoil_pipeline_multiiso(run: Run,
         # Standard integration (all events together)
         partial(integrate_s2_in_run,
                 range_sets=range_sets,
-                max_files=max_files,
+                max_frames=max_frames,
                 integration_config=integration_config),
         
         # Standard fitting (aggregated)
@@ -129,6 +131,11 @@ def recoil_pipeline_multiiso(run: Run,
         # Map to isotopes
         partial(run_s2_area_multiiso,
                 isotope_ranges=isotope_ranges),
+        
+        # Fit each isotope distribution
+        partial(fit_multiiso_s2_in_run,
+                isotope_ranges=isotope_ranges,
+                fit_config=fit_config),
         
         # Summary plot
         summarize_s2_vs_field
@@ -140,13 +147,13 @@ def recoil_pipeline_multiiso(run: Run,
 # EXAMPLE: Custom Pipeline Variations
 # ============================================================================
 
-def recoil_pipeline_quick(run: Run, max_files: int = 50) -> Run:
+def recoil_pipeline_quick(run: Run, max_frames: int = 50) -> Run:
     """
-    Quick test version - limited files, skip field plot.
+    Quick test version - limited frames, skip field plot.
     
     Useful for testing integration settings on a small sample.
     """
-    return integrate_s2_in_run(run, max_files=max_files)
+    return integrate_s2_in_run(run, max_frames=max_frames)
 
 
 def recoil_pipeline_replot(run: Run,
@@ -191,6 +198,66 @@ def recoil_pipeline_replot(run: Run,
     steps = [
         # Refit S2 area distributions
         partial(fit_s2_in_run, fit_config=fit_config),
+        
+        # Regenerate summary plot
+        summarize_s2_vs_field
+    ]
+    
+    return pipe_run(run, *steps)
+
+
+def recoil_pipeline_multiiso_replot(run: Run,
+                                    isotope_ranges: dict,
+                                    fit_config: FitConfig = FitConfig()) -> Run:
+    """
+    Refit and regenerate multi-isotope plots from cached data.
+    
+    Useful when you want to:
+    - Refit isotope distributions with different parameters
+    - Regenerate isotope plots after patching data units
+    - Re-run isotope mapping with updated energy ranges
+    
+    Prerequisites:
+    - Sets must have s2_areas.npz files (from previous integration)
+    
+    Args:
+        run: Run with sets containing cached S2 area NPZ files
+        isotope_ranges: Dictionary of {isotope: (Emin, Emax)}
+        fit_config: Fitting parameters
+        
+    Returns:
+        Run with updated multi-isotope fit results
+    """
+    
+    print("\n" + "="*60)
+    print("MULTI-ISOTOPE REFIT & REPLOT FROM CACHE")
+    print("="*60)
+    
+    # Check that we have cached NPZ files
+    sets_with_data = []
+    for s in run.sets:
+        data_file = s.source_dir.parent / "processed_data" / "all" / f"{s.source_dir.name}_s2_areas.npz"
+        if data_file.exists():
+            sets_with_data.append(s)
+    
+    if len(sets_with_data) == 0:
+        print("  ⚠ No cached s2_areas.npz files found - run integration first")
+        return run
+    
+    print(f"  Found {len(sets_with_data)} sets with cached S2 areas")
+    
+    # Build replot pipeline
+    steps = [
+        # Refit aggregated distributions
+        partial(fit_s2_in_run, fit_config=fit_config),
+        
+        # Re-map to isotopes (regenerates parquet + plots)
+        partial(run_s2_area_multiiso, isotope_ranges=isotope_ranges),
+        
+        # Refit each isotope distribution
+        partial(fit_multiiso_s2_in_run,
+                isotope_ranges=isotope_ranges,
+                fit_config=fit_config),
         
         # Regenerate summary plot
         summarize_s2_vs_field

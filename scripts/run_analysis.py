@@ -218,12 +218,12 @@ def main():
         if is_multiiso:
             run = recoil_pipeline_multiiso(run,
                                           isotope_ranges=isotope_ranges,
-                                          max_files=int_cfg['max_files'],
+                                          max_frames=int_cfg['max_frames'],
                                           integration_config=integration_config,
                                           fit_config=fit_config)
         else:
             run = recoil_pipeline(run,
-                                max_files=int_cfg['max_files'],
+                                max_frames=int_cfg['max_frames'],
                                 integration_config=integration_config,
                                 fit_config=fit_config)
         

@@ -53,7 +53,7 @@ pipeline:
   
   # Integration stage (S2 area calculation)
   integration:
-    max_files: null           # null = all files, or specify number
+    max_frames: null          # null = all frames, or specify number
     integration_config:
       n_pedestal: 100         # Samples for pedestal calculation
       ma_window: 9            # Moving average window size
