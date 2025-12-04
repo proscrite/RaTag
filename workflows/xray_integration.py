@@ -137,13 +137,14 @@ def _get_xray_window(set_pmt: SetPmt) -> tuple[float, float]:
     if 't_s1' not in set_pmt.metadata:
         raise ValueError(f"Set {set_pmt.source_dir.name} missing t_s1 - run timing estimation first")
     
-    t_s1 = set_pmt.metadata['t_s1']
+    # Extract and ensure proper float type (metadata might store as string)
+    t_s1 = float(set_pmt.metadata['t_s1'])
     
     # Determine S2 start: prefer t_s2_start, fallback to t_s1 + time_drift
     if 't_s2_start' in set_pmt.metadata:
-        s2_start = set_pmt.metadata['t_s2_start']
+        s2_start = float(set_pmt.metadata['t_s2_start'])
     elif set_pmt.time_drift is not None:
-        s2_start = t_s1 + set_pmt.time_drift
+        s2_start = t_s1 + float(set_pmt.time_drift)
         print(f"  ⚠ Using fallback: t_s2_start not in metadata, using t_s1 + time_drift")
     else:
         raise ValueError(f"Set {set_pmt.source_dir.name} missing both t_s2_start and time_drift")
@@ -257,11 +258,15 @@ def workflow_xray_classification(set_pmt: SetPmt,
         
     Returns:
         Updated SetPmt with X-ray statistics in metadata
+        
+    Raises:
+        ValueError: If timing metadata is missing
     """
     # Setup directories
     plots_dir, data_dir = _setup_set_directories(set_pmt)
     
     # Check preconditions and get X-ray window
+    # This will raise ValueError if timing metadata is missing
     t_s1, s2_start = _get_xray_window(set_pmt)
     
     # Classify (returns only accepted events + rejection stats)
@@ -501,7 +506,7 @@ def fit_xray_areas(run: Run,
     xray_areas = data['xray_areas']
     print(f"  📂 Loaded {len(xray_areas)} combined X-ray events")
     
-    # Fit Gaussian using existing function
+    # Fit Gaussian using existing code
     mean, sigma, ci95, cbins, n, fit_result = fit_gaussian_to_histogram(data=xray_areas,
                                                                          bin_cuts=fit_config.bin_cuts,
                                                                          nbins=fit_config.nbins,

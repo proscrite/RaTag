@@ -181,6 +181,9 @@ def apply_workflow_to_run(run,
     data_dir = run.root_directory / "processed_data"
     data_dir.mkdir(parents=True, exist_ok=True)
     
+    # Data files are stored in all/ subdirectory
+    data_file_dir = data_dir / "all"
+    
     # Setup plots directory
     plots_dir = run.root_directory / "plots"
     
@@ -188,15 +191,29 @@ def apply_workflow_to_run(run,
     for i, set_pmt in enumerate(run.sets, 1):
         print(f"\nSet {i}/{len(run.sets)}: {set_pmt.source_dir.name}")
         
-        # Check cache
-        data_file = data_dir / f"{set_pmt.source_dir.name}_{data_file_suffix}"
-        print(f"  Checking cache at {data_file}...")
-        loaded = load_set_metadata(set_pmt)
+        # ALWAYS reload metadata to get latest cache status
+        # (set_pmt may have been loaded during initialization without latest metadata)
+        reloaded = load_set_metadata(set_pmt)
+        if reloaded:
+            set_pmt = reloaded
         
-        if loaded and cache_key in loaded.metadata and data_file.exists():
-            print(f"  📂 Loaded from cache")
-            updated_sets.append(loaded)
+        # Check cache: both metadata key AND data file must exist
+        data_file = data_file_dir / f"{set_pmt.source_dir.name}_{data_file_suffix}"
+        
+        has_cache_key = cache_key in set_pmt.metadata
+        has_data_file = data_file.exists()
+        
+        if has_cache_key and has_data_file:
+            print(f"  📂 Loaded from cache ({cache_key}={set_pmt.metadata.get(cache_key)}, data file exists)")
+            updated_sets.append(set_pmt)
             continue
+        
+        # Debug: why cache failed
+        if not has_cache_key:
+            print(f"  ⚠ Cache miss: '{cache_key}' not in metadata (has: {list(set_pmt.metadata.keys())[:5]}...)")
+        if not has_data_file:
+            print(f"  ⚠ Cache miss: data file not found at {data_file}")
+        
         # Run workflow
         try:
             updated_set = workflow_func(set_pmt, **workflow_kwargs)
