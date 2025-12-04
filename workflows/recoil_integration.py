@@ -21,13 +21,13 @@ import matplotlib.pyplot as plt
 
 from RaTag.core.datatypes import SetPmt, S2Areas, Run
 from RaTag.core.config import IntegrationConfig, FitConfig
-from RaTag.core.dataIO import iter_frameproxies, store_s2area, load_s2area, store_isotope_df, save_figure
+from RaTag.core.dataIO import iter_frameproxies, store_s2area, load_s2area, save_figure
 from RaTag.core.uid_utils import make_uid
 from RaTag.core.fitting import fit_set_s2
-from RaTag.core.functional import map_over, apply_workflow_to_run, map_isotopes_in_run, compute_max_files
-from RaTag.alphas.energy_join import map_results_to_isotopes, generic_multiiso_workflow
+from RaTag.core.functional import apply_workflow_to_run, map_isotopes_in_run, compute_max_files
+from RaTag.alphas.energy_join import  generic_multiiso_workflow
 from RaTag.waveform.integration import integrate_s2_in_frame
-from RaTag.plotting import plot_s2_vs_drift, plot_hist_fit, plot_grouped_histograms
+from RaTag.plotting import plot_s2_vs_drift, plot_hist_fit
 
 
 # ============================================================================
@@ -185,21 +185,22 @@ def _fit_and_save_s2_histogram(set_pmt: SetPmt,
                                s2: S2Areas,
                                fit_config: FitConfig,
                                plots_dir: Path) -> SetPmt:
-    """ Fit Gaussian to S2 area distribution and save histogram plot.  """
+    """Fit S2 area distribution and save histogram plot."""
 
-    # Fit Gaussian
+    # Fit using automatic method selection
     s2_fitted = fit_set_s2(s2,
                            bin_cuts=fit_config.bin_cuts,
                            nbins=fit_config.nbins,
-                           exclude_index=fit_config.exclude_index,
                            flag_plot=False)
     
     if s2_fitted.fit_success:
-        print(f"    ✓ Fit: μ={s2_fitted.mean:.3f} ± {s2_fitted.ci95:.3f} mV·µs")
+        # Extract method info if available
+        method = s2_fitted.fit_result.get('method', 'unknown') if isinstance(s2_fitted.fit_result, dict) else 'gaussian'
+        print(f"    ✓ Fit ({method}): μ={s2_fitted.mean:.3f} ± {s2_fitted.ci95:.3f} mV·µs")
     else:
         print(f"    ✗ Fit failed")
     
-    # Save histogram plot
+    # Save histogram plot using the new plotting function
     fig, _ = plot_hist_fit(s2_fitted,
                            nbins=fit_config.nbins,
                            bin_cuts=fit_config.bin_cuts)
@@ -208,15 +209,22 @@ def _fit_and_save_s2_histogram(set_pmt: SetPmt,
     plt.close(fig)  # Close figure to free memory
     print(f"    📊 Saved histogram plot")
     
-    # Update metadata with fit results
-    new_metadata = {
-        **set_pmt.metadata,
+    # Update metadata - include method info
+    fit_metadata = {
         'area_s2_mean': s2_fitted.mean,
         'area_s2_ci95': s2_fitted.ci95,
         'area_s2_sigma': s2_fitted.sigma,
         'area_s2_fit_success': s2_fitted.fit_success
     }
     
+    # Add method-specific metadata if available
+    if isinstance(s2_fitted.fit_result, dict):
+        fit_metadata['area_s2_fit_method'] = s2_fitted.fit_result.get('method', 'unknown')
+        if s2_fitted.fit_result.get('method') == 'two_stage':
+            fit_metadata['area_s2_bg_center'] = s2_fitted.fit_result.get('bg_center')
+            fit_metadata['area_s2_lower_bound'] = s2_fitted.fit_result.get('lower_bound')
+    
+    new_metadata = {**set_pmt.metadata, **fit_metadata}
     updated_set = replace(set_pmt, metadata=new_metadata)
     
     # Save updated metadata

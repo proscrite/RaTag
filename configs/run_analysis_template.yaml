@@ -58,8 +58,23 @@ pipeline:
       n_pedestal: 100         # Samples for pedestal calculation
       ma_window: 9            # Moving average window size
       bs_threshold: 0.03      # mV - Baseline subtraction threshold
-      dt: 0.2                 # µs - Time step for integration
+      dt: 0.0002              # µs - Time step for integration (0.2 ns for 5 GS/s)
     fit_config:
       bin_cuts: [0, 10]       # mV·µs - Histogram range
       nbins: 100              # Number of histogram bins
-      exclude_index: []       # Bins to exclude from fit
+      exclude_index: 1       # Bins to exclude from fit (deprecated - use automatic method)
+      bg_threshold: 0.3       # Background fraction threshold for two-stage fitting (0-1)
+      bg_cutoff: 1.0          # mV·µs - Upper limit for background fitting
+      n_sigma: 2.5            # Sigmas above background mean for signal region cutoff
+      upper_limit: 5.0        # mV·µs - Upper limit for signal fitting range
+  
+  # X-ray classification (optional - use --xray-only flag)
+  xray_classification:
+    max_frames: null          # null = all frames, or specify number
+    bs_threshold: 0.5         # mV - Baseline threshold for signal detection
+    max_area_s2: 1.0e5        # mV·µs - Max allowed area in S2 window
+    min_s2_sep: 1.0           # µs - Min required separation before S2 window
+    min_s1_sep: 0.5           # µs - Min required separation after S1
+    n_pedestal: 200           # Samples for pedestal calculation
+    ma_window: 10             # Moving average window size
+    dt: 0.0002                # µs - Integration timestep

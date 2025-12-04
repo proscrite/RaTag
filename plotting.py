@@ -375,7 +375,9 @@ def slideshow(set_pmt: SetPmt, logs: list[RejectionLog], width_s2: float, delay=
 
 def plot_hist_fit(s2: S2Areas, nbins=100, bin_cuts=(0, 5), ax=None):
     """
-    Plot S2 area histogram with Gaussian fit.
+    Plot S2 area histogram with fit.
+    
+    Handles both old Gaussian fits and new Crystal Ball fits.
     
     Returns:
         fig, ax: Matplotlib figure and axes objects
@@ -397,17 +399,127 @@ def plot_hist_fit(s2: S2Areas, nbins=100, bin_cuts=(0, 5), ax=None):
     ax.grid(True)
 
     if s2.fit_success and s2.fit_result:
-        x = np.linspace(bin_cuts[0], bin_cuts[1], 1000)
-        y = s2.fit_result.eval(x=x)  # Use stored fit result to evaluate
-        ax.plot(x, y, 'r-', label="Gaussian Fit")
-        ax.axvline(s2.mean, color='b', ls='--', 
-                  label=f"Mean: {s2.mean:.2f} ± {s2.ci95:.2f}")
-        ax.legend()
+        # Check if it's new format (dict) or old format (lmfit result)
+        if isinstance(s2.fit_result, dict):
+            # New format - use plot_s2_fit_result
+            plt.close(fig)  # Close the simple plot
+            fig, axes = plot_s2_fit_result(s2.fit_result, s2.areas, 
+                                           set_name=s2.source_dir.name)
+            return fig, axes
+        else:
+            # Old format - existing Gaussian/lmfit result plot
+            x = np.linspace(bin_cuts[0], bin_cuts[1], 1000)
+            y = s2.fit_result.eval(x=x)  # Use stored fit result to evaluate
+            ax.plot(x, y, 'r-', label="Gaussian Fit")
+            ax.axvline(s2.mean, color='b', ls='--', 
+                      label=f"Mean: {s2.mean:.2f} ± {s2.ci95:.2f}")
+            ax.legend()
     else:
         ax.text(0.5, 0.9, "Fit failed or not performed", 
                 ha='center', va='center', transform=ax.transAxes)
 
     return fig, ax
+
+
+def plot_s2_fit_result(result: dict, data: np.ndarray, set_name: str = '', 
+                       figsize: tuple = (16, 5)):
+    """
+    Plot S2 area fit results with appropriate visualization based on method.
+    
+    Parameters
+    ----------
+    result : dict
+        Result dictionary from fit_s2_area_auto, fit_s2_simple_cb, or fit_s2_two_stage
+    data : array-like
+        Original S2 area data
+    set_name : str, optional
+        Name/identifier for the dataset (for plot title)
+    figsize : tuple, optional
+        Figure size (width, height)
+        
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The generated figure
+    axes : array of matplotlib.axes.Axes
+        The axes objects
+        
+    Notes
+    -----
+    For 'simple' method: creates single plot with data and fit
+    For 'two_stage' method: creates two subplots showing background subtraction and signal fit
+    """
+    hist_data = result['histogram']
+    
+    if result['method'] == 'simple':
+        # Single plot for simple method
+        fig, ax = plt.subplots(1, 1, figsize=(figsize[0]//2, figsize[1]))
+        
+        ax.hist(data, bins=hist_data['bins'], alpha=0.5, color='blue', label='Data')
+        
+        x_smooth = np.linspace(hist_data['bins'][0], hist_data['bins'][-1], 500)
+        fit_curve = result['result'].eval(x=x_smooth)
+        ax.plot(x_smooth, fit_curve, 'r-', linewidth=2, 
+                label=f"CB Fit (x₀={result['peak_position']:.2f})")
+        
+        ax.axvline(result['peak_position'], color='red', linestyle=':', alpha=0.7, 
+                   label=f"Peak: {result['peak_position']:.2f} mV·µs")
+        ax.set_xlabel('S2 Area (mV·µs)', fontsize=11)
+        ax.set_ylabel('Counts', fontsize=11)
+        ax.set_title(f"{set_name}\n{result['method']} method | χ²/dof = {result['redchi']:.2f}", 
+                     fontsize=12)
+        ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3)
+        
+        axes = np.array([ax])
+        
+    else:  # two_stage
+        # Two subplots for two-stage method
+        fig, axes = plt.subplots(1, 2, figsize=figsize)
+        
+        # Left: Background subtraction
+        ax1 = axes[0]
+        ax1.hist(data, bins=hist_data['bins'], 
+                 alpha=0.4, color='green', label='Original Data')
+        bg_curve = result['result_bg'].eval(x=hist_data['bin_centers'])
+        ax1.plot(hist_data['bin_centers'], bg_curve, 'b--', linewidth=2, 
+                 label=f"Background (μ={result['bg_center']:.2f})")
+        ax1.bar(hist_data['bin_centers'], hist_data['subtracted'], 
+                width=np.diff(hist_data['bins'])[0], alpha=0.6, color='orange', 
+                label='Subtracted')
+        ax1.axvline(result['lower_bound'], color='gray', linestyle='--', 
+                    alpha=0.7, label=f"Lower bound: {result['lower_bound']:.2f}")
+        ax1.set_xlabel('S2 Area (mV·µs)', fontsize=11)
+        ax1.set_ylabel('Counts', fontsize=11)
+        ax1.set_title('Stage 1: Background Subtraction', fontsize=12)
+        ax1.legend(fontsize=9)
+        ax1.grid(True, alpha=0.3)
+        
+        # Right: Signal fit
+        ax2 = axes[1]
+        ax2.bar(hist_data['bin_centers'], hist_data['subtracted'], 
+                width=np.diff(hist_data['bins'])[0], alpha=0.5, color='orange', 
+                label='Subtracted Data')
+        x_smooth = np.linspace(hist_data['bins'][0], hist_data['bins'][-1], 500)
+        sig_curve = result['result_sig'].eval(x=x_smooth)
+        ax2.plot(x_smooth, sig_curve, 'g-', linewidth=2, 
+                 label=f"CB Fit (x₀={result['peak_position']:.2f})")
+        ax2.axvline(result['peak_position'], color='green', linestyle=':', 
+                    alpha=0.7)
+        ax2.axvline(result['lower_bound'], color='gray', linestyle='--', 
+                    alpha=0.7, label=f"Lower bound: {result['lower_bound']:.2f}")
+        ax2.set_xlabel('S2 Area (mV·µs)', fontsize=11)
+        ax2.set_ylabel('Counts', fontsize=11)
+        ax2.set_title(f"Stage 2: Signal Fit\nχ²/dof = {result['redchi']:.2f}", 
+                      fontsize=12)
+        ax2.legend(fontsize=9)
+        ax2.grid(True, alpha=0.3)
+        
+        # Add overall title
+        fig.suptitle(set_name, fontsize=13, y=1.02)
+    
+    plt.tight_layout()
+    return fig, axes
 
 def plot_s2_vs_drift(df: pd.DataFrame, 
                      run_id: str,

@@ -3,6 +3,7 @@ from dataclasses import replace
 import numpy as np # type: ignore
 import matplotlib.pyplot as plt # type: ignore
 from lmfit.models import GaussianModel # type: ignore
+import lmfit # type: ignore
 
 from .datatypes import S2Areas
 from .config import FitConfig
@@ -153,11 +154,44 @@ def plot_gaussian_fit(data: np.ndarray,
     plt.legend(fontsize=11)
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.show()
+    
+    fig = plt.gcf()  # Get current figure
+    return fig
 
 # -------------------------------------------------
 #  S1/S2 timing histogram fit
 # -------------------------------------------------
+
+def _create_histogram(data: np.ndarray, 
+                      bin_cuts: Tuple[float, float], 
+                      nbins: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Helper function to create histogram from data.
+    
+    Parameters
+    ----------
+    data : array-like
+        Raw data values
+    bin_cuts : tuple
+        (min, max) range for histogram
+    nbins : int
+        Number of histogram bins
+        
+    Returns
+    -------
+    tuple of (counts, bins, bin_centers)
+        counts : np.ndarray
+            Histogram counts
+        bins : np.ndarray
+            Bin edges
+        bin_centers : np.ndarray
+            Center of each bin
+    """
+    filtered = data[(data >= bin_cuts[0]) & (data <= bin_cuts[1])]
+    counts, bins = np.histogram(filtered, bins=nbins, range=bin_cuts)
+    bin_centers = 0.5 * (bins[1:] + bins[:-1])
+    return counts, bins, bin_centers
+
 
 def fit_s2_timing_histogram(data: np.ndarray,
                             bin_cuts: Tuple[float, float],
@@ -217,55 +251,578 @@ def fit_s2_timing_histogram(data: np.ndarray,
 # -------------------------------------------------
 
 # --------------------------#
-# Set-level Gaussian fit  --#
+# Advanced fitting functions
+# --------------------------#
+
+def v_crystalball_right(x, N, beta, m, x0, sigma):
+    """
+    Crystal Ball function with RIGHT tail for ionization signals.
+    
+    Parameters
+    ----------
+    x : array-like
+        Input variable (S2 area values)
+    N : float
+        Normalization (amplitude)
+    beta : float
+        Tail steepness parameter (transition point)
+    m : float
+        Power-law exponent for tail (typically > 1)
+    x0 : float
+        Peak location
+    sigma : float
+        Width parameter (Gaussian core width)
+        
+    Returns
+    -------
+    array-like
+        Crystal Ball function values
+        
+    Notes
+    -----
+    This version has the tail on the RIGHT side (z >= beta), appropriate
+    for ionization signals where charge collection effects create a right tail.
+    Standard Crystal Ball has LEFT tail for PMT resolution effects.
+    """
+    absb = np.abs(beta)
+    z = (x - x0) / sigma
+    
+    # Gaussian core
+    gauss = np.exp(-0.5 * z**2)
+    
+    # Power-law tail parameters
+    A_tail = (m / absb)**m * np.exp(-0.5 * absb**2)
+    B = m / absb - absb
+    
+    # RIGHT tail: use +z (not -z) in denominator
+    tail = A_tail / (B + z)**m
+    
+    # Use Gaussian for z < beta, tail for z >= beta
+    return N * np.where(z < absb, gauss, tail)
+
+
+def find_main_cluster(counts, threshold_fraction=0.01):
+    """
+    Find the main connected cluster of bins in a histogram.
+    
+    Removes isolated bins separated by gaps (bins with counts below threshold).
+    Useful for removing disconnected edge bins after background subtraction.
+    
+    Parameters
+    ----------
+    counts : array-like
+        Array of histogram bin counts
+    threshold_fraction : float, optional
+        Bins with counts < threshold_fraction * max(counts) are considered "empty"
+        Default is 0.01 (1% of maximum)
+        
+    Returns
+    -------
+    mask : ndarray of bool
+        Boolean mask indicating which bins belong to the largest connected cluster
+        
+    Notes
+    -----
+    Uses scipy.ndimage.label for connected component analysis.
+    """
+    from scipy.ndimage import label
+    
+    if len(counts) == 0:
+        return np.zeros(len(counts), dtype=bool)
+    
+    threshold = threshold_fraction * counts.max()
+    
+    # Mark bins as "occupied" if above threshold
+    occupied = counts > threshold
+    
+    # Find all connected regions (groups of True values separated by False)
+    labeled, num_features = label(occupied)
+    
+    if num_features == 0:
+        return occupied
+    
+    # Find the largest connected component
+    component_sizes = [(labeled == i).sum() for i in range(1, num_features + 1)]
+    largest_component = np.argmax(component_sizes) + 1
+    
+    # Return mask for the largest component
+    return labeled == largest_component
+
+def _fit_background_gaussian(cbins: np.ndarray, 
+                             counts: np.ndarray, 
+                             bg_cutoff: float = 1.0) -> Tuple[float, float, Any]:
+    """
+    Fit Gaussian model to background region of histogram.
+    
+    Parameters
+    ----------
+    cbins : np.ndarray
+        Bin centers
+    counts : np.ndarray
+        Bin counts
+    bg_cutoff : float, optional
+        Upper limit for background fitting region
+        
+    Returns
+    -------
+    tuple of (bg_center, bg_sigma, result)
+        bg_center : float
+            Background peak center
+        bg_sigma : float
+            Background width
+        result : lmfit.ModelResult
+            Full fit result object
+    """
+    # Restrict to background region
+    bg_mask = cbins <= bg_cutoff
+    cbins_bg = cbins[bg_mask]
+    n_bg = counts[bg_mask]
+    
+    # Fit Gaussian
+    gauss_bg = GaussianModel(prefix='bg_')
+    params_bg = gauss_bg.make_params(
+        bg_amplitude=n_bg.max(),
+        bg_center=0.3,
+        bg_sigma=0.2
+    )
+    params_bg['bg_center'].set(min=0, max=bg_cutoff)
+    params_bg['bg_sigma'].set(min=0.05, max=0.5)
+    
+    result_bg = gauss_bg.fit(n_bg, params=params_bg, x=cbins_bg)
+    
+    bg_center = result_bg.params['bg_center'].value
+    bg_sigma = result_bg.params['bg_sigma'].value
+    
+    return bg_center, bg_sigma, result_bg
+
+
+def _fit_signal_crystalball(cbins: np.ndarray,
+                            counts: np.ndarray,
+                            lower_bound: float,
+                            upper_limit: float = 5.0) -> Tuple[Dict[str, float], Any]:
+    """
+    Fit Crystal Ball model to signal region of histogram.
+    
+    Parameters
+    ----------
+    cbins : np.ndarray
+        Bin centers
+    counts : np.ndarray
+        Bin counts (should be background-subtracted for two-stage)
+    lower_bound : float
+        Lower bound for signal fitting region
+    upper_limit : float, optional
+        Upper limit for signal fitting region
+        
+    Returns
+    -------
+    tuple of (params_dict, result)
+        params_dict : dict
+            Dictionary with fitted parameters:
+            - 'peak_position', 'peak_stderr', 'sigma', 'beta', 'm'
+            - 'chi2', 'redchi'
+        result : lmfit.ModelResult
+            Full fit result object
+    """
+    # Apply cluster detection + bounds
+    main_cluster_mask = find_main_cluster(counts, threshold_fraction=0.01)
+    signal_mask = main_cluster_mask & (cbins >= lower_bound) & (cbins <= upper_limit)
+    
+    cbins_sig = cbins[signal_mask]
+    n_sig = counts[signal_mask]
+    
+    # Fit Crystal Ball
+    cb_sig = lmfit.Model(v_crystalball_right, prefix='sig_')
+    params_sig = cb_sig.make_params(
+        sig_N=n_sig.max(),
+        sig_x0=1.8,
+        sig_sigma=0.5,
+        sig_beta=1.0,
+        sig_m=2.0
+    )
+    params_sig['sig_x0'].set(min=lower_bound, max=3.5)
+    params_sig['sig_sigma'].set(min=0.2, max=1.5)
+    params_sig['sig_beta'].set(min=0.3, max=5.0)
+    params_sig['sig_m'].set(min=1.1, max=10.0)
+    
+    result_sig = cb_sig.fit(n_sig, params=params_sig, x=cbins_sig)
+    
+    params_dict = {
+        'peak_position': result_sig.params['sig_x0'].value,
+        'peak_stderr': result_sig.params['sig_x0'].stderr,
+        'sigma': result_sig.params['sig_sigma'].value,
+        'beta': result_sig.params['sig_beta'].value,
+        'm': result_sig.params['sig_m'].value,
+        'chi2': result_sig.chisqr,
+        'redchi': result_sig.redchi
+    }
+    
+    return params_dict, result_sig
+
+
+def detect_background_peak(data, bin_cuts=(0, 10), nbins=100, bg_threshold=0.3):
+    """
+    Detect if histogram has significant background pileup peak at low values.
+    
+    Parameters
+    ----------
+    data : array-like
+        S2 area values
+    bin_cuts : tuple, optional
+        (min, max) range for histogram
+    nbins : int, optional
+        Number of histogram bins
+    bg_threshold : float, optional
+        Threshold for detecting background peak presence
+        If ratio of counts in [0, bg_threshold] to total counts > 0.1, 
+        background subtraction is recommended
+        
+    Returns
+    -------
+    dict
+        Dictionary with keys:
+        - 'has_background': bool, whether background peak is significant
+        - 'bg_fraction': float, fraction of counts in low-value region
+        - 'recommendation': str, 'two_stage' or 'simple'
+        
+    Notes
+    -----
+    This function helps decide whether to use simple Crystal Ball fitting
+    or two-stage fitting with background subtraction.
+    """
+    # Create histogram
+    n, bins, cbins = _create_histogram(data, bin_cuts, nbins)
+    
+    # Calculate fraction of counts in low-value region
+    low_mask = cbins <= bg_threshold
+    bg_counts = n[low_mask].sum()
+    total_counts = n.sum()
+    bg_fraction = bg_counts / total_counts if total_counts > 0 else 0.0
+    
+    # Decision criterion: if >10% of counts are in low region, use two-stage
+    has_background = bg_fraction > 0.1
+    
+    return {
+        'has_background': has_background,
+        'bg_fraction': bg_fraction,
+        'recommendation': 'two_stage' if has_background else 'simple'
+    }
+
+def fit_s2_simple_cb(data, bin_cuts=(0, 10), nbins=100):
+    """
+    Simple single Crystal Ball fit for S2 area distributions without background.
+    
+    Use this when there's no significant background pileup peak (e.g., low field conditions).
+    
+    Parameters
+    ----------
+    data : array-like
+        S2 area values
+    bin_cuts : tuple, optional
+        (min, max) range for histogram fitting
+    nbins : int, optional
+        Number of histogram bins
+        
+    Returns
+    -------
+    dict
+        Fit results with keys:
+        - 'peak_position': float, fitted peak location (x0)
+        - 'peak_stderr': float, standard error on peak position
+        - 'sigma': float, width parameter
+        - 'beta': float, tail steepness
+        - 'm': float, tail power
+        - 'chi2': float, chi-squared
+        - 'redchi': float, reduced chi-squared
+        - 'result': lmfit.ModelResult object
+        - 'histogram': dict with 'bins', 'counts', 'bin_centers'
+        - 'method': str, 'simple'
+        
+    Notes
+    -----
+    Fits right-tailed Crystal Ball directly to the full histogram.
+    """
+    import lmfit
+    
+    # Create histogram
+    filtered = data[(data >= bin_cuts[0]) & (data <= bin_cuts[1])]
+    n, bins = np.histogram(filtered, bins=nbins, range=bin_cuts)
+    cbins = 0.5 * (bins[1:] + bins[:-1])
+    
+    # Fit Crystal Ball to full distribution
+    cb_model = lmfit.Model(v_crystalball_right, prefix='sig_')
+    
+    # Initial parameters
+    params = cb_model.make_params(
+        sig_N=n.max(),
+        sig_x0=1.5,
+        sig_sigma=0.5,
+        sig_beta=1.0,
+        sig_m=2.0
+    )
+    
+    # Constraints
+    params['sig_x0'].set(min=0.5, max=bin_cuts[1] - 1.0)
+    params['sig_sigma'].set(min=0.1, max=2.0)
+    params['sig_beta'].set(min=0.3, max=5.0)
+    params['sig_m'].set(min=1.1, max=10.0)
+    
+    # Fit
+    result = cb_model.fit(n, params=params, x=cbins)
+    
+    return {
+        'peak_position': result.params['sig_x0'].value,
+        'peak_stderr': result.params['sig_x0'].stderr,
+        'sigma': result.params['sig_sigma'].value,
+        'beta': result.params['sig_beta'].value,
+        'm': result.params['sig_m'].value,
+        'chi2': result.chisqr,
+        'redchi': result.redchi,
+        'result': result,
+        'histogram': {
+            'bins': bins,
+            'counts': n,
+            'bin_centers': cbins
+        },
+        'method': 'simple'
+    }
+
+
+def fit_s2_two_stage(data, bin_cuts=(0, 10), nbins=100, bg_cutoff=1.0, 
+                     n_sigma=2.5, upper_limit=5.0):
+    """
+    Two-stage fit for S2 area distributions with background pileup peak.
+    
+    Stage 1: Fit Gaussian to background in restricted range
+    Stage 2: Subtract background, fit Crystal Ball to signal with smart region selection
+    
+    Parameters
+    ----------
+    data : array-like
+        S2 area values
+    bin_cuts : tuple, optional
+        (min, max) range for histogram
+    nbins : int, optional
+        Number of histogram bins
+    bg_cutoff : float, optional
+        Upper limit for background-only fit region (default: 1.0 mV·µs)
+    n_sigma : float, optional
+        Number of sigmas above background peak for signal region lower bound
+        (default: 2.5, recommended range: 2.0-3.0)
+    upper_limit : float, optional
+        Upper limit for signal fit region (default: 5.0 mV·µs)
+        
+    Returns
+    -------
+    dict
+        Fit results with keys:
+        - 'peak_position': float, signal peak location (x0)
+        - 'peak_stderr': float, standard error on peak position
+        - 'sigma': float, signal width parameter
+        - 'beta': float, tail steepness
+        - 'm': float, tail power
+        - 'chi2': float, chi-squared
+        - 'redchi': float, reduced chi-squared
+        - 'bg_center': float, background peak center
+        - 'bg_sigma': float, background width
+        - 'lower_bound': float, calculated lower bound for signal region
+        - 'result_bg': lmfit.ModelResult, background fit result
+        - 'result_sig': lmfit.ModelResult, signal fit result
+        - 'histogram': dict with 'bins', 'counts', 'bin_centers', 'subtracted'
+        - 'method': str, 'two_stage'
+        
+    Notes
+    -----
+    Uses background statistics (μ_bg + n_sigma*σ_bg) to automatically determine
+    signal region, avoiding hardcoded thresholds while maintaining robustness.
+    """
+    
+    # Create histogram
+    filtered = data[(data >= bin_cuts[0]) & (data <= bin_cuts[1])]
+    n, bins = np.histogram(filtered, bins=nbins, range=bin_cuts)
+    cbins = 0.5 * (bins[1:] + bins[:-1])
+    
+    # ===== STAGE 1: Fit background in restricted range =====
+    bg_mask = cbins <= bg_cutoff
+    cbins_bg = cbins[bg_mask]
+    n_bg = n[bg_mask]
+    
+    gauss_bg = GaussianModel(prefix='bg_')
+    params_bg = gauss_bg.make_params(
+        bg_amplitude=n_bg.max(),
+        bg_center=0.3,
+        bg_sigma=0.2
+    )
+    params_bg['bg_center'].set(min=0, max=bg_cutoff)
+    params_bg['bg_sigma'].set(min=0.05, max=0.5)
+    
+    result_bg = gauss_bg.fit(n_bg, params=params_bg, x=cbins_bg)
+    
+    # Extract background parameters
+    bg_center = result_bg.params['bg_center'].value
+    bg_sigma = result_bg.params['bg_sigma'].value
+    
+    # ===== STAGE 2: Subtract background and fit signal =====
+    # Subtract background from full histogram
+    bg_full = gauss_bg.eval(x=cbins, params=result_bg.params)
+    n_subtracted = np.maximum(n - bg_full, 0)  # No negative counts
+    
+    # Calculate smart lower bound based on background statistics
+    lower_bound = bg_center + n_sigma * bg_sigma
+    
+    # Apply cluster detection + lower bound
+    main_cluster_mask = find_main_cluster(n_subtracted, threshold_fraction=0.01)
+    signal_mask = main_cluster_mask & (cbins >= lower_bound) & (cbins <= upper_limit)
+    
+    cbins_sig = cbins[signal_mask]
+    n_sig = n_subtracted[signal_mask]
+    
+    # Fit Crystal Ball to signal
+    cb_sig = lmfit.Model(v_crystalball_right, prefix='sig_')
+    params_sig = cb_sig.make_params(
+        sig_N=n_sig.max(),
+        sig_x0=1.8,
+        sig_sigma=0.5,
+        sig_beta=1.0,
+        sig_m=2.0
+    )
+    params_sig['sig_x0'].set(min=lower_bound, max=3.5)
+    params_sig['sig_sigma'].set(min=0.2, max=1.5)
+    params_sig['sig_beta'].set(min=0.3, max=5.0)
+    params_sig['sig_m'].set(min=1.1, max=10.0)
+    
+    result_sig = cb_sig.fit(n_sig, params=params_sig, x=cbins_sig)
+    
+    return {
+        'peak_position': result_sig.params['sig_x0'].value,
+        'peak_stderr': result_sig.params['sig_x0'].stderr,
+        'sigma': result_sig.params['sig_sigma'].value,
+        'beta': result_sig.params['sig_beta'].value,
+        'm': result_sig.params['sig_m'].value,
+        'chi2': result_sig.chisqr,
+        'redchi': result_sig.redchi,
+        'bg_center': bg_center,
+        'bg_sigma': bg_sigma,
+        'lower_bound': lower_bound,
+        'result_bg': result_bg,
+        'result_sig': result_sig,
+        'histogram': {
+            'bins': bins,
+            'counts': n,
+            'bin_centers': cbins,
+            'subtracted': n_subtracted
+        },
+        'method': 'two_stage'
+    }
+
+
+def fit_s2_area_auto(data, bin_cuts=(0, 10), nbins=100, **kwargs):
+    """
+    Automatic S2 area fitting with intelligent method selection.
+    
+    Automatically detects whether background subtraction is needed and uses
+    the appropriate fitting method (simple Crystal Ball or two-stage).
+    
+    Parameters
+    ----------
+    data : array-like
+        S2 area values
+    bin_cuts : tuple, optional
+        (min, max) range for histogram
+    nbins : int, optional
+        Number of histogram bins
+    **kwargs : dict
+        Additional parameters passed to fit_s2_simple_cb or fit_s2_two_stage:
+        - bg_threshold : float, threshold for background detection (default: 0.3)
+        - bg_cutoff : float, upper limit for background fit (default: 1.0)
+        - n_sigma : float, sigmas above background for signal region (default: 2.5)
+        - upper_limit : float, upper limit for signal fit (default: 5.0)
+        
+    Returns
+    -------
+    dict
+        Fit results (same structure as fit_s2_simple_cb or fit_s2_two_stage)
+        with additional key:
+        - 'method': str, 'simple' or 'two_stage'
+        
+    Examples
+    --------
+    >>> result = fit_s2_area_auto(s2_areas)
+    >>> print(f"Peak: {result['peak_position']:.3f} ± {result['peak_stderr']:.3f} mV·µs")
+    >>> print(f"Method used: {result['method']}")
+    >>> print(f"Chi²/dof: {result['redchi']:.2f}")
+    
+    Notes
+    -----
+    This is the recommended top-level function for S2 area fitting.
+    It handles all cases automatically while providing detailed diagnostics.
+    """
+    # Detect if background subtraction is needed
+    bg_threshold = kwargs.pop('bg_threshold', 0.3)
+    detection = detect_background_peak(data, bin_cuts, nbins, bg_threshold)
+    
+    print(f"  Background detection: {detection['bg_fraction']*100:.1f}% of counts in low region")
+    print(f"  Recommendation: {detection['recommendation']}")
+    
+    if detection['recommendation'] == 'two_stage':
+        print("  Using two-stage fitting with background subtraction...")
+        result = fit_s2_two_stage(data, bin_cuts, nbins, **kwargs)
+    else:
+        print("  Using simple Crystal Ball fitting...")
+        result = fit_s2_simple_cb(data, bin_cuts, nbins)
+    
+    return result
+
+
+# --------------------------#
+# Set-level fitting wrapper
 # --------------------------#
 def fit_set_s2(s2: S2Areas,
-               bin_cuts: tuple[float, float] = (0, 4),
+               bin_cuts: tuple[float, float] = (0, 10),
                nbins: int = 100,
-               exclude_index: int = 1,
-               flag_plot: bool = False) -> S2Areas:
+               flag_plot: bool = False,
+               **kwargs) -> S2Areas:
     """
-    Fit Gaussian to S2Areas distribution of a single set.
+    Fit S2Areas distribution with automatic method selection.
+    
+    Automatically detects background and uses appropriate fitting method
+    (simple Crystal Ball or two-stage with background subtraction).
 
     Args:
-        s2: S2Areas object with raw areas.
-        bin_cuts: (min, max) for histogram.
-        nbins: number of bins.
-        exclude_index: skip first bins if pedestal leak.
-        flag_plot: if True, show histogram and fit.
+        s2: S2Areas object with raw areas
+        bin_cuts: (min, max) for histogram
+        nbins: number of bins
+        exclude_index: DEPRECATED - kept for compatibility, not used
+        flag_plot: if True, show histogram and fit
+        **kwargs: Additional parameters for fitting (bg_cutoff, n_sigma, etc.)
 
     Returns:
-        New S2Areas with fit results populated.
+        New S2Areas with fit results populated
     """
     # Check if data exists in range
     area_vec = s2.areas[(s2.areas > bin_cuts[0]) & (s2.areas < bin_cuts[1])]
     if len(area_vec) == 0:
         return replace(s2, fit_success=False)
 
-    # Use shared Gaussian fitting function
     try:
-        mean, sigma, ci95, cbins, n, result = fit_gaussian_to_histogram(data=s2.areas,
-                                                                         bin_cuts=bin_cuts,
-                                                                         nbins=nbins,
-                                                                         exclude_index=exclude_index)
+        # Use automatic fitting with intelligent method selection
+        result = fit_s2_area_auto(s2.areas, bin_cuts=bin_cuts, nbins=nbins, **kwargs)
+        
+        if flag_plot:
+            from RaTag.plotting import plot_s2_fit_result
+            plot_s2_fit_result(result, s2.areas, 
+                             set_name=s2.source_dir.name if hasattr(s2, 'source_dir') else '')
+        
+        return replace(s2,
+                      mean=result['peak_position'],
+                      sigma=result['sigma'],
+                      ci95=1.96 * result['peak_stderr'] if result['peak_stderr'] else 0.0,
+                      fit_result=result,  # Store full result dict
+                      fit_success=True)
+    
     except Exception as e:
-        print(f"Warning: Gaussian fit failed for {s2.source_dir.name}: {e}")
+        print(f"  Warning: Fit failed for {s2.source_dir.name}: {e}")
         return replace(s2, fit_success=False)
-
-    if flag_plot:
-        from lmfit.models import GaussianModel
-        n_full, bins, _ = plt.hist(area_vec, bins=nbins, alpha=0.6, color='g', label="Data")
-        model = GaussianModel()
-        plt.plot(cbins, model.eval(x=cbins, params=result.params), 'r--', label='fit')
-        plt.gca().set(xlabel = 'Area (mV·ns)', ylabel = 'Counts')
-        plt.legend()
-
-    return replace(s2,
-                   mean=mean,
-                   sigma=sigma,
-                   ci95=ci95,
-                   fit_result=result,
-                   fit_success=result.success)
 
 
 # -------------------------------------------------

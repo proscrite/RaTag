@@ -39,7 +39,7 @@ class IntegrationConfig:
     min_s1_sep: float = 1.0           # (µs)   -- min separation after S1
     n_pedestal: int = 2000            # number of pre-trigger samples for pedestal
     ma_window: int = 9                # moving average window length (samples)
-    dt: float = 2e-4                  # default unless overridden by wf spacing
+    dt: float = 2e-4                  # (µs) integration timestep: 0.2 ns = 0.0002 µs for 5 GS/s
     integrator: Callable[[PMTWaveform, float], np.ndarray] = field(default_factory=_default_integrator)
 
 
@@ -47,7 +47,11 @@ class IntegrationConfig:
 class FitConfig:
     bin_cuts: tuple[float, float] = (0, 4)
     nbins: int = 100
-    exclude_index: int = 1
+    exclude_index: int = 1  # Deprecated - kept for backward compatibility
+    bg_threshold: float = 0.3  # Background fraction threshold for two-stage fitting
+    bg_cutoff: float = 1.0     # Upper limit for background fitting (mV·µs)
+    n_sigma: float = 2.5       # Sigmas above background for signal region
+    upper_limit: float = 5.0   # Upper limit for signal fitting (mV·µs)
 
 
 @dataclass(frozen=True)
