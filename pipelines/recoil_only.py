@@ -149,37 +149,51 @@ def recoil_pipeline_quick(run: Run, max_files: int = 50) -> Run:
     return integrate_s2_in_run(run, max_files=max_files)
 
 
-def recoil_pipeline_replot(run: Run) -> Run:
+def recoil_pipeline_replot(run: Run,
+                           fit_config: FitConfig = FitConfig()) -> Run:
     """
-    Regenerate summary plots from cached S2 integration results.
+    Refit and regenerate plots from cached S2 integration results.
     
-    Useful when you want to adjust plotting parameters without
-    recomputing integrations.
+    Useful when you want to:
+    - Refit with different bin_cuts or other FitConfig parameters
+    - Regenerate plots after patching data units
+    - Adjust plotting parameters without recomputing integrations
     
     Prerequisites:
-    - Sets must have area_s2_mean in metadata (from previous integration)
+    - Sets must have s2_areas.npz files (from previous integration)
     
     Args:
-        run: Run with sets containing cached S2 results in metadata
+        run: Run with sets containing cached S2 area NPZ files
+        fit_config: Gaussian fitting parameters
         
     Returns:
-        Run (unchanged, just regenerates plots)
+        Run with updated fit results in metadata
     """
     
     print("\n" + "="*60)
-    print("REPLOT FROM CACHE")
+    print("REFIT & REPLOT FROM CACHE")
     print("="*60)
     
-    # Check that we have cached results
-    sets_with_results = [s for s in run.sets if 'area_s2_mean' in s.metadata]
+    # Check that we have cached NPZ files
+    sets_with_data = []
+    for s in run.sets:
+        data_file = s.source_dir.parent / "processed_data" / "all" / f"{s.source_dir.name}_s2_areas.npz"
+        if data_file.exists():
+            sets_with_data.append(s)
     
-    if len(sets_with_results) == 0:
-        print("  ⚠ No cached results found - run integration first")
+    if len(sets_with_data) == 0:
+        print("  ⚠ No cached s2_areas.npz files found - run integration first")
         return run
     
-    print(f"  Found {len(sets_with_results)} sets with cached results")
+    print(f"  Found {len(sets_with_data)} sets with cached S2 areas")
     
-    # Just regenerate the summary plot
-    run = summarize_s2_vs_field(run)
+    # Build refit pipeline
+    steps = [
+        # Refit S2 area distributions
+        partial(fit_s2_in_run, fit_config=fit_config),
+        
+        # Regenerate summary plot
+        summarize_s2_vs_field
+    ]
     
-    return run
+    return pipe_run(run, *steps)
