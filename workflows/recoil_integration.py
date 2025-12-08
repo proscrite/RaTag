@@ -482,6 +482,40 @@ def _collect_s2_data(run: Run) -> pd.DataFrame:
     return df.sort_values('drift_field') if len(df) > 0 else df
 
 
+def _collect_multiiso_s2_data(run: Run, isotopes: list[str]) -> pd.DataFrame:
+    """
+    Collect per-isotope S2 vs drift field data from set metadata.
+    
+    Args:
+        run: Run with sets containing area_s2_{isotope}_mean in metadata
+        isotopes: List of isotope names to extract
+        
+    Returns:
+        DataFrame with columns: set_name, drift_field, isotope, s2_mean, s2_ci95
+    """
+    data_rows = []
+    for s in run.sets:
+        drift_field = s.drift_field
+        if drift_field is None:
+            continue
+        
+        for isotope in isotopes:
+            mean_key = f'area_s2_{isotope}_mean'
+            ci95_key = f'area_s2_{isotope}_ci95'
+            
+            if mean_key in s.metadata and ci95_key in s.metadata:
+                data_rows.append({
+                    'set_name': s.source_dir.name,
+                    'drift_field': drift_field,
+                    'isotope': isotope,
+                    's2_mean': s.metadata[mean_key],
+                    's2_ci95': s.metadata[ci95_key]
+                })
+    
+    df = pd.DataFrame(data_rows)
+    return df.sort_values('drift_field') if len(df) > 0 else df
+
+
 # ============================================================================
 # RUN-LEVEL SUMMARY PLOTTING
 # ============================================================================
@@ -523,5 +557,44 @@ def summarize_s2_vs_field(run: Run,
     print(f"    • Sets with successful fits: {len(df)}")
     print(f"    • Drift field range: {df['drift_field'].min():.1f} - {df['drift_field'].max():.1f} V/cm")
     print(f"    • S2 mean range: {df['s2_mean'].min():.3f} - {df['s2_mean'].max():.3f} mV·µs")
+    
+    return run
+
+
+def summarize_multiiso_s2_vs_field(run: Run, 
+                                   isotopes: list[str],
+                                   suffix: str = "") -> Run:
+    """
+    Generate multi-isotope S2 area vs drift field summary plot.
+    
+    Args:
+        run: Run with per-isotope fit results in set metadata
+        isotopes: List of isotope names to plot (e.g., ['Ra224', 'Th228'])
+        suffix: Suffix for plot filename (e.g., '_all' or '_clear')
+        
+    Returns:
+        Updated Run (plots saved to disk)
+    """
+    # Setup directories
+    plots_dir = run.root_directory / "plots" / "multiiso"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Collect and plot isotopes
+    df = _collect_multiiso_s2_data(run, isotopes)
+    
+    if len(df) == 0:
+        print(f"  ⚠ No fit results found for isotopes: {', '.join(isotopes)}")
+        return run
+    
+    # Create plot
+    fig, _ = plot_s2_vs_drift(df, run.run_id, 
+                             title_suffix=f" ({', '.join(isotopes)})", 
+                             hue='isotope')
+    
+    # Save plot
+    plot_file = plots_dir / f"{run.run_id}_multiiso_s2_vs_drift{suffix}.png"
+    save_figure(fig, plot_file)
+    plt.close(fig)
+    print(f"  📊 Saved plot: {plot_file.name}")
     
     return run

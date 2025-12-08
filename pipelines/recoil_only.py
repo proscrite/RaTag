@@ -20,7 +20,8 @@ from RaTag.workflows.recoil_integration import (integrate_s2_in_run,
                                                 fit_s2_in_run,
                                                 summarize_s2_vs_field,
                                                 run_s2_area_multiiso,
-                                                fit_multiiso_s2_in_run)
+                                                fit_multiiso_s2_in_run,
+                                                summarize_multiiso_s2_vs_field)
 
 
 # ============================================================================
@@ -111,7 +112,8 @@ def recoil_pipeline_multiiso(run: Run,
     2. Fit aggregated S2 area distributions
     3. Map S2 areas to isotopes by energy
     4. Fit each isotope distribution separately
-    5. Summarize S2 vs drift field
+    5. Summarize S2 vs drift field (aggregated)
+    6. Summarize multi-isotope S2 vs drift field
     """
     print("\n" + "="*60)
     print(f"MULTI-ISOTOPE RECOIL PIPELINE: {run.run_id}")
@@ -137,8 +139,18 @@ def recoil_pipeline_multiiso(run: Run,
                 isotope_ranges=isotope_ranges,
                 fit_config=fit_config),
         
-        # Summary plot
-        summarize_s2_vs_field
+        # Summary plot (aggregated)
+        summarize_s2_vs_field,
+        
+        # Summary plot (all isotopes)
+        partial(summarize_multiiso_s2_vs_field,
+                isotopes=list(isotope_ranges.keys()),
+                suffix='_all'),
+        
+        # Summary plot (clear isotopes only)
+        partial(summarize_multiiso_s2_vs_field,
+                isotopes=['Ra224', 'Th228'],
+                suffix='_clear')
     ]
     
     return pipe_run(run, *steps)
@@ -259,8 +271,18 @@ def recoil_pipeline_multiiso_replot(run: Run,
                 isotope_ranges=isotope_ranges,
                 fit_config=fit_config),
         
-        # Regenerate summary plot
-        summarize_s2_vs_field
+        # Regenerate summary plot (aggregated)
+        summarize_s2_vs_field,
+        
+        # Regenerate summary plot (all isotopes)
+        partial(summarize_multiiso_s2_vs_field,
+                isotopes=list(isotope_ranges.keys()),
+                suffix='_all'),
+        
+        # Regenerate summary plot (clear isotopes only)
+        partial(summarize_multiiso_s2_vs_field,
+                isotopes=['Ra224', 'Th228'],
+                suffix='_clear')
     ]
     
     return pipe_run(run, *steps)

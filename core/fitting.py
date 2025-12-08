@@ -498,8 +498,8 @@ def detect_background_peak(data, bin_cuts=(0, 10), nbins=100, bg_threshold=0.3):
     total_counts = n.sum()
     bg_fraction = bg_counts / total_counts if total_counts > 0 else 0.0
     
-    # Decision criterion: if >10% of counts are in low region, use two-stage
-    has_background = bg_fraction > 0.1
+    # Decision criterion: if > 7% of counts are in low region, use two-stage
+    has_background = bg_fraction > 0.077
     
     return {
         'has_background': has_background,

@@ -524,7 +524,8 @@ def plot_s2_fit_result(result: dict, data: np.ndarray, set_name: str = '',
 def plot_s2_vs_drift(df: pd.DataFrame, 
                      run_id: str,
                      ylabel: str = "Mean S2 Area (mV·µs)",
-                     title_suffix: str = "") -> tuple:
+                     title_suffix: str = "",
+                     hue: str = None) -> tuple:
     """
     Plot S2 area vs drift field from DataFrame.
     
@@ -532,17 +533,35 @@ def plot_s2_vs_drift(df: pd.DataFrame,
     
     Args:
         df: DataFrame with columns: drift_field, s2_mean, s2_ci95
+            If hue is specified, also needs column matching hue name
         run_id: Run identifier for title
         ylabel: Y-axis label
         title_suffix: Optional suffix for title
+        hue: Optional column name for grouping (e.g., 'isotope')
     
     Returns:
         (fig, ax) tuple
     """
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    ax.errorbar(df['drift_field'], df['s2_mean'], yerr=df['s2_ci95'],
-                fmt='o', capsize=5, markersize=8, linewidth=2,color='blue')
+    if hue is None:
+        # Single series plot
+        ax.errorbar(df['drift_field'], df['s2_mean'], yerr=df['s2_ci95'],
+                    fmt='o', capsize=5, markersize=8, linewidth=2, color='blue')
+    else:
+        # Multi-series plot (one per hue value)
+        colors = {'Ra224': 'red', 'Rn220': 'blue', 'Po216': 'green', 
+                  'Po212': 'orange', 'Th228': 'purple'}
+        
+        for group_value in df[hue].unique():
+            df_group = df[df[hue] == group_value]
+            color = colors.get(group_value, None)
+            ax.errorbar(df_group['drift_field'], df_group['s2_mean'], 
+                       yerr=df_group['s2_ci95'],
+                       fmt='o', label=group_value, color=color,
+                       capsize=3, markersize=6, alpha=0.8)
+        
+        ax.legend(loc='best', fontsize=10)
     
     ax.set(xlabel="Drift field (V/cm)", ylabel=ylabel,
            title=f"Run {run_id} — Mean S2 Area vs Drift Field{title_suffix}")
@@ -629,6 +648,7 @@ def plot_s2_diffusion_analysis(drift_times: np.ndarray,
     
     # Fit and overlay
     if len(drift_times) > 2:
+
         fit = np.polyfit(drift_times, sigma_obs_squared, 1)
         x_fit = np.linspace(drift_times.min(), drift_times.max(), 100)
         axes[0].plot(x_fit, fit[0] * x_fit + fit[1], 'r--', lw=2,
@@ -655,6 +675,32 @@ def plot_s2_diffusion_analysis(drift_times: np.ndarray,
     
     plt.tight_layout()
     return fig, axes
+
+
+def plot_alpha_energy_spectrum(energies: np.ndarray, 
+                               title: str = 'Alpha Energy Spectrum',
+                               nbins: int = 120,
+                               energy_range: tuple = (4, 8)) -> tuple:
+    """
+    Plot alpha energy spectrum histogram.
+    
+    Args:
+        energies: Array of alpha energies [MeV]
+        title: Plot title
+        nbins: Number of histogram bins
+        energy_range: (min, max) energy range [MeV]
+        
+    Returns:
+        (fig, ax) tuple
+    """
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    ax.hist(energies, bins=nbins, range=energy_range, alpha=0.7, edgecolor='black')
+    ax.set(xlabel='Energy [MeV]', ylabel='Counts', title=title)
+    ax.grid(True, alpha=0.3)
+    
+    fig.tight_layout()
+    return fig, ax
 
 
 def plot_time_histograms(times: np.ndarray,
