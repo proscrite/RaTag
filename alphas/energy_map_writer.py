@@ -37,7 +37,7 @@ import numpy as np
 from glob import glob
 import importlib.util
 from RaTag.core.dataIO import load_alpha
-from RaTag.alphas.wfm2spectra import alpha_peak
+from RaTag.alphas.wfm2spectra import alpha_peak_vectorized
 
 # ---------------------------
 # User hook: read ch4 waveforms
@@ -247,7 +247,27 @@ def build_file_list(indir, pattern="*"):
     return files
 
 
-def writer_main(indir, outdir, files_per_chunk=100, fmt="8b", scale=0.1, pattern="*"):
+def writer_main(indir, outdir, files_per_chunk=100, fmt="8b", scale=0.1, pattern="*", savgol_window=501):
+    """
+    Main processing loop: scan FastFrames files, compute energies, write chunked maps.
+    
+    Parameters:
+    -----------
+    indir : str
+        Directory containing input waveform files
+    outdir : str
+        Directory to write output energy map chunks
+    files_per_chunk : int
+        Number of files to process per output chunk
+    fmt : str
+        Output format: '8b' or '6b'
+    scale : float
+        Scale factor for 6b format (keV per LSB)
+    pattern : str
+        Glob pattern for input files
+    savgol_window : int
+        Savitzky-Golay window size for alpha_peak_vectorized (default: 501)
+    """
     # create outdir
     os.makedirs(outdir, exist_ok=True)
 
@@ -265,13 +285,7 @@ def writer_main(indir, outdir, files_per_chunk=100, fmt="8b", scale=0.1, pattern
     # sort by file_seq
     parsed.sort(key=lambda x: x[0])
 
-    # Optionally try to load user function
-    # user_fn = try_import_user_energy_func()
-    user_fn = alpha_peak
-    if user_fn:
-        print("Using user-provided compute_energy_from_wfm()")
-    else:
-        print("Using fast internal estimator (fast_energy_estimator). To use your own, provide alpha_energy.compute_energy_from_wfm(wfm) on PYTHONPATH.")
+    print(f"Using vectorized alpha_peak_vectorized() with savgol_window={savgol_window}")
 
     # process in chunks of files_per_chunk
     i = 0
@@ -283,13 +297,12 @@ def writer_main(indir, outdir, files_per_chunk=100, fmt="8b", scale=0.1, pattern
         out_fname = f"energy_map_f{start_fs:06d}-f{end_fs:06d}.bin"
         out_path = os.path.join(outdir, out_fname)
         entries = []
+        
         # iterate files in chunk
         for file_seq, path in chunk_files:
             # read ch4 frames
             try:
-                # ch4_arr = read_fastframe_ch4(path)  # expected shape (n_frames, n_samples)
                 wf = load_alpha(path)
-                # print('DEBUG: ', wf.v)
                 ch4_arr = wf.v
             except Exception as e:
                 print(f"ERROR reading {path}: {e}", file=sys.stderr)
@@ -299,19 +312,19 @@ def writer_main(indir, outdir, files_per_chunk=100, fmt="8b", scale=0.1, pattern
             if ch4_arr.ndim == 1:
                 ch4_arr = ch4_arr[np.newaxis, :]
 
-            n_frames = ch4_arr.shape[0]
+            # Vectorized processing: compute all frame energies at once
+            try:
+                energies = alpha_peak_vectorized(ch4_arr, savgol_window=savgol_window)
+            except Exception as e:
+                print(f"ERROR processing {path} with vectorized function: {e}", file=sys.stderr)
+                raise
+            
+            # Build entries for this file's frames
+            n_frames = len(energies)
             for frame_idx in range(n_frames):
-                wfm = ch4_arr[frame_idx]
-                if user_fn:
-                    try:
-                        energy = float(user_fn(wfm))
-                    except Exception as e:
-                        print(f"User fn failed on {path} frame {frame_idx}: {e}", file=sys.stderr)
-                        energy = float(fast_energy_estimator(wfm))
-                else:
-                    energy = float(fast_energy_estimator(wfm))
                 uid = unique_id(file_seq, frame_idx)
-                entries.append((uid, energy))
+                entries.append((uid, float(energies[frame_idx])))
+        
         # write chunk file
         if fmt == "8b":
             write_chunk_8b(entries, out_path)
@@ -334,5 +347,7 @@ if __name__ == "__main__":
     p.add_argument("--format", choices=("8b","6b"), default="8b", help="Mapping format: '8b' or '6b'")
     p.add_argument("--scale", type=float, default=0.1, help="Scale for 6b mode (keV per LSB).")
     p.add_argument("--pattern", default="*", help="glob pattern to find FastFrame files in indir")
+    p.add_argument("--savgol-window", type=int, default=501, help="Savitzky-Golay window size (default: 501 samples)")
     args = p.parse_args()
-    writer_main(args.indir, args.outdir, files_per_chunk=args.files_per_chunk, fmt=args.format, scale=args.scale, pattern=args.pattern)
+    writer_main(args.indir, args.outdir, files_per_chunk=args.files_per_chunk, fmt=args.format, 
+                scale=args.scale, pattern=args.pattern, savgol_window=args.savgol_window)

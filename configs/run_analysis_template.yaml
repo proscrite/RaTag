@@ -39,6 +39,9 @@ multi_isotope:
     format: "8b"              # "8b" (float32, accurate) or "6b" (uint16, compact)
     scale: 0.1                # For "6b" format: keV per LSB
     pattern: "*Ch4.wfm"       # Glob pattern for alpha channel files
+    savgol_window: 501        # Savitzky-Golay window size (21-5001, must be odd, default: 501)
+    nbins: 120                # Number of bins for energy spectrum histograms
+    energy_range: [4, 8]      # MeV - Energy range for spectrum plots
 
 
 # Pipeline configuration

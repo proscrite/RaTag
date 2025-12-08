@@ -134,7 +134,10 @@ def main():
                                                 files_per_chunk=energy_cfg.get('files_per_chunk', 10),
                                                 fmt=energy_cfg.get('format', '8b'),
                                                 scale=energy_cfg.get('scale', 0.1),
-                                                pattern=energy_cfg.get('pattern', '*Ch4.wfm'))
+                                                pattern=energy_cfg.get('pattern', '*Ch4.wfm'),
+                                                nbins=energy_cfg.get('nbins', 120),
+                                                energy_range=tuple(energy_cfg.get('energy_range', [4, 8])),
+                                                savgol_window=energy_cfg.get('savgol_window', 501))
             
             if args.alphas_only:
                 print(f"\n{'='*60}")

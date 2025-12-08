@@ -12,10 +12,15 @@ Structure mirrors timing_estimation.py and recoil_integration.py:
 from pathlib import Path
 from typing import Optional
 from dataclasses import replace
+import numpy as np
+import matplotlib.pyplot as plt
 
 from RaTag.core.datatypes import SetPmt, Run
 from RaTag.core.functional import apply_workflow_to_run
+from RaTag.core.dataIO import save_figure
 from RaTag.alphas.energy_map_writer import writer_main
+from RaTag.alphas.energy_map_reader import load_energy_index
+from RaTag.plotting import plot_alpha_energy_spectrum
 
 
 # ============================================================================
@@ -26,7 +31,8 @@ def generate_energy_maps_for_set(set_pmt: SetPmt,
                                  files_per_chunk: int = 10,
                                  fmt: str = "8b",
                                  scale: float = 0.1,
-                                 pattern: str = "*Ch4.wfm") -> SetPmt:
+                                 pattern: str = "*Ch4.wfm",
+                                 savgol_window: int = 501) -> SetPmt:
     """
     Generate energy map files for a single set.
     
@@ -40,6 +46,7 @@ def generate_energy_maps_for_set(set_pmt: SetPmt,
         fmt: Binary format - "8b" (uint32+float32) or "6b" (uint32+uint16 scaled)
         scale: For "6b" format, keV per LSB (default: 0.1)
         pattern: Glob pattern for alpha channel files (default: "*Ch4.wfm")
+        savgol_window: Savitzky-Golay window size (default: 501 samples ≈ 100 ns)
         
     Returns:
         Unchanged SetPmt (operation has file I/O side effects)
@@ -48,7 +55,7 @@ def generate_energy_maps_for_set(set_pmt: SetPmt,
         Creates energy_maps/SETNAME/energy_map_f{start:06d}-f{end:06d}.bin files
         
     Example:
-        >>> set_pmt = generate_energy_maps_for_set(set_pmt, files_per_chunk=10)
+        >>> set_pmt = generate_energy_maps_for_set(set_pmt, files_per_chunk=10, savgol_window=501)
         # Creates: energy_maps/FieldScan_Gate0050_Anode1950/energy_map_*.bin
     """
     # Setup output directory structure
@@ -61,7 +68,8 @@ def generate_energy_maps_for_set(set_pmt: SetPmt,
                 files_per_chunk=files_per_chunk,
                 fmt=fmt,
                 scale=scale,
-                pattern=pattern)
+                pattern=pattern,
+                savgol_window=savgol_window)
     
     print(f"  ✓ Generated energy maps")
     
@@ -76,7 +84,8 @@ def create_energy_maps_in_run(run: Run,
                               files_per_chunk: int = 10,
                               fmt: str = "8b",
                               scale: float = 0.1,
-                              pattern: str = "*Ch4.wfm") -> Run:
+                              pattern: str = "*Ch4.wfm",
+                              savgol_window: int = 501) -> Run:
     """
     Generate energy mapping files for all sets in a run (with caching).
     
@@ -102,12 +111,13 @@ def create_energy_maps_in_run(run: Run,
         fmt: Binary format - "8b" (accurate) or "6b" (compact)
         scale: For "6b" format only: keV per LSB (default: 0.1)
         pattern: Glob pattern for alpha channel files (default: "*Ch4.wfm")
+        savgol_window: Savitzky-Golay window size (default: 501 samples ≈ 100 ns)
         
     Returns:
         Unchanged Run (operation has file I/O side effects)
         
     Example:
-        >>> run = create_energy_maps_in_run(run, files_per_chunk=10)
+        >>> run = create_energy_maps_in_run(run, files_per_chunk=10, savgol_window=501)
     """
     # Custom cache check: look for energy_map_*.bin files
     def _check_energy_maps_exist(set_pmt: SetPmt) -> bool:
@@ -142,7 +152,8 @@ def create_energy_maps_in_run(run: Run,
                                                        files_per_chunk=files_per_chunk,
                                                        fmt=fmt,
                                                        scale=scale,
-                                                       pattern=pattern)
+                                                       pattern=pattern,
+                                                       savgol_window=savgol_window)
             updated_sets.append(updated_set)
         except Exception as e:
             print(f"  ⚠ Failed: {e}")
@@ -152,3 +163,79 @@ def create_energy_maps_in_run(run: Run,
     
     print("\n✓ Energy mapping complete")
     return replace(run, sets=updated_sets)
+
+
+# ============================================================================
+# ENERGY SPECTRUM PLOTTING
+# ============================================================================
+
+def _save_plot(fig, set_pmt: SetPmt, filename: str) -> None:
+    """
+    Helper to save plot to standard location.
+    
+    Args:
+        fig: Matplotlib figure to save
+        set_pmt: Set object (used to determine save path)
+        filename: Name of the output file
+    """
+    plots_dir = set_pmt.source_dir.parent / "plots" / "alpha_spectra"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    save_figure(fig, plots_dir / filename)
+    plt.close(fig)
+
+
+def plot_energy_spectra_in_run(run: Run,
+                               nbins: int = 120,
+                               energy_range: tuple = (4, 8)) -> Run:
+    """
+    Generate energy spectrum plots for all sets + aggregated plot.
+    
+    Args:
+        run: Run with energy maps created
+        nbins: Number of histogram bins
+        energy_range: (min, max) energy range [MeV]
+        
+    Returns:
+        Unchanged Run (plots saved to disk)
+    """
+    print("\n" + "="*60)
+    print("ALPHA ENERGY SPECTRA")
+    print("="*60)
+    
+    all_energies = []
+    
+    for i, set_pmt in enumerate(run.sets, 1):
+        print(f"\nSet {i}/{len(run.sets)}: {set_pmt.source_dir.name}")
+        
+        energy_maps_dir = set_pmt.source_dir.parent / "energy_maps" / set_pmt.source_dir.name
+        
+        if not energy_maps_dir.exists():
+            print(f"  ⚠ No energy maps found - skipping")
+            continue
+        
+        # Load energies once
+        _, energies = load_energy_index(str(energy_maps_dir), fmt='8b')
+        
+        # Create and save individual set plot
+        fig, _ = plot_alpha_energy_spectrum(energies, 
+                                            title=f'{set_pmt.source_dir.name} - Alpha Energy Spectrum',
+                                            nbins=nbins, 
+                                            energy_range=energy_range)
+        _save_plot(fig, set_pmt, f"{set_pmt.source_dir.name}_alpha_spectrum.png")
+        print(f"  📊 Saved spectrum plot")
+        
+        # Collect for aggregated plot
+        all_energies.append(energies)
+    
+    # Aggregated plot
+    if all_energies:
+        all_energies_concat = np.concatenate(all_energies)
+        fig, _ = plot_alpha_energy_spectrum(all_energies_concat,
+                                            title=f'{run.run_id} - Aggregated Alpha Energy Spectrum',
+                                            nbins=nbins,
+                                            energy_range=energy_range)
+        
+        _save_plot(fig, set_pmt, f"{run.run_id}_alpha_spectrum_aggregated.png")
+        print(f"\n  📊 Saved aggregated spectrum plot")
+    
+    return run

@@ -1,7 +1,7 @@
 from glob import glob
 import numpy as np
 import sys
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, savgol_filter
 from scipy.ndimage import median_filter
 import matplotlib.pyplot as plt
 
@@ -54,103 +54,156 @@ def get_baseline(V, npoints: int = 200) -> float:
     """Estimate the baseline of the waveform."""
     return np.median(V[:npoints])
 
-def find_peak_interpolated(V):
-    """Find peak using parabolic interpolation"""
-    max_idx = V.argmax()
-    if max_idx == 0 or max_idx == len(V)-1:
-        return V[max_idx]
-    
-    # Use 3 points around maximum for parabolic fit
-    y0, y1, y2 = V[max_idx-1], V[max_idx], V[max_idx+1]
-    
-    # Parabolic interpolation
-    denom = 2*(2*y1 - y0 - y2)
-    if abs(denom) < 1e-10:
-        return y1
-    
-    offset = (y0 - y2) / denom
-    peak = y1 - 0.25 * (y0 - y2) * offset
-    
-    return peak
 
-
-def alpha_peak(V, threshold_bs=0.3, dither_amplitude=0.02):
+def alpha_peak(V, threshold_bs=0.3, dither_amplitude=0.02, savgol_window=501, savgol_order=3):
     """
-    Peak detection with dithering to break ADC quantization.
+    Optimized alpha peak energy extraction using Savitzky-Golay filter.
+    
+    This method produces smooth energy spectra without artificial clustering
+    by applying polynomial smoothing to break ADC quantization artifacts.
     
     Parameters:
     -----------
     V : numpy.ndarray
-        Raw voltage waveform
+        Raw voltage waveform (typically 35,000 samples at 5 GS/s)
     threshold_bs : float
-        Voltage threshold for baseline estimation
-    smooth_window : int
-        Median filter window size
+        Voltage threshold for baseline point selection (default: 0.3V)
     dither_amplitude : float
-        Amplitude of uniform dither noise (default: 0.02V, ~1/4 ADC step)
-    
+        Uniform dither amplitude in volts (default: 0.02V)
+    savgol_window : int
+        Savitzky-Golay filter window size (default: 501 samples ≈ 100 ns)
+        Must be odd. Larger = more smoothing, closer to MCA analog shaping
+    savgol_order : int
+        Polynomial order for Savitzky-Golay (default: 3)
+        
     Returns:
     --------
     float
-        Peak energy in MeV
+        Peak energy in MeV (calibrated with factor 1.058)
+        
+    Notes:
+    ------
+    - Uses threshold-based baseline for robustness
+    - Applies dithering to break ADC quantization
+    - Savitzky-Golay filter approximates analog Gaussian shaping (2-6 μs)
+    - No iterative fitting = robust and fast
+    - Window size 501 ≈ 100 ns approaches lower end of MCA shaping times
     """
-    # Threshold-based baseline
+    # 1. Threshold-based baseline
     Vbs = V[V < threshold_bs]
-    if len(Vbs) < 10:
-        baseline = np.median(V[:200])
-    else:
+    if len(Vbs) >= 10:
         baseline = np.mean(Vbs)
+    else:
+        baseline = np.median(V[:200])
     
-    # Baseline-corrected waveform
     V_corrected = V - baseline
-
     
-    # **KEY**: Add uniform dither noise BEFORE filtering
-    # This breaks the quantization and allows interpolation to work
+    # 2. Add dither to break ADC quantization
     if dither_amplitude > 0:
         dither = np.random.uniform(-dither_amplitude, dither_amplitude, size=V_corrected.shape)
         V_dithered = V_corrected + dither
     else:
         V_dithered = V_corrected
-    # Parabolic interpolation on filtered peak
-    peak_value = find_peak_interpolated(V_dithered)
     
-    # Convert to MeV
+    # 3. Apply Savitzky-Golay filter (polynomial smoothing)
+    V_smooth = savgol_filter(V_dithered, savgol_window, savgol_order)
+    
+    # 4. Simple maximum on smoothed waveform
+    peak_value = V_smooth.max()
+    
+    # 5. Apply calibration factor
     energy = peak_value / 1.058
     
     return energy
 
-def alpha_peak_vectorized(V_batch, threshold_bs=0.3, smooth_window=21, dither_amplitude=0.02):
+def alpha_peak_vectorized(V_batch, threshold_bs=0.3, dither_amplitude=0.02, savgol_window=501, savgol_order=3):
     """
-    Vectorized peak detection for multiple waveforms.
+    Truly vectorized peak detection for multiple waveforms using Savitzky-Golay filter.
+    
+    This function processes a batch of waveforms efficiently by vectorizing baseline
+    correction, dithering, and applying Savitzky-Golay filter along the time axis.
     
     Parameters:
     -----------
     V_batch : numpy.ndarray
         2D array of waveforms (n_waveforms, n_samples)
+    threshold_bs : float
+        Voltage threshold for baseline point selection (default: 0.3V)
+    dither_amplitude : float
+        Uniform dither amplitude in volts (default: 0.02V)
+    savgol_window : int
+        Savitzky-Golay filter window size (default: 501)
+    savgol_order : int
+        Polynomial order for Savitzky-Golay (default: 3)
     
     Returns:
     --------
     numpy.ndarray
-        Array of energies for each waveform
+        Array of energies (in MeV) for each waveform
+        
+    Notes:
+    ------
+    - Uses vectorized operations for significant speedup on large batches
+    - savgol_filter is applied along axis=1 (time axis) for each waveform
+    - Baseline is computed per-waveform but vectorized across batch
     """
-    n_wfms = V_batch.shape[0]
-    energies = np.zeros(n_wfms, dtype=np.float32)
+    n_wfms, n_samples = V_batch.shape
     
+    # 1. Vectorized baseline correction
+    baselines = np.zeros(n_wfms, dtype=np.float32)
     for i in range(n_wfms):
-        energies[i] = alpha_peak(V_batch[i, :], threshold_bs, smooth_window, dither_amplitude)
+        Vbs = V_batch[i, V_batch[i] < threshold_bs]
+        if len(Vbs) >= 10:
+            baselines[i] = np.mean(Vbs)
+        else:
+            baselines[i] = np.median(V_batch[i, :200])
+    
+    # Subtract baseline (broadcasting)
+    V_corrected = V_batch - baselines[:, np.newaxis]
+    
+    # 2. Vectorized dithering
+    if dither_amplitude > 0:
+        dither = np.random.uniform(-dither_amplitude, dither_amplitude, size=V_batch.shape)
+        V_dithered = V_corrected + dither
+    else:
+        V_dithered = V_corrected
+    
+    # 3. Apply Savitzky-Golay filter along time axis (axis=1)
+    # This is the key vectorization - scipy applies filter to each row
+    V_smooth = savgol_filter(V_dithered, savgol_window, savgol_order, axis=1)
+    
+    # 4. Find maximum for each waveform (vectorized)
+    peak_values = V_smooth.max(axis=1)
+    
+    # 5. Apply calibration factor
+    energies = peak_values / 1.058
     
     return energies
 
-def analyze_file_source(file):
+def analyze_file_source(file, savgol_window=501):
+    """
+    Analyze a single waveform file and extract peak energies.
+    
+    Parameters:
+    -----------
+    file : str
+        Path to waveform file
+    savgol_window : int
+        Savitzky-Golay window size (default: 501)
+    
+    Returns:
+    --------
+    numpy.ndarray
+        Array of peak energies from all frames in the file
+    """
     wf = wfm2read(file)
     V, t = wf[0], wf[1]
     peaks = []
     if len(V.shape) > 1:
         for v in V:
-            peaks.append(alpha_peak(v))
+            peaks.append(alpha_peak(v, savgol_window=savgol_window))
     else:   
-        peaks.append(alpha_peak(V))
+        peaks.append(alpha_peak(V, savgol_window=savgol_window))
     peaks = np.array(peaks)
     return peaks
 
