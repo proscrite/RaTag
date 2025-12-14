@@ -28,12 +28,12 @@ from pathlib import Path
 from datetime import datetime
 
 from RaTag.core.datatypes import Run
-from RaTag.core.config import IntegrationConfig, FitConfig, XRayConfig
+from RaTag.core.config import IntegrationConfig, FitConfig, XRayConfig, AlphaCalibrationConfig
 from RaTag.workflows.run_construction import initialize_run
 from RaTag.pipelines.run_preparation import prepare_run, prepare_run_multiiso
 from RaTag.pipelines.recoil_only import recoil_pipeline, recoil_pipeline_multiiso
 from RaTag.pipelines.xray_only import xray_pipeline, xray_pipeline_multiiso
-from RaTag.pipelines.isotope_preparation import prepare_isotope_separation
+from RaTag.pipelines.alpha_calibration import alpha_calibration
 
 
 def load_config(config_path: Path) -> dict:
@@ -127,21 +127,28 @@ def main():
             stages['alphas'] = True
         
         if stages['alphas']:
-            # Generate energy maps if configured
+            # Generate energy maps and calibration if configured
             energy_cfg = config['multi_isotope'].get('energy_mapping', {})
             if energy_cfg.get('generate', True):
-                run = prepare_isotope_separation(run,
-                                                files_per_chunk=energy_cfg.get('files_per_chunk', 10),
-                                                fmt=energy_cfg.get('format', '8b'),
-                                                scale=energy_cfg.get('scale', 0.1),
-                                                pattern=energy_cfg.get('pattern', '*Ch4.wfm'),
-                                                nbins=energy_cfg.get('nbins', 120),
-                                                energy_range=tuple(energy_cfg.get('energy_range', [4, 8])),
-                                                savgol_window=energy_cfg.get('savgol_window', 501))
+                # Create calibration config from YAML
+                calib_config = AlphaCalibrationConfig(
+                    files_per_chunk=energy_cfg.get('files_per_chunk', 10),
+                    fmt=energy_cfg.get('format', '8b'),
+                    scale=energy_cfg.get('scale', 0.1),
+                    pattern=energy_cfg.get('pattern', '*Ch4.wfm'),
+                    nbins=energy_cfg.get('nbins', 120),
+                    n_sigma=energy_cfg.get('n_sigma', 1.0),
+                    use_quadratic=energy_cfg.get('use_quadratic', True)
+                )
+                
+                run = alpha_calibration(run,
+                                       savgol_window=energy_cfg.get('savgol_window', 501),
+                                       energy_range=tuple(energy_cfg.get('energy_range', [4, 8.2])),
+                                       calibration_config=calib_config)
             
             if args.alphas_only:
                 print(f"\n{'='*60}")
-                print("STOPPING AFTER ALPHA ENERGY MAPPING (--alphas-only flag)")
+                print("STOPPING AFTER ALPHA CALIBRATION (--alphas-only flag)")
                 print(f"{'='*60}")
                 return
     
@@ -168,18 +175,18 @@ def main():
             run = prepare_run_multiiso(run,
                                        isotope_ranges=isotope_ranges,
                                        max_files=None,
-                                       max_frames_s1=prep_cfg['max_frames_s1'],
-                                       max_frames_s2=prep_cfg['max_frames_s2'],
-                                       threshold_s1=prep_cfg['threshold_s1'],
-                                       threshold_s2=prep_cfg['threshold_s2'],
+                                       max_frames_s1=int(prep_cfg['max_frames_s1']),
+                                       max_frames_s2=int(prep_cfg['max_frames_s2']),
+                                       threshold_s1=float(prep_cfg['threshold_s1']),
+                                       threshold_s2=float(prep_cfg['threshold_s2']),
                                        s2_duration_cuts=tuple(prep_cfg['s2_duration_cuts']))
         else:
             run = prepare_run(run,
                             max_files=None,
-                            max_frames_s1=prep_cfg['max_frames_s1'],
-                            max_frames_s2=prep_cfg['max_frames_s2'],
-                            threshold_s1=prep_cfg['threshold_s1'],
-                            threshold_s2=prep_cfg['threshold_s2'],
+                            max_frames_s1=int(prep_cfg['max_frames_s1']),
+                            max_frames_s2=int(prep_cfg['max_frames_s2']),
+                            threshold_s1=float(prep_cfg['threshold_s1']),
+                            threshold_s2=float(prep_cfg['threshold_s2']),
                             s2_duration_cuts=tuple(prep_cfg['s2_duration_cuts']))
         
         print("\n✓ Preparation complete")
@@ -202,19 +209,19 @@ def main():
         
         # Create config objects
         integration_config = IntegrationConfig(
-            n_pedestal=int_cfg['integration_config']['n_pedestal'],
-            ma_window=int_cfg['integration_config']['ma_window'],
-            bs_threshold=int_cfg['integration_config']['bs_threshold'],
-            dt=int_cfg['integration_config']['dt']
+            n_pedestal=int(int_cfg['integration_config']['n_pedestal']),
+            ma_window=int(int_cfg['integration_config']['ma_window']),
+            bs_threshold=float(int_cfg['integration_config']['bs_threshold']),
+            dt=float(int_cfg['integration_config']['dt'])
         )
         
         fit_config = FitConfig(
             bin_cuts=tuple(int_cfg['fit_config']['bin_cuts']),
-            nbins=int_cfg['fit_config']['nbins'],
-            bg_threshold=int_cfg['fit_config'].get('bg_threshold', 0.3),
-            bg_cutoff=int_cfg['fit_config'].get('bg_cutoff', 1.0),
-            n_sigma=int_cfg['fit_config'].get('n_sigma', 2.5),
-            upper_limit=int_cfg['fit_config'].get('upper_limit', 5.0)
+            nbins=int(int_cfg['fit_config']['nbins']),
+            bg_threshold=float(int_cfg['fit_config'].get('bg_threshold', 0.3)),
+            bg_cutoff=float(int_cfg['fit_config'].get('bg_cutoff', 1.0)),
+            n_sigma=float(int_cfg['fit_config'].get('n_sigma', 2.5)),
+            upper_limit=float(int_cfg['fit_config'].get('upper_limit', 5.0))
         )
 
         
@@ -251,13 +258,15 @@ def main():
         
         # Create XRayConfig
         xray_config = XRayConfig(
-            bs_threshold=xray_cfg.get('bs_threshold', 0.5),
-            max_area_s2=xray_cfg.get('max_area_s2', 1e5),
-            min_s2_sep=xray_cfg.get('min_s2_sep', 1.0),
-            min_s1_sep=xray_cfg.get('min_s1_sep', 0.5),
-            n_pedestal=xray_cfg.get('n_pedestal', 200),
-            ma_window=xray_cfg.get('ma_window', 10),
-            dt=xray_cfg.get('dt', 2e-4)
+            bs_threshold=float(xray_cfg.get('bs_threshold', 0.5)),
+            max_area_s1=float(xray_cfg.get('max_area_s1', 1e5)),
+            max_area_s2=float(xray_cfg.get('max_area_s2', 1e5)),
+            min_xray_area=float(xray_cfg.get('min_xray_area', 0.0)),
+            min_s2_sep=float(xray_cfg.get('min_s2_sep', 1.0)),
+            min_s1_sep=float(xray_cfg.get('min_s1_sep', 0.5)),
+            n_pedestal=int(xray_cfg.get('n_pedestal', 200)),
+            ma_window=int(xray_cfg.get('ma_window', 10)),
+            dt=float(xray_cfg.get('dt', 2e-4))
         )
         
         if is_multiiso:

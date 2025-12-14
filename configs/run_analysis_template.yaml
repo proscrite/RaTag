@@ -32,7 +32,7 @@ multi_isotope:
     Rn220: [5.2, 5.5]       # keV
     Po216: [5.5, 6.0]       # keV
     Po212: [6.0, 10.0]     # keV  
-  # Energy mapping configuration
+  # Energy mapping and calibration configuration
   energy_mapping:
     generate: true            # Set to false to skip regeneration if maps exist
     files_per_chunk: 10       # Files per binary chunk (10-100 typical)
@@ -41,7 +41,9 @@ multi_isotope:
     pattern: "*Ch4.wfm"       # Glob pattern for alpha channel files
     savgol_window: 501        # Savitzky-Golay window size (21-5001, must be odd, default: 501)
     nbins: 120                # Number of bins for energy spectrum histograms
-    energy_range: [4, 8]      # MeV - Energy range for spectrum plots
+    energy_range: [4, 8.2]    # MeV - Energy range for spectrum fitting [SCA scale]
+    n_sigma: 1.0              # Number of sigmas for isotope range definition
+    use_quadratic: true       # Use quadratic (vs linear) energy calibration
 
 
 # Pipeline configuration
@@ -75,7 +77,9 @@ pipeline:
   xray_classification:
     max_frames: null          # null = all frames, or specify number
     bs_threshold: 0.5         # mV - Baseline threshold for signal detection
-    max_area_s2: 1.0e5        # mV·µs - Max allowed area in S2 window
+    max_area_s1: 1.0e5        # mV·µs - Max allowed area before S1 (reject large pre-S1 signals)
+    max_area_s2: 1.0e5        # mV·µs - Max allowed area in S2 window (reject noise/pile-up)
+    min_xray_area: 0.0        # mV·µs - Min required X-ray area (reject low-quality events)
     min_s2_sep: 1.0           # µs - Min required separation before S2 window
     min_s1_sep: 0.5           # µs - Min required separation after S1
     n_pedestal: 200           # Samples for pedestal calculation
