@@ -100,6 +100,6 @@ class AlphaCalibrationConfig:
     scale: float = 0.1                 # For "6b" format: keV per LSB
     pattern: str = "*Ch4.wfm"          # Glob pattern for alpha channel files
     nbins: int = 120                   # Number of histogram bins for energy spectra
-    n_sigma: float = 1.0               # Number of sigmas for isotope range definition
+    n_sigma: float = 2.0               # Number of sigmas for isotope range definition
     use_quadratic: bool = True         # Use quadratic (vs linear) energy calibration
 

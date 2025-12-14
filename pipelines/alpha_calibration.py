@@ -36,15 +36,16 @@ from RaTag.workflows.spectrum_calibration import (
 def alpha_calibration(run: Run,
                      savgol_window: int = 501,
                      energy_range: tuple = (4, 8.2),
-                     calibration_config: AlphaCalibrationConfig = AlphaCalibrationConfig()) -> Run:
+                     calibration_config: AlphaCalibrationConfig = AlphaCalibrationConfig(),
+                     force_refit: bool = False) -> Run:
     """
     Complete alpha spectrum calibration pipeline.
     
     This pipeline executes all steps for alpha energy calibration:
-    1. Create energy maps (UID → energy binary files)
+    1. Create energy maps (UID → energy binary files) - **CACHED: only if .bin files missing**
     2. Plot alpha energy spectra (QC)
     3. Fit preliminary peaks and derive calibration
-    4. Derive isotope energy ranges
+    4. Derive isotope energy ranges (including overlap resolution)
     5. Generate calibration validation plot
     6. Fit hierarchical model (9 peaks with satellites)
     
@@ -58,6 +59,9 @@ def alpha_calibration(run: Run,
                        Must be odd. Larger = more smoothing (21-5001 range)
         energy_range: (min, max) energy range for fitting [mV in SCA scale]
         calibration_config: AlphaCalibrationConfig with low-level parameters
+        force_refit: If True, recompute fitting/calibration/ranges/plots (default: False)
+                     **IMPORTANT**: Energy maps (.bin files) are NEVER recomputed by this flag.
+                     To regenerate energy maps, delete the .bin files manually.
         
     Returns:
         Run with .alpha_calibration and .isotope_ranges attributes
@@ -66,16 +70,25 @@ def alpha_calibration(run: Run,
         >>> from RaTag.pipelines import alpha_calibration
         >>> from RaTag.core.config import AlphaCalibrationConfig
         >>> run = initialize_run(my_run)
-        >>> config = AlphaCalibrationConfig(n_sigma=1.5, use_quadratic=True)
+        >>> config = AlphaCalibrationConfig(n_sigma=2.0, use_quadratic=True)
+        >>> # First run: generates everything
         >>> run = alpha_calibration(run, savgol_window=501, config=config)
+        >>> # Update n_sigma and refit (skips energy maps, recomputes calibration)
+        >>> config = AlphaCalibrationConfig(n_sigma=1.5, use_quadratic=True)
+        >>> run = alpha_calibration(run, config=config, force_refit=True)
     """
     print("\n" + "="*70)
     print(f"ALPHA SPECTRUM CALIBRATION PIPELINE: {run.run_id}")
     print("="*70)
+    if force_refit:
+        print("⚙️  FORCE REFIT MODE: Recomputing calibration/ranges/plots")
+        print("   (Energy maps cached - delete .bin files to regenerate)")
+        print("="*70)
     
     # Pipeline stages
     steps = [
-        # Stage 1: Create energy maps (prerequisite)
+        # Stage 1: Create energy maps (ALWAYS CACHED - checks for .bin files)
+        # To regenerate, delete energy_maps/**/*.bin files
         partial(create_energy_maps_in_run,
                 files_per_chunk=calibration_config.files_per_chunk,
                 fmt=calibration_config.fmt,
@@ -92,22 +105,22 @@ def alpha_calibration(run: Run,
         partial(fit_and_calibrate_spectrum,
                 energy_range=energy_range,
                 aggregate=True,
-                force_recompute=False),
+                force_refit=force_refit),
         
-        # Stage 4: Derive isotope ranges
+        # Stage 4: Derive isotope ranges (includes overlap resolution)
         partial(derive_isotope_ranges_from_calibration,
                 n_sigma=calibration_config.n_sigma,
                 use_quadratic=calibration_config.use_quadratic,
-                force_recompute=False),
+                force_refit=force_refit),
         
-        # Stage 5: Validation plot
+        # Stage 5: Validation plot (includes overlap resolution diagnostic)
         partial(plot_calibration_validation,
                 use_quadratic=calibration_config.use_quadratic,
-                force_replot=False),
+                force_replot=force_refit),
         
         # Stage 6: Hierarchical fit
         partial(fit_hierarchical_alpha_spectrum,
-                force_recompute=False),
+                force_refit=force_refit),
     ]
     
     result = pipe_run(run, *steps)
@@ -156,7 +169,7 @@ def alpha_calibration_replot(run: Run,
         partial(derive_isotope_ranges_from_calibration,
                 n_sigma=calibration_config.n_sigma,
                 use_quadratic=calibration_config.use_quadratic,
-                force_recompute=True),
+                force_refit=True),
         
         # Regenerate validation plot
         partial(plot_calibration_validation,
@@ -165,7 +178,7 @@ def alpha_calibration_replot(run: Run,
         
         # Regenerate hierarchical fit plot
         partial(fit_hierarchical_alpha_spectrum,
-                force_recompute=True),
+                force_refit=True),
     ]
     
     return pipe_run(run, *steps)
@@ -198,12 +211,12 @@ def alpha_calibration_quick(run: Run,
         partial(fit_and_calibrate_spectrum,
                 energy_range=energy_range,
                 aggregate=True,
-                force_recompute=False),
+                force_refit=False),
         
         partial(derive_isotope_ranges_from_calibration,
                 n_sigma=calibration_config.n_sigma,
                 use_quadratic=calibration_config.use_quadratic,
-                force_recompute=False),
+                force_refit=False),
         
         partial(plot_calibration_validation,
                 use_quadratic=calibration_config.use_quadratic,

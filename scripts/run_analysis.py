@@ -6,8 +6,20 @@ This script loads a YAML configuration file and runs the complete analysis
 pipeline including preparation (S1/S2 timing) and integration (S2 areas).
 
 Usage:
-    # Full pipeline
+    # RECOMMENDED WORKFLOW (multi-isotope runs):
+    # 1. Generate calibration with overlap-resolved ranges
+    python scripts/run_analysis.py path/to/config.yaml --alphas-only
+    # 2. Review plots, then run full pipeline (uses computed ranges)
     python scripts/run_analysis.py path/to/config.yaml
+    
+    # Full pipeline (single-isotope or using YAML ranges)
+    python scripts/run_analysis.py path/to/config.yaml
+    
+    # Refit calibration without regenerating energy maps (.bin files)
+    python scripts/run_analysis.py path/to/config.yaml --alphas-only --force-refit
+    
+    # Override: use YAML ranges instead of computed ranges
+    python scripts/run_analysis.py path/to/config.yaml --use-yaml-ranges
     
     # Only preparation stage
     python scripts/run_analysis.py path/to/config.yaml --prepare-only
@@ -19,7 +31,15 @@ Usage:
     python scripts/run_analysis.py path/to/config.yaml --xray-only
 
 Example:
-    python scripts/run_analysis.py ../configs/run8_analysis.yaml
+    # Two-phase workflow (recommended for multi-isotope)
+    python scripts/run_analysis.py ../configs/run18_analysis.yaml --alphas-only
+    python scripts/run_analysis.py ../configs/run18_analysis.yaml
+    
+    # Update n_sigma and refit without regenerating energy maps
+    python scripts/run_analysis.py ../configs/run18_analysis.yaml --alphas-only --force-refit
+    
+    # Edge case: fallback to YAML ranges if computed ranges fail
+    python scripts/run_analysis.py ../configs/run18_analysis.yaml --use-yaml-ranges
 """
 
 import argparse
@@ -30,6 +50,7 @@ from datetime import datetime
 from RaTag.core.datatypes import Run
 from RaTag.core.config import IntegrationConfig, FitConfig, XRayConfig, AlphaCalibrationConfig
 from RaTag.workflows.run_construction import initialize_run
+from RaTag.workflows.spectrum_calibration import load_computed_ranges
 from RaTag.pipelines.run_preparation import prepare_run, prepare_run_multiiso
 from RaTag.pipelines.recoil_only import recoil_pipeline, recoil_pipeline_multiiso
 from RaTag.pipelines.xray_only import xray_pipeline, xray_pipeline_multiiso
@@ -63,6 +84,90 @@ def create_run_from_config(config: dict) -> Run:
     )
 
 
+def determine_isotope_ranges(run: Run, config: dict, use_yaml_override: bool) -> tuple[dict, bool]:
+    """
+    Determine which isotope ranges to use: computed or YAML.
+    
+    Parameters
+    ----------
+    run : Run
+        Run object with run_id and root_directory
+    config : dict
+        Configuration dictionary with YAML ranges
+    use_yaml_override : bool
+        If True, force use of YAML ranges
+        
+    Returns
+    -------
+    isotope_ranges : dict
+        Isotope ranges as {isotope: (E_min, E_max)}
+    using_computed : bool
+        True if using computed ranges, False if using YAML
+    """
+    # Check if computed ranges exist
+    computed_ranges_available = False
+    try:
+        ranges_file = run.root_directory / 'processed_data' / 'spectrum_calibration' / f'{run.run_id}_isotope_ranges.npz'
+        computed_ranges_available = ranges_file.exists()
+    except Exception:
+        pass
+    
+    if computed_ranges_available and not use_yaml_override:
+        # Use computed ranges
+        isotope_ranges = load_computed_ranges(run.run_id, run.root_directory)
+        return isotope_ranges, True
+    else:
+        # Use YAML ranges
+        isotope_ranges = {
+            isotope: tuple(range_vals) 
+            for isotope, range_vals in config['multi_isotope']['isotope_ranges'].items()
+        }
+        return isotope_ranges, False
+
+
+def print_ranges_status(isotope_ranges: dict, using_computed: bool, use_yaml_override: bool, run_id: str):
+    """Print status message about which ranges are being used."""
+    if using_computed:
+        print(f"\n{'='*70}")
+        print("✓ Using COMPUTED overlap-resolved ranges (recommended)")
+        print(f"  Source: {run_id}_isotope_ranges.npz")
+        print(f"  Ranges: {isotope_ranges}")
+        print(f"{'='*70}")
+    elif use_yaml_override:
+        print(f"\n{'='*70}")
+        print("⚠️  Using YAML ranges (user override via --use-yaml-ranges)")
+        print(f"  Ranges: {isotope_ranges}")
+        print(f"{'='*70}")
+    else:
+        print(f"\n{'='*70}")
+        print("ℹ️  Using YAML ranges (no calibration found)")
+        print(f"  Ranges: {isotope_ranges}")
+        print(f"  💡 Tip: Run --alphas-only first for optimal overlap-resolved ranges")
+        print(f"{'='*70}")
+
+
+def prompt_verify_computed_ranges(run: Run, isotope_ranges: dict):
+    """Interactive prompt to verify computed ranges before proceeding."""
+    print(f"\n{'='*70}")
+    print("⚠️  PROCEEDING WITH COMPUTED RANGES FOR DOWNSTREAM ANALYSIS")
+    print(f"{'='*70}")
+    print(f"\n  📊 VERIFY CALIBRATION PLOTS:")
+    print(f"     • processed_data/spectrum_calibration/{run.run_id}_calibration_summary.png")
+    print(f"     • processed_data/spectrum_calibration/{run.run_id}_overlap_resolution.png")
+    print(f"\n  ✓ Computed ranges (overlap-resolved):")
+    for iso, rng in isotope_ranges.items():
+        print(f"     {iso:8s}: [{rng[0]:.3f}, {rng[1]:.3f}] MeV")
+    print(f"\n  ⚠️  These ranges will be used for alpha tagging in all downstream stages")
+    print(f"     Press Enter to continue or Ctrl+C to abort...")
+    print(f"{'='*70}")
+    try:
+        input()
+    except KeyboardInterrupt:
+        print("\n\n❌ Analysis aborted by user")
+        raise SystemExit(0)
+    print("✓ Continuing with full pipeline...\n")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Run RaTag analysis pipeline',
@@ -78,6 +183,10 @@ def main():
                        help='Only run integration (assumes preparation done)')
     parser.add_argument('--xray-only', action='store_true',
                        help='Only run X-ray classification pipeline')
+    parser.add_argument('--force-refit', action='store_true',
+                       help='Force recomputation of calibration/ranges/plots (energy maps cached)')
+    parser.add_argument('--use-yaml-ranges', action='store_true',
+                       help='Override: use YAML ranges instead of computed overlap-resolved ranges')
     
     
     args = parser.parse_args()
@@ -105,6 +214,15 @@ def main():
     is_multiiso = config.get('multi_isotope', {}).get('enabled', False)
     isotope_ranges = None
     
+    # Log start
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"\n{'='*60}")
+    print(f"STARTING ANALYSIS: {config['run_id']}")
+    print(f"Time: {timestamp}")
+    print(f"Config: {args.config}")
+    print(f"Description: {config.get('description', 'N/A')}")
+    print(f"{'='*60}\n")
+
     # Create Run object
     run = create_run_from_config(config)
     print("\nInitializing run (populating sets from directory)...")    
@@ -115,12 +233,9 @@ def main():
     # ALPHA ENERGY MAPPING (if multi-isotope enabled)
     # ========================================================================
     if is_multiiso:
-        # Convert isotope ranges from list to tuple
-        isotope_ranges = {
-            isotope: tuple(range_vals) 
-            for isotope, range_vals in config['multi_isotope']['isotope_ranges'].items()
-        }
-        print(f"Multi-isotope mode enabled with ranges: {isotope_ranges}")
+        # Determine which isotope ranges to use
+        isotope_ranges, using_computed = determine_isotope_ranges(run, config, args.use_yaml_ranges)
+        print_ranges_status(isotope_ranges, using_computed, args.use_yaml_ranges, run.run_id)
         
         # Update stages to enable alphas if multiiso and run_all
         if run_all:
@@ -144,22 +259,25 @@ def main():
                 run = alpha_calibration(run,
                                        savgol_window=energy_cfg.get('savgol_window', 501),
                                        energy_range=tuple(energy_cfg.get('energy_range', [4, 8.2])),
-                                       calibration_config=calib_config)
+                                       calibration_config=calib_config,
+                                       force_refit=args.force_refit)
+                
+                # Reload computed ranges for downstream use
+                isotope_ranges = load_computed_ranges(run.run_id, run.root_directory)
+                using_computed = True
+                print(f"\n✓ Calibration complete - computed ranges available for downstream stages")
             
             if args.alphas_only:
                 print(f"\n{'='*60}")
                 print("STOPPING AFTER ALPHA CALIBRATION (--alphas-only flag)")
+                print(f"  📊 Review plots in processed_data/spectrum_calibration/")
+                print(f"  💡 Remove --alphas-only to continue with full pipeline using computed ranges")
                 print(f"{'='*60}")
                 return
-    
-    # Log start
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"\n{'='*60}")
-    print(f"STARTING ANALYSIS: {config['run_id']}")
-    print(f"Time: {timestamp}")
-    print(f"Config: {args.config}")
-    print(f"Description: {config.get('description', 'N/A')}")
-    print(f"{'='*60}\n")
+            
+            # Interactive verification prompt when using computed ranges
+            if using_computed and not args.use_yaml_ranges:
+                prompt_verify_computed_ranges(run, isotope_ranges)
     
     # ========================================================================
     # PREPARATION STAGE
@@ -172,6 +290,7 @@ def main():
         prep_cfg = config['pipeline']['preparation']
         
         if is_multiiso:
+            assert isotope_ranges is not None, "isotope_ranges must be set for multi-isotope mode"
             run = prepare_run_multiiso(run,
                                        isotope_ranges=isotope_ranges,
                                        max_files=None,
@@ -226,6 +345,7 @@ def main():
 
         
         if is_multiiso:
+            assert isotope_ranges is not None, "isotope_ranges must be set for multi-isotope mode"
             run = recoil_pipeline_multiiso(run,
                                           isotope_ranges=isotope_ranges,
                                           max_frames=int_cfg['max_frames'],
@@ -270,6 +390,7 @@ def main():
         )
         
         if is_multiiso:
+            assert isotope_ranges is not None, "isotope_ranges must be set for multi-isotope mode"
             run = xray_pipeline_multiiso(run,
                                          isotope_ranges=isotope_ranges,
                                          max_frames=xray_cfg.get('max_frames'),
