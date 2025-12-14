@@ -32,12 +32,56 @@ from RaTag.alphas.spectrum_fitting import (
 from RaTag.alphas.spectrum_plotting import (
     plot_calibration_summary,
     plot_hierarchical_fit,
+    plot_overlap_resolution,
 )
 
 
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
+
+def load_computed_ranges(run_id: str, root_directory: Path) -> dict:
+    """
+    Load overlap-resolved isotope ranges from calibration output.
+    
+    Reads the .npz file created by derive_isotope_ranges_from_calibration()
+    and extracts the resolved ranges (without '_windowed' suffix).
+    
+    Parameters
+    ----------
+    run_id : str
+        Run identifier (e.g., 'RUN18')
+    root_directory : Path
+        Root directory of the run (to locate processed_data)
+        
+    Returns
+    -------
+    dict
+        Isotope ranges as {isotope: (E_min, E_max)}
+        
+    Raises
+    ------
+    FileNotFoundError
+        If calibration ranges file not found
+    """
+    ranges_file = root_directory / 'processed_data' / 'spectrum_calibration' / f'{run_id}_isotope_ranges.npz'
+    
+    if not ranges_file.exists():
+        raise FileNotFoundError(f"Computed ranges not found: {ranges_file}\n"
+                               f"Run with --alphas-only first to generate calibration.")
+    
+    # Load .npz file
+    data = np.load(ranges_file)
+    
+    # Extract resolved ranges (keys without '_windowed' suffix)
+    isotope_ranges = {}
+    for key in data.keys():
+        if key.endswith('_range') and not key.endswith('_range_windowed'):
+            isotope = key.replace('_range', '')
+            isotope_ranges[isotope] = tuple(data[key])
+    
+    return isotope_ranges
+
 
 def _setup_output_directories(run: Run) -> tuple[Path, Path]:
     """Setup output directories for spectrum calibration."""
@@ -72,7 +116,7 @@ def _store_calibration(calib_file: Path, calibration_linear, calibration_quad) -
 def fit_and_calibrate_spectrum(run: Run,
                                energy_range: tuple[float, float] = (4, 8.2),
                                aggregate: bool = True,
-                               force_recompute: bool = False) -> Run:
+                               force_refit: bool = False) -> Run:
     """
     Fit preliminary peaks and derive energy calibration.
     
@@ -87,7 +131,7 @@ def fit_and_calibrate_spectrum(run: Run,
         run: Run with energy maps
         energy_range: (E_min, E_max) ROI for fitting [mV in SCA scale]
         aggregate: If True, combine all sets for better statistics
-        force_recompute: Force recomputation even if cached
+        force_refit: Force recomputation even if cached
         
     Returns:
         Run with ._alpha_calibration attribute containing:
@@ -105,9 +149,9 @@ def fit_and_calibrate_spectrum(run: Run,
     calib_file = data_dir / f"{run.run_id}_calibration.npz"
     
     # Check cache
-    if not force_recompute and calib_file.exists():
+    if not force_refit and calib_file.exists():
         print(f"\n📂 Calibration already exists (skipping fit)")
-        print(f"   Use force_recompute=True to regenerate")
+        print(f"   Use force_refit=True to regenerate")
         # TODO: Load calibration from disk and attach to run
         return run
     
@@ -169,21 +213,21 @@ def fit_and_calibrate_spectrum(run: Run,
 def derive_isotope_ranges_from_calibration(run: Run,
                                           n_sigma: float = 1.0,
                                           use_quadratic: bool = True,
-                                          force_recompute: bool = False) -> Run:
+                                          force_refit: bool = False) -> Run:
     """
     Derive isotope energy ranges from calibration.
     
     Workflow:
-    1. Load calibration from run._alpha_calibration (or disk if needed)
+    1. Load calibration from run.alpha_calibration (or disk if needed)
     2. Compute isotope ranges based on fitted peaks
     3. Save ranges to disk
-    4. Attach to run._isotope_ranges
+    4. Attach to run.isotope_ranges
     
     Args:
-        run: Run with ._alpha_calibration attribute
+        run: Run with .alpha_calibration attribute
         n_sigma: Number of sigmas for range definition
         use_quadratic: Use quadratic (vs linear) calibration
-        force_recompute: Force recomputation even if cached
+        force_refit: Force recomputation even if cached
         
     Returns:
         Run with ._isotope_ranges attribute (dict of {isotope: (E_min, E_max)})
@@ -196,9 +240,9 @@ def derive_isotope_ranges_from_calibration(run: Run,
     ranges_file = data_dir / f"{run.run_id}_isotope_ranges.npz"
     
     # Check cache
-    if not force_recompute and ranges_file.exists():
+    if not force_refit and ranges_file.exists():
         print(f"\n📂 Isotope ranges already exist (skipping)")
-        print(f"   Use force_recompute=True to regenerate")
+        print(f"   Use force_refit=True to regenerate")
         # TODO: Load ranges from disk and attach to run
         return run
     
@@ -220,15 +264,34 @@ def derive_isotope_ranges_from_calibration(run: Run,
                                           literature_energies=literature_energies,
                                           n_sigma=n_sigma)
     
-    print(f"  ✓ Derived ranges for {len(isotope_ranges)} isotopes")
+    print(f"  ✓ Derived ranges for {len(isotope_ranges)} isotopes (windowed method)")
     
-    # Save to disk
-    ranges_dict = ranges_to_dict(isotope_ranges)
-    np.savez(ranges_file, **{f"{iso}_range": np.array(rng) for iso, rng in ranges_dict.items()})
+    # Resolve overlaps using likelihood crossover (Bayes-optimal boundaries)
+    from RaTag.alphas.spectrum_fitting import resolve_overlapping_ranges
+    
+    isotope_ranges_resolved = resolve_overlapping_ranges(isotope_ranges=isotope_ranges,
+                                                         fit_results=fit_results,
+                                                         calibration=calibration,
+                                                         overlap_pairs=[('Th228', 'Ra224')])  # Default: resolve Th228/Ra224 overlap
+    
+    print(f"  ✓ Resolved overlaps using likelihood crossover")
+    
+    # Save to disk (save both windowed and resolved ranges for diagnostics)
+    ranges_dict_resolved = ranges_to_dict(isotope_ranges_resolved)
+    ranges_dict_windowed = ranges_to_dict(isotope_ranges)
+    
+    np.savez(ranges_file, 
+             **{f"{iso}_range": np.array(rng) for iso, rng in ranges_dict_resolved.items()},
+             **{f"{iso}_range_windowed": np.array(rng) for iso, rng in ranges_dict_windowed.items()})
     print(f"  💾 Saved isotope ranges to {ranges_file.name}")
     
-    # Attach to run (immutable - return new Run)
-    return replace(run, isotope_ranges=isotope_ranges)
+    # Store windowed ranges in calibration data for visualization
+    calib_data_updated = {**calib_data, 'isotope_ranges_windowed': isotope_ranges}
+    
+    # Attach to run (immutable - return new Run with RESOLVED ranges and windowed in calibration)
+    return replace(run, 
+                  isotope_ranges=isotope_ranges_resolved,
+                  alpha_calibration=calib_data_updated)
 
 
 # ============================================================================
@@ -297,6 +360,26 @@ def plot_calibration_validation(run: Run,
     plt.close(fig)
     print(f"  📊 Saved calibration summary to {summary_plot.name}")
     
+    # Generate overlap resolution diagnostic plot (if windowed ranges available)
+    if 'isotope_ranges_windowed' in calib_data:
+        overlap_plot = plots_dir / f"{run.run_id}_overlap_resolution.png"
+        
+        if force_replot or not overlap_plot.exists():
+            isotope_ranges_windowed = calib_data['isotope_ranges_windowed']
+            calibration = calibration_quad  # Use quadratic for overlap resolution
+            
+            fig_overlap, axes_overlap = plot_overlap_resolution(spectrum_calibrated=spectrum_calibrated,
+                                                                fit_results=fit_results,
+                                                                calibration=calibration,
+                                                                isotope_ranges_windowed=isotope_ranges_windowed,
+                                                                isotope_ranges_resolved=isotope_ranges,
+                                                                overlap_pairs=[('Th228', 'Ra224')],
+                                                                figsize=(18, 6))
+            
+            save_figure(fig_overlap, overlap_plot)
+            plt.close(fig_overlap)
+            print(f"  📊 Saved overlap resolution diagnostic to {overlap_plot.name}")
+    
     return run
 
 
@@ -305,7 +388,7 @@ def plot_calibration_validation(run: Run,
 # ============================================================================
 
 def fit_hierarchical_alpha_spectrum(run: Run,
-                                   force_recompute: bool = False) -> Run:
+                                   force_refit: bool = False) -> Run:
     """
     Fit full spectrum with hierarchical 9-peak model (including satellites).
     
@@ -317,8 +400,8 @@ def fit_hierarchical_alpha_spectrum(run: Run,
     5. Save plot and fit results
     
     Args:
-        run: Run with ._alpha_calibration attribute
-        force_recompute: Force recomputation even if cached
+        run: Run with .alpha_calibration attribute
+        force_refit: Force recomputation even if cached
         
     Returns:
         Unchanged run
@@ -332,9 +415,9 @@ def fit_hierarchical_alpha_spectrum(run: Run,
     hierarchical_plot = plots_dir / f"{run.run_id}_hierarchical_fit.png"
     
     # Check cache
-    if not force_recompute and hierarchical_plot.exists():
+    if not force_refit and hierarchical_plot.exists():
         print(f"\n📂 Hierarchical fit plot already exists (skipping)")
-        print(f"   Use force_recompute=True to regenerate")
+        print(f"   Use force_refit=True to regenerate")
         return run
     
     print("\n[4/4] Hierarchical fitting (9 peaks with satellites)...")

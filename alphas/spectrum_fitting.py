@@ -786,6 +786,153 @@ def ranges_to_dict(ranges: Dict[str, IsotopeRange]) -> Dict[str, Tuple[float, fl
     """
     return {name: (r.E_min, r.E_max) for name, r in ranges.items()}
 
+
+# ============================================================================
+# OVERLAP RESOLUTION - LIKELIHOOD CROSSOVER METHOD
+# ============================================================================
+
+def _extract_fit_params_calibrated(fit: ModelResult, calibration: EnergyCalibration) -> Tuple[float, float, float, float]:
+    """Extract Crystal Ball parameters transformed to calibrated energy space."""
+    x0_sca = fit.params['cb_x0'].value
+    sigma_sca = fit.params['cb_sigma'].value
+    beta = fit.params['cb_beta'].value
+    m = fit.params['cb_m'].value
+    
+    x0_cal = calibration.apply(np.array([x0_sca]))[0]
+    sigma_cal = abs(calibration.derivative(x0_sca)) * sigma_sca
+    
+    return x0_cal, sigma_cal, beta, m
+
+
+def _compute_search_range(x0_1: float, x0_2: float, sigma_1: float, sigma_2: float) -> Tuple[float, float]:
+    """Compute default search range for intersection: midpoint ± 2σ."""
+    midpoint = (x0_1 + x0_2) / 2
+    sigma_avg = (sigma_1 + sigma_2) / 2
+    return (midpoint - 2*sigma_avg, midpoint + 2*sigma_avg)
+
+
+def _find_pdf_crossover(E_grid: np.ndarray, P1: np.ndarray, P2: np.ndarray) -> float:
+    """Find energy where |P1 - P2| is minimum (crossover point)."""
+    diff = np.abs(P1 - P2)
+    idx_cross = np.argmin(diff)
+    return E_grid[idx_cross]
+
+
+def find_crystalball_intersection(fit1: ModelResult, fit2: ModelResult,
+                                  calibration: EnergyCalibration,
+                                  search_range: Optional[Tuple[float, float]] = None,
+                                  n_points: int = 10000) -> float:
+    """
+    Find energy where two Crystal Ball PDFs have equal likelihood (Bayes-optimal boundary).
+    
+    Args:
+        fit1, fit2: ModelResult for the two isotopes
+        calibration: Energy calibration to transform peaks to true energy
+        search_range: (E_min, E_max) in MeV to search. If None, use midpoint ± 2σ
+        n_points: Number of points for grid search
+        
+    Returns:
+        Boundary energy in MeV where P(E|iso1) = P(E|iso2)
+    """
+    # Extract parameters in calibrated space
+    x0_1_cal, sigma_1_cal, beta_1, m_1 = _extract_fit_params_calibrated(fit1, calibration)
+    x0_2_cal, sigma_2_cal, beta_2, m_2 = _extract_fit_params_calibrated(fit2, calibration)
+    
+    # Determine search range
+    if search_range is None:
+        search_range = _compute_search_range(x0_1_cal, x0_2_cal, sigma_1_cal, sigma_2_cal)
+    
+    # Evaluate PDFs on grid
+    E_grid = np.linspace(search_range[0], search_range[1], n_points)
+    P1 = v_crystalball(E_grid, N=1.0, beta=beta_1, m=m_1, x0=x0_1_cal, sigma=sigma_1_cal)
+    P2 = v_crystalball(E_grid, N=1.0, beta=beta_2, m=m_2, x0=x0_2_cal, sigma=sigma_2_cal)
+    
+    return _find_pdf_crossover(E_grid, P1, P2)
+
+
+def _validate_overlap_pair(iso1: str, iso2: str, 
+                          fit_results: Dict[str, ModelResult],
+                          isotope_ranges: Dict[str, IsotopeRange]) -> Optional[Tuple[IsotopeRange, IsotopeRange]]:
+    """Validate that pair has required data and check for overlap."""
+    if iso1 not in fit_results or iso2 not in fit_results:
+        print(f"Warning: Cannot resolve {iso1}-{iso2} overlap (missing fit results)")
+        return None
+    
+    if iso1 not in isotope_ranges or iso2 not in isotope_ranges:
+        print(f"Warning: Cannot resolve {iso1}-{iso2} overlap (missing ranges)")
+        return None
+    
+    range1 = isotope_ranges[iso1]
+    range2 = isotope_ranges[iso2]
+    
+    if range1.E_max <= range2.E_min:
+        print(f"  {iso1}-{iso2}: No overlap detected (gap present)")
+        return None
+    
+    return range1, range2
+
+
+def _create_resolved_range(original: IsotopeRange, new_boundary: float, is_upper: bool) -> IsotopeRange:
+    """Create new IsotopeRange with updated boundary."""
+    return IsotopeRange(name=original.name,
+                        E_min=original.E_min if is_upper else new_boundary,
+                        E_max=new_boundary if is_upper else original.E_max,
+                        E_peak=original.E_peak,
+                        sigma=original.sigma,
+                        purity=original.purity)
+
+
+def _log_overlap_resolution(iso1: str, iso2: str, range1: IsotopeRange, range2: IsotopeRange, E_boundary: float):
+    """Print overlap resolution summary."""
+    print(f"  {iso1}-{iso2}: Overlap resolved")
+    print(f"    Original: {iso1} [---, {range1.E_max:.3f}], {iso2} [{range2.E_min:.3f}, ---]")
+    print(f"    Boundary: {E_boundary:.3f} MeV (likelihood crossover)")
+    print(f"    Resolved: {iso1} [---, {E_boundary:.3f}], {iso2} [{E_boundary:.3f}, ---]")
+
+
+def resolve_overlapping_ranges(isotope_ranges: Dict[str, IsotopeRange],
+                               fit_results: Dict[str, ModelResult],
+                               calibration: EnergyCalibration,
+                               overlap_pairs: Optional[List[Tuple[str, str]]] = None) -> Dict[str, IsotopeRange]:
+    """
+    Resolve overlapping isotope ranges using likelihood crossover boundaries.
+    
+    Args:
+        isotope_ranges: Initial windowed ranges (μ ± nσ)
+        fit_results: Crystal Ball fit results for each isotope
+        calibration: Energy calibration
+        overlap_pairs: List of (isotope1, isotope2) tuples. Defaults to [('Th228', 'Ra224')]
+                      
+    Returns:
+        Updated isotope_ranges with extended boundaries (no overlaps)
+    """
+    if overlap_pairs is None:
+        overlap_pairs = [('Th228', 'Ra224')]
+    
+    resolved_ranges = dict(isotope_ranges)
+    
+    for iso1, iso2 in overlap_pairs:
+        # Validate pair and check for overlap
+        result = _validate_overlap_pair(iso1, iso2, fit_results, resolved_ranges)
+        if result is None:
+            continue
+        
+        range1, range2 = result
+        
+        # Find likelihood crossover boundary
+        E_boundary = find_crystalball_intersection(fit_results[iso1], fit_results[iso2], calibration,
+                                                   search_range=(range1.E_peak - 0.5, range2.E_peak + 0.5))
+        
+        # Log resolution
+        _log_overlap_resolution(iso1, iso2, range1, range2, E_boundary)
+        
+        # Update ranges with new boundary
+        resolved_ranges[iso1] = _create_resolved_range(range1, E_boundary, is_upper=True)
+        resolved_ranges[iso2] = _create_resolved_range(range2, E_boundary, is_upper=False)
+    
+    return resolved_ranges
+
+
 # ============================================================================
 # HIERARCHICAL FITTING - FULL SPECTRUM FITTING
 # ============================================================================

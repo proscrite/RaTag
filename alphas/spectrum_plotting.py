@@ -17,7 +17,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from lmfit.model import ModelResult
 
-from RaTag.alphas.spectrum_fitting import SpectrumData, EnergyCalibration, IsotopeRange
+from RaTag.alphas.spectrum_fitting import (
+    SpectrumData, EnergyCalibration, IsotopeRange, v_crystalball, 
+    _extract_fit_params_calibrated
+)
 
 
 # ============================================================================
@@ -396,3 +399,183 @@ def plot_hierarchical_fit(energies_calibrated, counts_calibrated, result_hierarc
     
     plt.tight_layout()
     return fig, (ax1, ax2)
+
+
+# ============================================================================
+# OVERLAP RESOLUTION VISUALIZATION
+# ============================================================================
+
+def _sample_overlap_events(spectrum_calibrated: np.ndarray,
+                           range1_orig: 'IsotopeRange',
+                           range2_orig: 'IsotopeRange',
+                           n_samples: int = 15) -> np.ndarray:
+    """Sample events from overlap region (or near boundary if no overlap)."""
+    if range1_orig.E_max > range2_orig.E_min:
+        # True overlap: sample from overlapping interval
+        sample_min = range2_orig.E_min
+        sample_max = range1_orig.E_max
+    else:
+        # Gap: sample near boundary (±0.15 MeV)
+        gap_center = (range1_orig.E_max + range2_orig.E_min) / 2
+        sample_min = gap_center - 0.15
+        sample_max = gap_center + 0.15
+    
+    overlap_events = spectrum_calibrated[
+        (spectrum_calibrated >= sample_min) & (spectrum_calibrated <= sample_max)
+    ]
+    
+    if len(overlap_events) > n_samples:
+        return np.random.choice(overlap_events, n_samples, replace=False)
+    return overlap_events
+
+
+def _plot_probability_landscape(ax: plt.Axes, E_grid: np.ndarray, P1: np.ndarray, P2: np.ndarray,
+                                E_boundary: float, iso1: str, iso2: str):
+    """Plot Panel A: Probability landscape with color gradient."""
+    # Likelihood ratio
+    likelihood_ratio = P1 / (P1 + P2 + 1e-12)
+    
+    # Color gradient background
+    for i in range(len(E_grid)-1):
+        color = plt.cm.RdYlBu_r(likelihood_ratio[i])
+        ax.axvspan(E_grid[i], E_grid[i+1], color=color, alpha=0.3, linewidth=0)
+    
+    # Plot PDFs
+    ax.plot(E_grid, P1, 'r-', linewidth=2, label=f'{iso1} PDF', alpha=0.8)
+    ax.plot(E_grid, P2, 'b-', linewidth=2, label=f'{iso2} PDF', alpha=0.8)
+    ax.axvline(E_boundary, color='black', linestyle='--', linewidth=2.5,
+              label=f'Boundary ({E_boundary:.3f} MeV)')
+    
+    # Twin axis for likelihood ratio
+    ax_twin = ax.twinx()
+    ax_twin.plot(E_grid, likelihood_ratio, 'k:', linewidth=1.5, alpha=0.5, label='Likelihood Ratio')
+    ax_twin.axhline(0.5, color='gray', linestyle=':', linewidth=1, alpha=0.5)
+    ax_twin.set(ylabel='P(iso1) / [P(iso1) + P(iso2)]', ylim=(-0.05, 1.05))
+    
+    ax.set(xlabel='Energy (MeV)', ylabel='Probability Density',
+           title=f'Panel A: Probability Landscape\n{iso1} vs {iso2}')
+    ax.legend(loc='upper left', fontsize=10)
+    ax.grid(True, alpha=0.3)
+
+
+def _plot_event_distribution(ax: plt.Axes, spectrum_calibrated: np.ndarray,
+                             E_min: float, E_max: float, E_boundary: float,
+                             isotope_ranges_windowed: Dict[str, 'IsotopeRange'],
+                             isotope_ranges_resolved: Dict[str, 'IsotopeRange'],
+                             iso1: str, iso2: str):
+    """Plot Panel B: Event distribution with original vs resolved ranges."""
+    # Histogram
+    hist, bins = np.histogram(spectrum_calibrated, bins=150, range=(E_min, E_max))
+    bin_centers = (bins[:-1] + bins[1:]) / 2
+    ax.step(bin_centers, hist, where='mid', color='black', alpha=0.7, linewidth=1.5, label='Events')
+    
+    # Original ranges (with overlap)
+    range1_orig = isotope_ranges_windowed[iso1]
+    range2_orig = isotope_ranges_windowed[iso2]
+    ax.axvspan(range1_orig.E_min, range1_orig.E_max, alpha=0.15, color='red',
+              label=f'{iso1} (original)')
+    ax.axvspan(range2_orig.E_min, range2_orig.E_max, alpha=0.15, color='blue',
+              label=f'{iso2} (original)')
+    
+    # Resolved boundaries
+    range1_res = isotope_ranges_resolved[iso1]
+    range2_res = isotope_ranges_resolved[iso2]
+    ax.axvline(range1_res.E_max, color='red', linestyle='--', linewidth=2, label=f'{iso1} boundary')
+    ax.axvline(range2_res.E_min, color='blue', linestyle='--', linewidth=2, label=f'{iso2} boundary')
+    ax.axvline(E_boundary, color='black', linestyle='-', linewidth=2.5, alpha=0.8)
+    
+    ax.set(xlabel='Energy (MeV)', ylabel='Counts',
+           title='Panel B: Event Distribution\nOriginal (overlap) vs Resolved')
+    ax.legend(loc='upper left', fontsize=9, ncol=2)
+    ax.grid(True, alpha=0.3)
+
+
+def _plot_sample_diagnostics(ax: plt.Axes, sample_events: np.ndarray, E_boundary: float,
+                             x0_1_cal: float, sigma_1_cal: float, beta_1: float, m_1: float,
+                             x0_2_cal: float, sigma_2_cal: float, beta_2: float, m_2: float,
+                             iso1: str, iso2: str):
+    """Plot Panel C: Sample event diagnostics with likelihood ratios."""
+    if len(sample_events) == 0:
+        ax.text(0.5, 0.5, 'No events in overlap region\n(expand range or reduce n_sigma)',
+               ha='center', va='center', fontsize=12, transform=ax.transAxes,
+               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    else:
+        # Compute likelihood ratios
+        sample_P1 = v_crystalball(sample_events, N=1.0, beta=beta_1, m=m_1,
+                                 x0=x0_1_cal, sigma=sigma_1_cal)
+        sample_P2 = v_crystalball(sample_events, N=1.0, beta=beta_2, m=m_2,
+                                 x0=x0_2_cal, sigma=sigma_2_cal)
+        sample_ratios = sample_P1 / (sample_P1 + sample_P2 + 1e-12)
+        
+        # Assign and plot
+        assignments = np.where(sample_events < E_boundary, iso1, iso2)
+        colors = ['red' if a == iso1 else 'blue' for a in assignments]
+        
+        for i, (E, ratio, color) in enumerate(zip(sample_events, sample_ratios, colors)):
+            ax.scatter(E, ratio, s=100, c=color, alpha=0.7, edgecolors='black', linewidth=1.5)
+            ax.text(E, ratio + 0.03, str(i+1), fontsize=8, ha='center')
+    
+    # Decision boundary
+    ax.axhline(0.5, color='black', linestyle='--', linewidth=2, label='Decision Threshold')
+    ax.axvline(E_boundary, color='black', linestyle='--', linewidth=2, alpha=0.5)
+    
+    ax.set(xlabel='Energy (MeV)', ylabel='Likelihood Ratio P(iso1)',
+           title=f'Panel C: Sample Events (n={len(sample_events)})\nColor = Assignment',
+           ylim=(-0.05, 1.05))
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc='upper right', fontsize=10)
+
+
+def plot_overlap_resolution(spectrum_calibrated: np.ndarray,
+                            fit_results: Dict[str, ModelResult],
+                            calibration: 'EnergyCalibration',
+                            isotope_ranges_windowed: Dict[str, IsotopeRange],
+                            isotope_ranges_resolved: Dict[str, IsotopeRange],
+                            overlap_pairs: List[Tuple[str, str]],
+                            figsize: Tuple[float, float] = (16, 5)) -> Tuple[plt.Figure, List[plt.Axes]]:
+    """
+    Visualize overlap resolution using likelihood crossover method (3-panel figure).
+    
+    Returns:
+        fig, axes : matplotlib figure and list of 3 axes
+    """
+    fig, axes = plt.subplots(1, 3, figsize=figsize)
+    
+    for iso1, iso2 in overlap_pairs:
+        if iso1 not in fit_results or iso2 not in fit_results:
+            continue
+        
+        # Extract calibrated parameters for both isotopes
+        x0_1_cal, sigma_1_cal, beta_1, m_1 = _extract_fit_params_calibrated(fit_results[iso1], calibration)
+        x0_2_cal, sigma_2_cal, beta_2, m_2 = _extract_fit_params_calibrated(fit_results[iso2], calibration)
+        
+        # Energy grid for plotting (±3σ around peaks)
+        E_min = x0_1_cal - 3*sigma_1_cal
+        E_max = x0_2_cal + 3*sigma_2_cal
+        E_grid = np.linspace(E_min, E_max, 1000)
+        
+        # Evaluate PDFs
+        P1 = v_crystalball(E_grid, N=1.0, beta=beta_1, m=m_1, x0=x0_1_cal, sigma=sigma_1_cal)
+        P2 = v_crystalball(E_grid, N=1.0, beta=beta_2, m=m_2, x0=x0_2_cal, sigma=sigma_2_cal)
+        
+        # Get boundary from resolved ranges
+        E_boundary = isotope_ranges_resolved[iso1].E_max
+        
+        # Plot three panels
+        _plot_probability_landscape(axes[0], E_grid, P1, P2, E_boundary, iso1, iso2)
+        
+        _plot_event_distribution(axes[1], spectrum_calibrated, E_min, E_max, E_boundary,
+                                isotope_ranges_windowed, isotope_ranges_resolved, iso1, iso2)
+        
+        # Sample events and plot diagnostics
+        range1_orig = isotope_ranges_windowed[iso1]
+        range2_orig = isotope_ranges_windowed[iso2]
+        sample_events = _sample_overlap_events(spectrum_calibrated, range1_orig, range2_orig)
+        
+        _plot_sample_diagnostics(axes[2], sample_events, E_boundary,
+                                x0_1_cal, sigma_1_cal, beta_1, m_1,
+                                x0_2_cal, sigma_2_cal, beta_2, m_2,
+                                iso1, iso2)
+    
+    plt.tight_layout()
+    return fig, axes
