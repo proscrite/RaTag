@@ -58,11 +58,48 @@ class FitConfig:
 class XRayConfig:
     """Configuration for X-ray event classification and integration."""
     bs_threshold: float = 0.5          # (mV)  -- baseline threshold for signal detection
+    max_area_s1: float = 1e5          # (mV·µs) -- max allowed area before S1 (reject if exceeded)
     max_area_s2: float = 1e5          # (mV·µs) -- max allowed area in S2 window (reject if exceeded)
+    min_xray_area: float = 0.2        # (mV·µs) -- min required X-ray area (reject if below)
     min_s2_sep: float = 1.0           # (µs)   -- min required separation before S2 window
     min_s1_sep: float = 0.5           # (µs)   -- min required separation after S1
     n_pedestal: int = 200             # number of pre-trigger samples for pedestal subtraction
     ma_window: int = 10               # moving average window length (samples)
     dt: float = 2e-4                  # integration timestep (µs)
     integrator: Callable[[PMTWaveform, float], np.ndarray] = field(default_factory=_default_integrator)
+
+
+# -------------------------------
+# Alpha Spectrum Peak Definitions
+# -------------------------------
+# Literature energies and fitting windows for Th-232 decay chain alphas
+
+# Main peaks for preliminary fitting (5 peaks in SCA scale)
+ALPHA_PEAK_DEFINITIONS = [
+    {'name': 'Th228', 'position': 4.5, 'window': (4.0, 4.7), 'sigma_init': 0.15, 'ref_energy': 5.42315},
+    {'name': 'Ra224', 'position': 4.8, 'window': (4.65, 5.1), 'sigma_init': 0.15, 'ref_energy': 5.68537},
+    {'name': 'Rn220', 'position': 5.4, 'window': (5.0, 5.5), 'sigma_init': 0.15, 'ref_energy': 6.40484},
+    {'name': 'Po216', 'position': 5.9, 'window': (5.6, 6.1), 'sigma_init': 0.15, 'ref_energy': 6.90628},
+    {'name': 'Po212', 'position': 7.5, 'window': (6.3, 8.0), 'sigma_init': 0.15, 'ref_energy': 8.785},
+]
+
+# Satellite peaks for hierarchical fitting (4 additional peaks)
+ALPHA_SATELLITE_DEFINITIONS = [
+    {'name': 'Th228_sat', 'ref_energy': 5.34036, 'branching_ratio': 0.385},
+    {'name': 'Ra224_sat', 'ref_energy': 5.44860, 'branching_ratio': 0.054},
+    {'name': 'Bi212', 'ref_energy': 6.207},  # Independent main peak
+    {'name': 'Bi212_sat', 'ref_energy': 6.090, 'branching_ratio': 0.389},
+]
+
+
+@dataclass(frozen=True)
+class AlphaCalibrationConfig:
+    """Configuration for alpha spectrum calibration pipeline."""
+    files_per_chunk: int = 10          # Waveform files per energy map chunk (10-100 typical)
+    fmt: str = "8b"                    # Binary format: "8b" (accurate) or "6b" (compact)
+    scale: float = 0.1                 # For "6b" format: keV per LSB
+    pattern: str = "*Ch4.wfm"          # Glob pattern for alpha channel files
+    nbins: int = 120                   # Number of histogram bins for energy spectra
+    n_sigma: float = 1.0               # Number of sigmas for isotope range definition
+    use_quadratic: bool = True         # Use quadratic (vs linear) energy calibration
 

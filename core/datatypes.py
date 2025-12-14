@@ -222,6 +222,10 @@ class Run:
     N_e_exp: Optional[float] = None     # expected electrons
     g_S2: Optional[float] = None        # mV·µs per electron
 
+    # Alpha spectrum calibration results (populated by alpha_calibration pipeline)
+    alpha_calibration: Optional[dict] = None  # Contains: fit_results, calibration_linear, calibration_quad, spectrum, spectrum_calibrated
+    isotope_ranges: Optional[dict] = None     # Contains: {isotope: (E_min, E_max)}
+
     
 # -------------------------------
 # Integration results
