@@ -47,8 +47,10 @@ class _RejectionTracker:
     def __init__(self):
         self.n_total = 0
         self.n_accepted = 0
+        self.n_excessive_s1 = 0
         self.n_excessive_s2 = 0
         self.n_insufficient_sep = 0
+        self.n_insufficient_area = 0
         self.n_errors = 0
     
     def record(self, is_accepted: bool, rejection_reason: Optional[str] = None) -> None:
@@ -66,7 +68,11 @@ class _RejectionTracker:
             self.n_excessive_s2 += 1
         elif rejection_reason == "insufficient_separation":
             self.n_insufficient_sep += 1
-    
+        elif rejection_reason == "excessive_s1":
+            self.n_excessive_s1 += 1
+        elif rejection_reason == "below_min_area":
+            self.n_insufficient_area += 1
+
     def record_error(self) -> None:
         """Record a frame that failed during classification."""
         self.n_total += 1
@@ -83,11 +89,15 @@ class _RejectionTracker:
             'n_total': self.n_total,
             'n_accepted': self.n_accepted,
             'n_rejected_excessive_s2': self.n_excessive_s2,
+            'n_rejected_excessive_s1': self.n_excessive_s1,
             'n_rejected_insufficient_sep': self.n_insufficient_sep,
+            'n_rejected_below_min_area': self.n_insufficient_area,
             'n_rejected_errors': self.n_errors,
             'acceptance_rate': self.n_accepted / self.n_total if self.n_total > 0 else 0.0,
+            'rejection_rate_excessive_s1': self.n_excessive_s1 / self.n_total if self.n_total > 0 else 0.0,
             'rejection_rate_excessive_s2': self.n_excessive_s2 / self.n_total if self.n_total > 0 else 0.0,
             'rejection_rate_insufficient_sep': self.n_insufficient_sep / self.n_total if self.n_total > 0 else 0.0,
+            'rejection_rate_below_min_area': self.n_insufficient_area / self.n_total if self.n_total > 0 else 0.0,
         }
     
     def print_summary(self) -> None:
@@ -95,9 +105,12 @@ class _RejectionTracker:
         stats = self.get_stats()
         n_rejected = self.n_total - self.n_accepted
         
-        print(f"    ✓ Classified {self.n_total} frames: {self.n_accepted} accepted, {n_rejected} rejected")
+        print(f"    ✓ Classified {self.n_total} frames: {self.n_accepted} accepted ({stats['acceptance_rate']:.1%}), {n_rejected} rejected")
+        # print(f"      - Accepted events: {self.n_accepted} ({stats['acceptance_rate']:.1%})")
+        print(f"      - Excessive S1: {self.n_excessive_s1} ({stats['rejection_rate_excessive_s1']:.1%})")
         print(f"      - Excessive S2: {self.n_excessive_s2} ({stats['rejection_rate_excessive_s2']:.1%})")
         print(f"      - Insufficient separation: {self.n_insufficient_sep} ({stats['rejection_rate_insufficient_sep']:.1%})")
+        print(f"      - Below minimum area: {self.n_insufficient_area} ({stats['rejection_rate_below_min_area']:.1%})")
         if self.n_errors > 0:
             print(f"      - Errors: {self.n_errors}")
 
@@ -270,9 +283,8 @@ def workflow_xray_classification(set_pmt: SetPmt,
     t_s1, s2_start = _get_xray_window(set_pmt)
     
     # Classify (returns only accepted events + rejection stats)
-    uids, areas, rejection_stats = _classify_xrays_in_set(
-        set_pmt, t_s1, s2_start, max_frames, xray_config
-    )    # Create S2Areas object for accepted X-ray events
+    uids, areas, rejection_stats = _classify_xrays_in_set(set_pmt, t_s1, s2_start, max_frames, xray_config)
+    # Create S2Areas object for accepted X-ray events
     # This allows us to reuse the same I/O infrastructure as recoil S2 integration
     
     xray_areas = S2Areas(source_dir=set_pmt.source_dir,
@@ -281,7 +293,9 @@ def workflow_xray_classification(set_pmt: SetPmt,
                          params={
                             "xray_window": (t_s1, s2_start),
                             "bs_threshold": xray_config.bs_threshold,
+                            "max_area_s1": xray_config.max_area_s1,
                             "max_area_s2": xray_config.max_area_s2,
+                            "min_xray_area": xray_config.min_xray_area,
                             "min_s2_sep": xray_config.min_s2_sep,
                             "min_s1_sep": xray_config.min_s1_sep,
                             "n_pedestal": xray_config.n_pedestal,
@@ -388,7 +402,8 @@ def _sample_uids(uids: np.ndarray, n_frames: int) -> list:
     return [decode_uid(uid) for uid in sampled_uids]
 
 
-def _sample_xray_frames(set_pmt: SetPmt, n_frames: int = 5) -> tuple[list, list]:
+def _sample_xray_frames(set_pmt: SetPmt, 
+                       n_frames: int = 5) -> tuple[list, list]:
     """
     Sample random accepted and rejected X-ray candidate frames.
     
@@ -403,7 +418,14 @@ def _sample_xray_frames(set_pmt: SetPmt, n_frames: int = 5) -> tuple[list, list]
         (accepted_sample, rejected_sample) - lists of (file_seq, frame_idx) tuples
     """
     # Load accepted UIDs
-    accepted_uids = _load_accepted_uids(set_pmt)
+    data_dir = set_pmt.source_dir.parent / "processed_data" / "all"
+    xray_file = data_dir / f"{set_pmt.source_dir.name}_xray_areas.npz"
+    
+    if xray_file.exists():
+        data = np.load(xray_file)
+        accepted_uids = data['uids']
+    else:
+        accepted_uids = np.array([], dtype=np.uint32)
     
     # Generate all possible UIDs and compute rejected set
     all_uids = _generate_all_possible_uids(set_pmt)

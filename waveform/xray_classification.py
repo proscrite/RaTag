@@ -17,6 +17,40 @@ from RaTag.waveform.preprocessing import moving_average, threshold_clip
 from RaTag.waveform.s1s2_detection import extract_window
 
 
+def excessive_s1_check(wf: PMTWaveform,
+                       t_s1: float,
+                       bs_threshold: float,
+                       max_area_s1: float = 1e5,
+                       debug: bool = False) -> tuple[bool, str]:
+    """
+    Check if waveform has excessive signal before S1.
+    
+    Rejects frames where large signals before S1 leak into the X-ray window,
+    typically from high-energy events in previous triggers.
+    
+    Args:
+        wf: PMTWaveform in µs/mV (after pedestal subtraction)
+        t_s1: S1 peak time [µs]
+        bs_threshold: Baseline threshold [mV]
+        max_area_s1: Maximum allowed area before S1 [mV·µs]
+        debug: If True, print diagnostic information
+        
+    Returns:
+        (passed, reason) - True if check passed, with descriptive reason
+    """
+    mask = (wf.t < t_s1)
+    Vs1_before = wf.v[mask]
+    
+    area_above_threshold = Vs1_before[Vs1_before > bs_threshold].sum()
+    
+    if area_above_threshold > max_area_s1:
+        if debug:
+            print(f'Area above baseline before S1: {area_above_threshold:.2e} (max allowed {max_area_s1})')
+        return False, "excessive S1 signal above baseline"
+    
+    return True, "ok"
+
+
 def excessive_s2_check(wf: PMTWaveform, 
                        s2_start: float, 
                        bs_threshold: float, 
@@ -95,10 +129,12 @@ def classify_xray_in_frame(wf: PMTWaveform,
     Classify a single frame as X-ray event and integrate if accepted.
     
     This is the core classification pipeline for X-ray events:
-    1. Check for excessive S2 signal (reject if too much baseline activity)
-    2. Preprocess: extract window, smooth, clip to threshold
-    3. Check signal separation (reject if too close to S1 or S2)
-    4. Integrate accepted events
+    1. Check for excessive S1 signal (reject if signal before S1 is too large)
+    2. Check for excessive S2 signal (reject if too much baseline activity)
+    3. Preprocess: extract window, smooth, clip to threshold
+    4. Check signal separation (reject if too close to S1 or S2)
+    5. Check minimum area (reject if integrated area is too small)
+    6. Integrate accepted events
     
     Args:
         wf: PMTWaveform (already in µs/mV with pedestal subtracted)
@@ -110,7 +146,8 @@ def classify_xray_in_frame(wf: PMTWaveform,
     Returns:
         (accepted, rejection_reason, area) where:
         - accepted: True if event passes all criteria
-        - rejection_reason: "excessive_s2", "insufficient_separation", or None if accepted
+        - rejection_reason: "excessive_s1", "excessive_s2", "insufficient_separation", 
+                           "below_min_area", or None if accepted
         - area: Integrated X-ray area [mV·µs], or None if rejected
         
     Example:
@@ -120,7 +157,15 @@ def classify_xray_in_frame(wf: PMTWaveform,
         >>> if accepted:
         ...     print(f"X-ray area: {area:.2f} mV·µs")
     """
-    # Check 1: Excessive S2 baseline
+    # Check 1: Excessive S1 signal
+    passed, reason = excessive_s1_check(wf, t_s1,
+                                       xray_config.bs_threshold,
+                                       xray_config.max_area_s1,
+                                       debug=debug)
+    if not passed:
+        return False, "excessive_s1", None
+    
+    # Check 2: Excessive S2 baseline
     passed, reason = excessive_s2_check(wf, s2_start, 
                                        xray_config.bs_threshold,
                                        xray_config.max_area_s2, 
@@ -133,7 +178,7 @@ def classify_xray_in_frame(wf: PMTWaveform,
     wf = moving_average(wf, window=xray_config.ma_window)
     wf = threshold_clip(wf, threshold=xray_config.bs_threshold)
     
-    # Check 2: Signal separation
+    # Check 3: Signal separation
     passed, reason = separation_check(wf, t_s1, s2_start,
                                      xray_config.min_s2_sep, 
                                      xray_config.min_s1_sep)
@@ -142,5 +187,9 @@ def classify_xray_in_frame(wf: PMTWaveform,
     
     # Integration
     area = float(xray_config.integrator(wf, xray_config.dt))
+    
+    # Check 4: Minimum area
+    if area < xray_config.min_xray_area:
+        return False, "below_min_area", None
     
     return True, None, area
