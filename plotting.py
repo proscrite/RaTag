@@ -1032,6 +1032,12 @@ def plot_xray_validation(set_pmt: SetPmt,
     Returns:
         Matplotlib figure
     """
+    from RaTag.core.uid_utils import parse_file_seq_from_name
+    
+    # Build mapping from file_seq to file_index
+    file_seq_to_index = {parse_file_seq_from_name(fn): idx 
+                         for idx, fn in enumerate(set_pmt.filenames)}
+    
     n_frames = len(accepted_sample)  # Both samples have same length
     
     if n_frames == 0:
@@ -1051,16 +1057,18 @@ def plot_xray_validation(set_pmt: SetPmt,
     for i in range(n_frames):
         # Left column: accepted (green)
         file_seq, frame_idx = accepted_sample[i]
+        file_index = file_seq_to_index[file_seq]  # Convert file_seq to file_index
         ax_left = axes[i, 0]
-        plot_set_windows(set_pmt, file_index=file_seq, frame=frame_idx, 
+        plot_set_windows(set_pmt, file_index=file_index, frame=frame_idx, 
                         ax=ax_left, color='green')
         ax_left.set_title(f"✓ Accepted (File {file_seq}, Frame {frame_idx})", 
                          fontsize=10, color='darkgreen')
         
         # Right column: rejected (red)
         file_seq, frame_idx = rejected_sample[i]
+        file_index = file_seq_to_index[file_seq]  # Convert file_seq to file_index
         ax_right = axes[i, 1]
-        plot_set_windows(set_pmt, file_index=file_seq, frame=frame_idx, 
+        plot_set_windows(set_pmt, file_index=file_index, frame=frame_idx, 
                         ax=ax_right, color='red')
         ax_right.set_title(f"✗ Rejected (File {file_seq}, Frame {frame_idx})", 
                           fontsize=10, color='darkred')
