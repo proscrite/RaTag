@@ -43,6 +43,7 @@ Example:
 """
 
 import argparse
+from numpy import int_
 import yaml
 from pathlib import Path
 from datetime import datetime
@@ -55,7 +56,7 @@ from RaTag.pipelines.run_preparation import prepare_run, prepare_run_multiiso
 from RaTag.pipelines.recoil_only import recoil_pipeline, recoil_pipeline_multiiso
 from RaTag.pipelines.xray_only import xray_pipeline, xray_pipeline_multiiso
 from RaTag.pipelines.alpha_calibration import alpha_calibration
-
+from RaTag.pipelines.unified_xray_and_recoil import unified_pipeline
 
 def load_config(config_path: Path) -> dict:
     """Load YAML configuration file."""
@@ -187,17 +188,17 @@ def main():
                        help='Force recomputation of calibration/ranges/plots (energy maps cached)')
     parser.add_argument('--use-yaml-ranges', action='store_true',
                        help='Override: use YAML ranges instead of computed overlap-resolved ranges')
+    parser.add_argument('--only-unified', action='store_true',
+                       help='Run only the unified X-ray + S2 workflow (bypasses separate pipelines)')
     
     
     args = parser.parse_args()
     
     # Validate arguments - only one "only" flag allowed
-    only_flags = [args.alphas_only, args.prepare_only, args.integrate_only, args.xray_only]
+    only_flags = [args.alphas_only, args.prepare_only, args.integrate_only, args.xray_only, args.only_unified]
     if sum(only_flags) > 1:
         parser.error("Cannot specify multiple --*-only flags")
-    
-    # Determine which stages to run
-    run_all = not any(only_flags)  # If no flags, run everything
+    run_all = not any(only_flags)
     
     stages = {
         'alphas': args.alphas_only or (run_all and False),  # Only when multiiso AND (flag OR run_all)
@@ -316,33 +317,73 @@ def main():
             print(f"{'='*60}")
             return
     
+
+    int_cfg = config['pipeline']['integration']
+        
+    # Create config objects
+    integration_config = IntegrationConfig(
+        n_pedestal=int(int_cfg['integration_config']['n_pedestal']),
+        ma_window=int(int_cfg['integration_config']['ma_window']),
+        bs_threshold=float(int_cfg['integration_config']['bs_threshold']),
+        dt=float(int_cfg['integration_config']['dt'])
+    )
+    
+    fit_config = FitConfig(
+        bin_cuts=tuple(int_cfg['fit_config']['bin_cuts']),
+        nbins=int(int_cfg['fit_config']['nbins']),
+        bg_threshold=float(int_cfg['fit_config'].get('bg_threshold', 0.3)),
+        bg_cutoff=float(int_cfg['fit_config'].get('bg_cutoff', 1.0)),
+        n_sigma=float(int_cfg['fit_config'].get('n_sigma', 2.5)),
+        upper_limit=float(int_cfg['fit_config'].get('upper_limit', 5.0))
+    )
+
+    xray_cfg = config['pipeline'].get('xray_classification', {})
+    
+    # Create XRayConfig
+    xray_config = XRayConfig(
+        bs_threshold=float(xray_cfg.get('bs_threshold', 0.5)),
+        max_area_s1=float(xray_cfg.get('max_area_s1', 1e5)),
+        max_area_s2=float(xray_cfg.get('max_area_s2', 1e5)),
+        min_xray_area=float(xray_cfg.get('min_xray_area', 0.0)),
+        min_s2_sep=float(xray_cfg.get('min_s2_sep', 1.0)),
+        min_s1_sep=float(xray_cfg.get('min_s1_sep', 0.5)),
+        n_pedestal=int(xray_cfg.get('n_pedestal', 200)),
+        ma_window=int(xray_cfg.get('ma_window', 10)),
+        dt=float(xray_cfg.get('dt', 2e-4))
+    )
     # ========================================================================
-    # INTEGRATION STAGE
+    # PIPELINE SELECTION LOGIC
     # ========================================================================
-    if stages['integration']:
+    # The following blocks are mutually exclusive:
+    # - If run_all (default) or --only-unified is set, run the unified pipeline and skip the old pipelines.
+    # - If --integrate-only or --xray-only is set, run only the corresponding pipeline.
+    # This prevents double processing of the same data.
+    # ========================================================================
+    if run_all or args.only_unified:
+        print("\n" + "="*60)
+        print("STAGE 2: UNIFIED X-RAY + S2 INTEGRATION")
+        print("="*60)
+        run = unified_pipeline(run,
+                                max_frames=int_cfg['max_frames'],
+                                integration_config=integration_config,
+                                xray_config=xray_config,
+                                fit_config=fit_config,
+                                isotope_ranges=isotope_ranges,)
+        print("\n✓ Unified integration complete")
+        if args.only_unified:
+            print(f"\n{'='*60}")
+            print("STOPPING AFTER UNIFIED INTEGRATION (--only-unified flag)")
+            print(f"{'='*60}")
+            return
+    
+
+    # ========================================================================
+    # INTEGRATION STAGE (only runs if unified pipeline is not selected)
+    # ========================================================================
+    elif stages['integration']:
         print("\n" + "="*60)
         print("STAGE 2: INTEGRATION")
         print("="*60)
-        
-        int_cfg = config['pipeline']['integration']
-        
-        # Create config objects
-        integration_config = IntegrationConfig(
-            n_pedestal=int(int_cfg['integration_config']['n_pedestal']),
-            ma_window=int(int_cfg['integration_config']['ma_window']),
-            bs_threshold=float(int_cfg['integration_config']['bs_threshold']),
-            dt=float(int_cfg['integration_config']['dt'])
-        )
-        
-        fit_config = FitConfig(
-            bin_cuts=tuple(int_cfg['fit_config']['bin_cuts']),
-            nbins=int(int_cfg['fit_config']['nbins']),
-            bg_threshold=float(int_cfg['fit_config'].get('bg_threshold', 0.3)),
-            bg_cutoff=float(int_cfg['fit_config'].get('bg_cutoff', 1.0)),
-            n_sigma=float(int_cfg['fit_config'].get('n_sigma', 2.5)),
-            upper_limit=float(int_cfg['fit_config'].get('upper_limit', 5.0))
-        )
-
         
         if is_multiiso:
             assert isotope_ranges is not None, "isotope_ranges must be set for multi-isotope mode"
@@ -365,29 +406,13 @@ def main():
             print(f"{'='*60}")
             return
     
-    
     # ========================================================================
-    # X-RAY CLASSIFICATION STAGE
+    # X-RAY CLASSIFICATION STAGE (only runs if unified pipeline is not selected)
     # ========================================================================
-    if stages['xray']:
+    elif stages['xray']:
         print("\n" + "="*60)
         print("STAGE 3: X-RAY CLASSIFICATION")
         print("="*60)
-        
-        xray_cfg = config['pipeline'].get('xray_classification', {})
-        
-        # Create XRayConfig
-        xray_config = XRayConfig(
-            bs_threshold=float(xray_cfg.get('bs_threshold', 0.5)),
-            max_area_s1=float(xray_cfg.get('max_area_s1', 1e5)),
-            max_area_s2=float(xray_cfg.get('max_area_s2', 1e5)),
-            min_xray_area=float(xray_cfg.get('min_xray_area', 0.0)),
-            min_s2_sep=float(xray_cfg.get('min_s2_sep', 1.0)),
-            min_s1_sep=float(xray_cfg.get('min_s1_sep', 0.5)),
-            n_pedestal=int(xray_cfg.get('n_pedestal', 200)),
-            ma_window=int(xray_cfg.get('ma_window', 10)),
-            dt=float(xray_cfg.get('dt', 2e-4))
-        )
         
         if is_multiiso:
             assert isotope_ranges is not None, "isotope_ranges must be set for multi-isotope mode"
@@ -407,6 +432,7 @@ def main():
             print("STOPPING AFTER X-RAY CLASSIFICATION (--xray-only flag)")
             print(f"{'='*60}")
             return
+    
     
     # ========================================================================
     # SUMMARY

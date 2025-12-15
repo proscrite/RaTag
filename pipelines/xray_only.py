@@ -1,4 +1,3 @@
-
 """
 Complete X-ray classification pipeline.
 
@@ -172,6 +171,38 @@ def xray_pipeline_quick(run: Run, max_frames: int = 5000) -> Run:
     """
     return classify_xrays_in_run(run, max_frames=max_frames)
 
+
+
+# =========================================================================
+# DOWNSTREAM PIPELINE (post-classification only)
+# =========================================================================
+
+def xray_downstream_pipeline(run: Run,
+                            xray_config: Optional[XRayConfig] = None,
+                            isotope_ranges: Optional[Dict] = None,
+                            n_validation_frames: int = 5) -> Run:
+    """
+    Perform all downstream X-ray operations after classification.
+    Includes QA plots, aggregation, fitting, and multi-isotope analysis if requested.
+    """
+    if xray_config is None:
+        xray_config = XRayConfig()
+    steps = [
+        partial(validate_xray_classification, n_waveforms=n_validation_frames),
+        aggregate_xray_areas,
+        fit_xray_areas
+    ]
+    if isotope_ranges is not None:
+        steps += [
+            partial(run_xray_multiiso, isotope_ranges=isotope_ranges),
+            partial(_map_combined_xray_to_isotopes, isotope_ranges=isotope_ranges)
+        ]
+    return pipe_run(run, *steps)
+
+
+# =========================================================================
+# RE-PLOTTING PIPELINE
+# =========================================================================
 
 def xray_pipeline_replot(run: Run, 
                          n_validation_frames: int = 5,

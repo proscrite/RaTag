@@ -28,7 +28,9 @@ from RaTag.alphas.spectrum_fitting import (
     prepare_hierarchical_fit,
     fit_full_spectrum_hierarchical,
     ranges_to_dict,
+    resolve_overlapping_ranges,
 )
+
 from RaTag.alphas.spectrum_plotting import (
     plot_calibration_summary,
     plot_hierarchical_fit,
@@ -267,7 +269,6 @@ def derive_isotope_ranges_from_calibration(run: Run,
     print(f"  ✓ Derived ranges for {len(isotope_ranges)} isotopes (windowed method)")
     
     # Resolve overlaps using likelihood crossover (Bayes-optimal boundaries)
-    from RaTag.alphas.spectrum_fitting import resolve_overlapping_ranges
     
     isotope_ranges_resolved = resolve_overlapping_ranges(isotope_ranges=isotope_ranges,
                                                          fit_results=fit_results,

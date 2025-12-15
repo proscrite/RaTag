@@ -10,8 +10,10 @@ All stages are explicit and composable - no hidden flags or conditionals.
 """
 
 from functools import partial
-from typing import Optional
+from typing import Optional, Dict
 from dataclasses import replace
+from RaTag.core.datatypes import Run
+from RaTag.core.config import FitConfig
 
 from RaTag.core.datatypes import Run
 from RaTag.core.config import IntegrationConfig, FitConfig
@@ -167,6 +169,30 @@ def recoil_pipeline_quick(run: Run, max_frames: int = 50) -> Run:
     """
     return integrate_s2_in_run(run, max_frames=max_frames)
 
+
+# =========================================================================
+# DOWNSTREAM PIPELINE (post-integration only)
+# =========================================================================
+
+def recoil_downstream_pipeline(run: Run,
+                               fit_config: FitConfig = FitConfig(),
+                               isotope_ranges: dict = None) -> Run:
+    """
+    Perform all downstream S2 operations after integration.
+    Includes fitting, summary plots, and multi-isotope analysis if requested.
+    """
+    steps = [
+        partial(fit_s2_in_run, fit_config=fit_config),
+        summarize_s2_vs_field
+    ]
+    if isotope_ranges is not None:
+        steps += [
+            partial(run_s2_area_multiiso, isotope_ranges=isotope_ranges),
+            partial(fit_multiiso_s2_in_run, isotope_ranges=isotope_ranges, fit_config=fit_config),
+            partial(summarize_multiiso_s2_vs_field, isotopes=list(isotope_ranges.keys()), suffix='_all'),
+            partial(summarize_multiiso_s2_vs_field, isotopes=['Ra224', 'Th228'], suffix='_clear')
+        ]
+    return pipe_run(run, *steps)
 
 def recoil_pipeline_replot(run: Run,
                            fit_config: FitConfig = FitConfig()) -> Run:
