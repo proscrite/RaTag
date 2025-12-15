@@ -23,7 +23,7 @@ from RaTag.core.functional import apply_workflow_to_run, compute_max_files
 from RaTag.core.uid_utils import make_uid
 from RaTag.waveform.integration import integrate_s2_in_frame
 from RaTag.waveform.xray_classification import classify_xray_in_frame
-from workflows.xray_integration import _RejectionTracker
+from RaTag.workflows.xray_integration import _RejectionTracker
 
 
 def _setup_output_directories(set_pmt: SetPmt) -> tuple[Path, Path, Path]:

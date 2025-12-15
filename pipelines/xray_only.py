@@ -11,7 +11,7 @@ All stages are explicit and composable - no hidden flags or conditionals.
 """
 
 from functools import partial
-from typing import Optional
+from typing import Optional, Dict
 from dataclasses import dataclass
 from pathlib import Path
 
