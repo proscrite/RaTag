@@ -211,14 +211,11 @@ def _classify_xrays_in_set(set_pmt: SetPmt,
             uid = make_uid(frame_wf.file_seq, frame_wf.frame_idx)
             frame_pmt = frame_wf.load_pmt_frame()  # type: ignore[assignment]
             
-            # Frames from load_pmt_frame() are already in correct units (µs, mV)
-            # Just need to subtract pedestal
+            
             frame_pmt = subtract_pedestal(frame_pmt, n_points=xray_config.n_pedestal)  # type: ignore[arg-type]
             
             # Classify and integrate
-            is_accepted, rejection_reason, area = classify_xray_in_frame(frame_pmt,
-                                                                         t_s1, s2_start,
-                                                                           xray_config)
+            is_accepted, rejection_reason, area = classify_xray_in_frame(frame_pmt, t_s1, s2_start, xray_config)
             
             if is_accepted:
                 accepted_uids.append(uid)

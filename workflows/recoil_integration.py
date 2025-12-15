@@ -66,7 +66,7 @@ def _setup_run_directories(run: Run) -> tuple[Path, Path]:
         Tuple of (plots_dir, data_dir)
     """
 
-    plots_dir = run.root_directory / "plots"
+    plots_dir = run.root_directory / "plots" / "all" / "s2_areas"
     plots_dir.mkdir(parents=True, exist_ok=True)
     
     data_dir = run.root_directory / "processed_data"
@@ -353,7 +353,7 @@ def workflow_fit_multiiso_s2(set_pmt: SetPmt,
 # ============================================================================
 
 def integrate_s2_in_run(run: Run,
-                       range_sets: slice = None,
+                       range_sets: Optional[slice] = None,
                        max_frames: Optional[int] = None,
                        integration_config: IntegrationConfig = IntegrationConfig()) -> Run:
     """
