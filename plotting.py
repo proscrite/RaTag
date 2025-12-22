@@ -1,8 +1,8 @@
 import matplotlib.pyplot as plt # type: ignore
 import time
 import numpy as np 
-import ipywidgets as widgets # type: ignore
-from IPython.display import display
+# import ipywidgets as widgets # type: ignore
+# from IPython.display import display
 from typing import Optional
 from pathlib import Path
 import pandas as pd

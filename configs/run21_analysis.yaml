@@ -1,0 +1,87 @@
+# RUN Analysis Configuration Template
+# Copy this file and customize for your specific run
+# Example: cp run_analysis_template.yaml ../../configs/run8_analysis.yaml
+
+run_id: "RUN_X"
+description: "Description of this run"
+
+# Data location
+data:
+  raw_data_path: "E:/Pablos_Mighty_measurements/RUN21_xrays"
+  output_base: "E:/Pablos_Mighty_measurements/RUN21_xrays"  # Optional, defaults to raw_data_path
+
+# Run parameters
+experiment:
+  el_field: 2350.0          # V/cm - EL field
+  target_isotope: "Th228"   # Isotope being studied
+  pressure: 2.0             # bar - Gas pressure
+  temperature: 297.0        # K - Temperature
+  sampling_rate: 5.0e9      # Hz - Oscilloscope sampling rate
+  el_gap: 0.8               # cm - EL gap distance
+  drift_gap: 1.4            # cm - Drift gap distance
+  width_s2: 1.1             # µs - S2 signal width
+  W_value: 22.0             # eV - Mean energy per ion pair
+  E_gamma_xray: 12300.0     # eV - X-ray energy
+
+#  Multi-isotope configuration (optional)
+multi_isotope:
+  enabled: false
+  isotope_ranges:
+    Th228: [4.0, 4.7]       # keV
+    Ra224: [4.7, 5.0]       # keV
+    Rn220: [5.2, 5.5]       # keV
+    Po216: [5.5, 6.0]       # keV
+    Po212: [6.0, 10.0]     # keV  
+  # Energy mapping and calibration configuration
+  energy_mapping:
+    generate: true            # Set to false to skip regeneration if maps exist
+    files_per_chunk: 10       # Files per binary chunk (10-100 typical)
+    format: "8b"              # "8b" (float32, accurate) or "6b" (uint16, compact)
+    scale: 0.1                # For "6b" format: keV per LSB
+    pattern: "*Ch4.wfm"       # Glob pattern for alpha channel files
+    savgol_window: 501        # Savitzky-Golay window size (21-5001, must be odd, default: 501)
+    nbins: 120                # Number of bins for energy spectrum histograms
+    energy_range: [4, 8.2]    # MeV - Energy range for spectrum fitting [SCA scale]
+    n_sigma: 2.0              # Number of sigmas for isotope range definition (default: 2.0)
+    use_quadratic: true       # Use quadratic (vs linear) energy calibration
+
+
+# Pipeline configuration
+pipeline:
+  # Preparation stage (S1/S2 timing estimation)
+  preparation:
+    max_frames_s1: 1000       # Number of frames for S1 estimation
+    max_frames_s2: 1000       # Number of frames for S2 estimation
+    threshold_s1: 1.0         # mV - S1 detection threshold
+    threshold_s2: 0.8         # mV - S2 detection threshold
+    s2_duration_cuts: [1, 35] # µs - Min/max S2 duration
+  
+  # Integration stage (S2 area calculation)
+  integration:
+    max_frames: null          # null = all frames, or specify number
+    integration_config:
+      n_pedestal: 100         # Samples for pedestal calculation
+      ma_window: 9            # Moving average window size
+      bs_threshold: 0.03      # mV - Baseline subtraction threshold
+      dt: 0.0002              # µs - Time step for integration (0.2 ns for 5 GS/s)
+    fit_config:
+      bin_cuts: [0, 10]       # mV·µs - Histogram range
+      nbins: 100              # Number of histogram bins
+      exclude_index: 1       # Bins to exclude from fit (deprecated - use automatic method)
+      bg_threshold: 0.3       # Background fraction threshold for two-stage fitting (0-1)
+      bg_cutoff: 1.0          # mV·µs - Upper limit for background fitting
+      n_sigma: 2.5            # Sigmas above background mean for signal region cutoff
+      upper_limit: 5.0        # mV·µs - Upper limit for signal fitting range
+  
+  # X-ray classification (optional - use --xray-only flag)
+  xray_classification:
+    max_frames: null          # null = all frames, or specify number
+    bs_threshold: 0.5         # mV - Baseline threshold for signal detection
+    max_area_s1: 1.0e5        # mV·µs - Max allowed area before S1 (reject large pre-S1 signals)
+    max_area_s2: 1.0e5        # mV·µs - Max allowed area in S2 window (reject noise/pile-up)
+    min_xray_area: 0.0        # mV·µs - Min required X-ray area (reject low-quality events)
+    min_s2_sep: 1.0           # µs - Min required separation before S2 window
+    min_s1_sep: 0.5           # µs - Min required separation after S1
+    n_pedestal: 200           # Samples for pedestal calculation
+    ma_window: 10             # Moving average window size
+    dt: 0.0002                # µs - Integration timestep

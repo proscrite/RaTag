@@ -195,18 +195,19 @@ def _classify_xrays_in_set(set_pmt: SetPmt,
     """
     print(f"  Classifying X-rays in window: [{t_s1:.2f}, {s2_start:.2f}] µs")
     
-    accepted_uids = []
-    accepted_areas = []
-    tracker = _RejectionTracker()
     
     # Compute how many files to process (rounds up to complete files)
     max_files, actual_frames = compute_max_files(max_frames, set_pmt.nframes)
-    
+
     if max_frames is not None:
         print(f"  Processing {max_files} files (~{actual_frames} frames)")
     
     # Type ignore: iter_frameproxies accepts max_files=None per its signature
-    for frame_wf in iter_frameproxies(set_pmt, max_files=max_files):  # type: ignore[arg-type]
+    accepted_uids = []
+    accepted_areas = []
+    tracker = _RejectionTracker()
+
+    for frame_wf in iter_frameproxies(set_pmt, max_files=max_files, show_progress=True):  # type: ignore[arg-type]
         try:
             uid = make_uid(frame_wf.file_seq, frame_wf.frame_idx)
             frame_pmt = frame_wf.load_pmt_frame()  # type: ignore[assignment]

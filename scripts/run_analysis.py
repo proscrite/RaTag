@@ -43,7 +43,6 @@ Example:
 """
 
 import argparse
-from numpy import int_
 import yaml
 from pathlib import Path
 from datetime import datetime

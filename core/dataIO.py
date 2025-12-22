@@ -96,26 +96,48 @@ def iter_frames(set_pmt, max_files: int = None) -> Iterator[Waveform]:
             # Single frame: yield as-is
             yield wf
 
-def iter_frameproxies(set_pmt: SetPmt, chunk_dir: str = None, fmt='8b', scale=0.1, max_files: int=None) -> Iterator[FrameProxy]:
+def iter_frameproxies(set_pmt: SetPmt, chunk_dir: str = None, fmt='8b', scale=0.1, max_files: int=None, show_progress: bool = False) -> Iterator[FrameProxy]:
     """
     Iterate over files in the SetPmt and yield FrameProxy objects.
     - set_pmt.filenames must be list of file paths
     - parse file_seq via your existing logic (use parse_file_seq_from_name or sequential)
+
+    Optional progress printing:
+    - When `show_progress=True` prints integer percent completion (frames) and
+      the current file number / total files. The percent is printed only when
+      the integer value increases (1% steps).
     """
     from RaTag.alphas.energy_map_writer import parse_file_seq_from_name
-    
-    if chunk_dir == None:     # Handle custom chunk_dirs, if None, default is the set_pmt raw_data loc
+
+    if chunk_dir is None:     # Handle custom chunk_dirs, if None, default is the set_pmt raw_data loc
         chunk_dir = set_pmt.source_dir
 
     files = set_pmt.filenames if max_files is None else set_pmt.filenames[:max_files]
+
+    total_files = len(files)
+    total_frames = total_files * (set_pmt.nframes or 0)
+
+    frames_processed = 0
+    last_percent = -1
+    current_file_num = 0
+
     for p in files:
         file_seq = parse_file_seq_from_name(p)  # or use manifest mapping if you used it earlier
+        current_file_num += 1
         # optionally verify path exists
         for frame_idx in range(set_pmt.nframes):
-            yield FrameProxy(file_path=set_pmt.source_dir / p, 
-                             file_seq=file_seq, 
-                             frame_idx=frame_idx, 
-                             chunk_dir=chunk_dir, 
+            # Update progress counters
+            frames_processed += 1
+            if show_progress and total_frames > 0:
+                percent = int((frames_processed * 100) / total_frames)
+                if percent > last_percent:
+                    last_percent = percent
+                    print(f"  {percent}% complete — file {current_file_num}/{total_files}")
+
+            yield FrameProxy(file_path=set_pmt.source_dir / p,
+                             file_seq=file_seq,
+                             frame_idx=frame_idx,
+                             chunk_dir=chunk_dir,
                              fmt=fmt, scale=scale)
 # ----------------------------------------
 # --- Subdirectory parsers for set constructions  ---

@@ -91,7 +91,8 @@ class FrameProxy:
     @staticmethod
     def _check_channel(file_path: str, which: str = 'pmt'):
         if which == 'pmt':
-            return 'Ch1' in file_path
+            # return 'Ch1' in file_path
+            return 'Wfm' in file_path or 'Ch1' in file_path
         elif which == 'alpha':
             return 'Ch4' in file_path
         else:
@@ -141,7 +142,7 @@ class FrameProxy:
             load_path = self.file_path
         else:
             load_path = FrameProxy._swap_ch_filepath(str(self.file_path))
-        
+
         wf_pmt = FrameProxy._load_file_waveforms_cached(load_path, which='pmt')
         frame = extract_single_frame(wf_pmt, self.frame_idx)        # guard in case file has fewer frames done internally
         return frame

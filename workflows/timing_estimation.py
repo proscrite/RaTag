@@ -146,7 +146,7 @@ def compute_s1(set_pmt: SetPmt,
                                            threshold_s1=threshold_s1)
     
     # Filter both uids and s1_times with the same mask
-    mask = s1_times < -0.5
+    mask = s1_times < -2.5
     uids = uids[mask]
     s1_times = s1_times[mask]
     
@@ -241,6 +241,7 @@ def workflow_s1_timing(set_pmt: SetPmt,
     plots_dir = set_pmt.source_dir.parent / "plots" / "all" / "t_s1"
     plots_dir.mkdir(parents=True, exist_ok=True)
     
+    print(f"  Saving S1 timing results in {data_dir.relative_to(set_pmt.source_dir.parent)}")
     # Save
     save_timing_results(updated_set, uids_s1, s1_times, data_dir, signal_type='t_s1')
     
