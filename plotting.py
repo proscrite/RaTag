@@ -677,10 +677,12 @@ def plot_s2_diffusion_analysis(drift_times: np.ndarray,
     return fig, axes
 
 
-def plot_alpha_energy_spectrum(energies: np.ndarray, 
+def plot_alpha_energy_spectrum(energies: np.ndarray,
                                title: str = 'Alpha Energy Spectrum',
                                nbins: int = 120,
-                               energy_range: tuple = (4, 8)) -> tuple:
+                               energy_range: tuple = (4, 8),
+                               ax: Optional[plt.Axes] = None,
+                               normalize: bool = False) -> tuple:
     """
     Plot alpha energy spectrum histogram.
     
@@ -689,17 +691,32 @@ def plot_alpha_energy_spectrum(energies: np.ndarray,
         title: Plot title
         nbins: Number of histogram bins
         energy_range: (min, max) energy range [MeV]
-        
+        ax: Optional axes to plot on
+        normalize: If True, normalize histogram to max bin = 1
     Returns:
         (fig, ax) tuple
     """
-    fig, ax = plt.subplots(figsize=(12, 6))
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(12, 6))
+
+    # Normalization mode: scale max bin to 1
+    if normalize:
+        # compute histogram and plot normalized step (peak -> 1)
+        n, bins = np.histogram(energies, bins=nbins, range=energy_range)
+        maxc = n.max() if n.max() > 0 else 1
+        bin_centers = 0.5 * (bins[:-1] + bins[1:])
+        ax.step(bin_centers, n.astype(float) / float(maxc), where='mid')
     
-    ax.hist(energies, bins=nbins, range=energy_range, alpha=0.7, edgecolor='black')
-    ax.set(xlabel='Energy [MeV]', ylabel='Counts', title=title)
+    else:
+        n, bins, patches = ax.hist(energies, bins=nbins, range=energy_range, alpha=0.7, edgecolor='black')
+    
+    ax.set(xlabel='Energy [MeV]', ylabel='Counts' if not normalize else 'Normalized counts', title=title)
     ax.grid(True, alpha=0.3)
-    
+
+    fig = plt.gcf()
     fig.tight_layout()
+
     return fig, ax
 
 

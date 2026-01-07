@@ -20,12 +20,15 @@ from functools import partial
 from RaTag.core.datatypes import Run
 from RaTag.core.config import AlphaCalibrationConfig
 from RaTag.core.functional import pipe_run
+from dataclasses import replace
+from RaTag.core.constructors import populate_alpha_sets
 from RaTag.workflows.energy_mapping import create_energy_maps_in_run, plot_energy_spectra_in_run
 from RaTag.workflows.spectrum_calibration import (
     fit_and_calibrate_spectrum,
     derive_isotope_ranges_from_calibration,
     plot_calibration_validation,
     fit_hierarchical_alpha_spectrum,
+    create_alpha_overlay,
 )
 
 
@@ -224,3 +227,105 @@ def alpha_calibration_quick(run: Run,
     ]
     
     return pipe_run(run, *steps)
+
+
+def alpha_calibration_singleiso(run: Run,
+                                savgol_window: int = 501,
+                                energy_range: tuple = (4, 8.2),
+                                calibration_config: AlphaCalibrationConfig = AlphaCalibrationConfig(),
+                                force_refit: bool = False) -> Run:
+    """
+    Alpha spectrum calibration for single-isotope runs with monitoring sets.
+    
+    This pipeline handles alpha monitoring calibration for single-isotope runs
+    where alpha data is stored in separate Ch4_* directories. Automatically
+    detects alpha monitoring sets and performs calibration.
+    
+    Prerequisites:
+    - Run must be initialized (sets populated)
+    - Raw alpha waveform files must exist in Ch4_* directories
+    
+    Args:
+        run: Base Run object (alpha sets will be auto-detected)
+        savgol_window: Savitzky-Golay window size (default: 501 samples)
+        energy_range: (min, max) energy range for fitting [mV in SCA scale]
+        calibration_config: AlphaCalibrationConfig with parameters
+        force_refit: If True, recompute calibration/ranges/plots
+        
+    Returns:
+        Run object (note: ephemeral, contains only alpha sets)
+        
+    Example:
+        >>> alpha_calibration_singleiso(run, force_refit=True)
+
+    This variant of the alpha calibration pipeline performs the usual
+    calibration stages but modifies the plotting step for single-isotope
+    monitoring runs:
+      - Energy maps are generated (cached)
+      - The existing per-set plots are created by plot_energy_spectra_in_run()
+      - The aggregated plot created by the generic function is removed
+        (not physically meaningful for mixed SCA/noSCA sets)
+      - A new normalized overlay plot is created that overlays the
+        per-set spectra after peak-normalization
+      - The remaining calibration steps (fit, derive ranges, validation,
+        hierarchical fit) are run as in the standard pipeline
+
+    Returns an ephemeral run containing only the alpha monitoring sets.
+    """
+
+    # Auto-detect alpha monitoring sets and construct ephemeral runs
+    alpha_run, alpha_run_noSCA = populate_alpha_sets(run)
+
+    if not alpha_run.sets:
+        print("No alpha monitoring sets found - skipping alpha calibration")
+        return run
+
+    print(f"\n{'='*70}")
+    print("SINGLE-ISOTOPE ALPHA MONITORING CALIBRATION")
+    print(f"Found {len(alpha_run.sets)} alpha monitoring sets: {[s.source_dir.name for s in alpha_run.sets]}")
+    print(f"{'='*70}")
+
+    # Stage 1: Create energy maps (cached check inside)
+    create_energy_maps_in_run(alpha_run,
+                              files_per_chunk=calibration_config.files_per_chunk,
+                              fmt=calibration_config.fmt,
+                              scale=calibration_config.scale,
+                              pattern=calibration_config.pattern,
+                              savgol_window=savgol_window)
+
+    # Stage 2: Plot per-set spectra (this will also create an aggregated plot)
+    plot_energy_spectra_in_run(alpha_run,
+                              nbins=calibration_config.nbins,
+                              energy_range=energy_range)
+
+    # Post-process plots: delete aggregated and create normalized overlay via workflow
+    create_alpha_overlay(alpha_run,
+                         nbins=calibration_config.nbins,
+                         energy_range=energy_range,
+                         normalize='peak')
+
+    # Continue with remaining calibration steps (fit, derive ranges, validation, hierarchical fit)
+    # Calibration requires a noSCA set. If none was found, skip the calibration steps.
+    if alpha_run_noSCA is None:
+        print("  ⚠ No 'Ch4_noSCA' calibration set found; calibration requires a noSCA set. Skipping calibration pipeline.")
+        return run
+
+    calib_run = fit_and_calibrate_spectrum(alpha_run_noSCA,
+                                           energy_range=energy_range,
+                                           aggregate=True,
+                                           force_refit=force_refit)
+
+    calib_run = derive_isotope_ranges_from_calibration(calib_run,
+                                                       n_sigma=calibration_config.n_sigma,
+                                                       use_quadratic=calibration_config.use_quadratic,
+                                                       force_refit=force_refit)
+
+    calib_run = plot_calibration_validation(calib_run,
+                                           use_quadratic=calibration_config.use_quadratic,
+                                           force_replot=force_refit)
+
+    calib_run = fit_hierarchical_alpha_spectrum(calib_run,
+                                                force_refit=force_refit)
+
+    print(f"\n✓ Alpha monitoring calibration complete")
+    return calib_run

@@ -46,6 +46,9 @@ import argparse
 import yaml
 from pathlib import Path
 from datetime import datetime
+from dataclasses import replace
+
+from typing import Optional
 
 from RaTag.core.datatypes import Run
 from RaTag.core.config import IntegrationConfig, FitConfig, XRayConfig, AlphaCalibrationConfig
@@ -54,7 +57,7 @@ from RaTag.workflows.spectrum_calibration import load_computed_ranges
 from RaTag.pipelines.run_preparation import prepare_run, prepare_run_multiiso
 from RaTag.pipelines.recoil_only import recoil_pipeline, recoil_pipeline_multiiso
 from RaTag.pipelines.xray_only import xray_pipeline, xray_pipeline_multiiso
-from RaTag.pipelines.alpha_calibration import alpha_calibration
+from RaTag.pipelines.alpha_calibration import alpha_calibration, alpha_calibration_singleiso
 from RaTag.pipelines.unified_xray_and_recoil import unified_pipeline
 
 def load_config(config_path: Path) -> dict:
@@ -199,13 +202,6 @@ def main():
         parser.error("Cannot specify multiple --*-only flags")
     run_all = not any(only_flags)
     
-    stages = {
-        'alphas': args.alphas_only or (run_all and False),  # Only when multiiso AND (flag OR run_all)
-        'preparation': args.prepare_only or run_all,
-        'integration': args.integrate_only or run_all,
-        'xray': args.xray_only or run_all
-    }
-    
     # Load configuration
     print(f"Loading configuration from {args.config}")
     config = load_config(args.config)
@@ -213,6 +209,13 @@ def main():
     # Check if multi-isotope mode
     is_multiiso = config.get('multi_isotope', {}).get('enabled', False)
     isotope_ranges = None
+    
+    stages = {
+        'alphas': args.alphas_only or run_all,  # Run alphas for both modes when run_all or alphas_only
+        'preparation': args.prepare_only or run_all,
+        'integration': args.integrate_only or run_all,
+        'xray': args.xray_only or run_all
+    }
     
     # Log start
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -230,54 +233,64 @@ def main():
     print(f"Found {len(run.sets)} sets")
 
     # ========================================================================
-    # ALPHA ENERGY MAPPING (if multi-isotope enabled)
+    # ALPHA ENERGY MAPPING AND CALIBRATION
     # ========================================================================
-    if is_multiiso:
-        # Determine which isotope ranges to use
-        isotope_ranges, using_computed = determine_isotope_ranges(run, config, args.use_yaml_ranges)
-        print_ranges_status(isotope_ranges, using_computed, args.use_yaml_ranges, run.run_id)
+    if stages['alphas']:
+        # Get energy mapping config and create calibration config
+        energy_cfg = config.get('energy_mapping', {})
+        calib_config = AlphaCalibrationConfig(
+            files_per_chunk=energy_cfg.get('files_per_chunk', 10),
+            fmt=energy_cfg.get('format', '8b'),
+            scale=energy_cfg.get('scale', 0.1),
+            pattern=energy_cfg.get('pattern', '*Ch4.wfm' if is_multiiso else '*.wfm'),
+            nbins=energy_cfg.get('nbins', 120),
+            n_sigma=energy_cfg.get('n_sigma', 1.0),
+            use_quadratic=energy_cfg.get('use_quadratic', True)
+        )
         
-        # Update stages to enable alphas if multiiso and run_all
-        if run_all:
-            stages['alphas'] = True
-        
-        if stages['alphas']:
-            # Generate energy maps and calibration if configured
-            energy_cfg = config['multi_isotope'].get('energy_mapping', {})
-            if energy_cfg.get('generate', True):
-                # Create calibration config from YAML
-                calib_config = AlphaCalibrationConfig(
-                    files_per_chunk=energy_cfg.get('files_per_chunk', 10),
-                    fmt=energy_cfg.get('format', '8b'),
-                    scale=energy_cfg.get('scale', 0.1),
-                    pattern=energy_cfg.get('pattern', '*Ch4.wfm'),
-                    nbins=energy_cfg.get('nbins', 120),
-                    n_sigma=energy_cfg.get('n_sigma', 1.0),
-                    use_quadratic=energy_cfg.get('use_quadratic', True)
-                )
-                
-                run = alpha_calibration(run,
+        if is_multiiso:
+            # Run multi-isotope alpha calibration
+            run = alpha_calibration(run,
+                                   savgol_window=energy_cfg.get('savgol_window', 501),
+                                   energy_range=tuple(energy_cfg.get('energy_range', [4, 8.2])),
+                                   calibration_config=calib_config,
+                                   force_refit=args.force_refit)
+            
+            # Reload computed ranges for downstream use
+            isotope_ranges = load_computed_ranges(run.run_id, run.root_directory)
+            print(f"\n✓ Calibration complete - computed ranges available for downstream stages")
+        else:
+            # Run single-isotope alpha monitoring
+            alpha_calibration_singleiso(run,
                                        savgol_window=energy_cfg.get('savgol_window', 501),
                                        energy_range=tuple(energy_cfg.get('energy_range', [4, 8.2])),
                                        calibration_config=calib_config,
                                        force_refit=args.force_refit)
-                
-                # Reload computed ranges for downstream use
-                isotope_ranges = load_computed_ranges(run.run_id, run.root_directory)
-                using_computed = True
-                print(f"\n✓ Calibration complete - computed ranges available for downstream stages")
-            
-            if args.alphas_only:
+        
+        if args.alphas_only:
+            if is_multiiso:
                 print(f"\n{'='*60}")
                 print("STOPPING AFTER ALPHA CALIBRATION (--alphas-only flag)")
                 print(f"  📊 Review plots in processed_data/spectrum_calibration/")
                 print(f"  💡 Remove --alphas-only to continue with full pipeline using computed ranges")
                 print(f"{'='*60}")
-                return
-            
-            # Interactive verification prompt when using computed ranges
-            if using_computed and not args.use_yaml_ranges:
-                prompt_verify_computed_ranges(run, isotope_ranges)
+            else:
+                print(f"\n{'='*60}")
+                print("STOPPING AFTER ALPHA MONITORING (--alphas-only flag)")
+                print(f"  📊 Review alpha spectrum plots in processed_data/spectrum_calibration/")
+                print(f"{'='*60}")
+            return
+    
+    # For multi-isotope: determine ranges, setup verification
+    if is_multiiso:
+        if not stages['alphas']:
+            # Determine which isotope ranges to use (if alphas stage was skipped)
+            isotope_ranges, using_computed = determine_isotope_ranges(run, config, args.use_yaml_ranges)
+            print_ranges_status(isotope_ranges, using_computed, args.use_yaml_ranges, run.run_id)
+        
+        # Interactive verification prompt when using computed ranges
+        if isotope_ranges and not args.use_yaml_ranges and not args.alphas_only:
+            prompt_verify_computed_ranges(run, isotope_ranges)
     
     # ========================================================================
     # PREPARATION STAGE

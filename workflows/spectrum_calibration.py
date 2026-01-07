@@ -36,6 +36,8 @@ from RaTag.alphas.spectrum_plotting import (
     plot_hierarchical_fit,
     plot_overlap_resolution,
 )
+from RaTag.alphas.energy_map_reader import load_energy_index
+from RaTag.plotting import plot_alpha_energy_spectrum
 
 
 # ============================================================================
@@ -94,6 +96,71 @@ def _setup_output_directories(run: Run) -> tuple[Path, Path]:
     data_dir.mkdir(parents=True, exist_ok=True)
     
     return plots_dir, data_dir
+
+
+def create_alpha_overlay(run: Run,
+                         nbins: int = 120,
+                         energy_range: tuple = (4, 8.2),
+                         normalize: str = 'peak') -> Run:
+    """
+    Create a normalized overlay plot of per-set alpha spectra for a run.
+
+    This function:
+      - Loads per-set energy maps
+      - Optionally deletes the generic aggregated plot (if present)
+      - Produces an overlay plot where each set's histogram is normalized
+        (by peak or area) and plotted together for visual comparison.
+
+    Returns the unchanged run.
+    """
+    # Determine plots directory (same location used by plot_energy_spectra_in_run)
+    if not run.sets:
+        print("  ⚠ No sets in run - skipping overlay")
+        return run
+
+    plots_dir = run.sets[0].source_dir.parent / "plots" / "alpha_spectra"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    # Delete aggregated plot if exists (This is a patch to avoid modifying plot_energy_spectra_in_run)
+    agg_plot = plots_dir / f"{run.run_id}_alpha_spectrum_aggregated.png"
+    if agg_plot.exists():
+        try:
+            agg_plot.unlink()
+            print(f"  ✂ Deleted aggregated plot: {agg_plot.name}")
+        except Exception as e:
+            print(f"  ⚠ Could not delete aggregated plot: {e}")
+
+    # Prepare overlay
+    fig, ax = plt.subplots(figsize=(12, 6))
+    for set_pmt in run.sets:
+        energy_maps_dir = set_pmt.source_dir.parent / "energy_maps" / set_pmt.source_dir.name
+        if not energy_maps_dir.exists():
+            print(f"  ⚠ No energy maps for {set_pmt.source_dir.name} - skipping")
+            continue
+        try:
+            _, energies = load_energy_index(str(energy_maps_dir), fmt='8b')
+        except Exception as e:
+            print(f"  ⚠ Failed loading energies for {set_pmt.source_dir.name}: {e}")
+            continue
+
+        # Reuse plotting function with normalization + shared ax
+        plot_alpha_energy_spectrum(energies, title='', nbins=nbins, energy_range=energy_range, ax=ax, normalize=normalize)
+        # ensure label
+        ax.lines[-1].set_label(set_pmt.source_dir.name) if ax.lines else None
+
+    ax.set(title=f"{run.run_id} - Alpha Spectra (normalized overlay)", xlabel='Energy [MeV]', ylabel='Normalized counts')
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3)
+
+    overlay_fname = plots_dir / f"{run.run_id}_alpha_spectrum_overlay.png"
+    try:
+        save_figure(fig, overlay_fname)
+        plt.close(fig)
+        print(f"  ✅ Saved overlay plot: {overlay_fname.name}")
+    except Exception as e:
+        print(f"  ⚠ Failed to save overlay plot: {e}")
+
+    return run
 
 def _store_calibration(calib_file: Path, calibration_linear, calibration_quad) -> None:
     np.savez(calib_file,

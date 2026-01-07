@@ -76,10 +76,10 @@ class XRayConfig:
 
 # Main peaks for preliminary fitting (5 peaks in SCA scale)
 ALPHA_PEAK_DEFINITIONS = [
-    {'name': 'Th228', 'position': 4.5, 'window': (4.0, 4.7), 'sigma_init': 0.15, 'ref_energy': 5.42315},
-    {'name': 'Ra224', 'position': 4.8, 'window': (4.65, 5.1), 'sigma_init': 0.15, 'ref_energy': 5.68537},
+    {'name': 'Th228', 'position': 4.5, 'window': (4.0, 4.6), 'sigma_init': 0.15, 'ref_energy': 5.42315},
+    {'name': 'Ra224', 'position': 4.8, 'window': (4.62, 5.1), 'sigma_init': 0.15, 'ref_energy': 5.68537},
     {'name': 'Rn220', 'position': 5.4, 'window': (5.0, 5.5), 'sigma_init': 0.15, 'ref_energy': 6.40484},
-    {'name': 'Po216', 'position': 5.9, 'window': (5.6, 6.1), 'sigma_init': 0.15, 'ref_energy': 6.90628},
+    {'name': 'Po216', 'position': 5.9, 'window': (5.5, 6.1), 'sigma_init': 0.15, 'ref_energy': 6.90628},
     {'name': 'Po212', 'position': 7.5, 'window': (6.3, 8.0), 'sigma_init': 0.15, 'ref_energy': 8.785},
 ]
 

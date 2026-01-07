@@ -1,6 +1,6 @@
 from dataclasses import replace
 from pathlib import Path
-from typing import  Optional, List
+from typing import  Optional, List, Tuple
 
 from .dataIO import load_wfm, parse_subdir_name
 from .datatypes import SetPmt, Run
@@ -39,6 +39,45 @@ def populate_run(run: Run, nfiles: Optional[int] = None) -> Run:
             print(f"  Warning: Failed to load {subdir.name}: {e}")
     
     return replace(run, sets=sets)
+
+def populate_alpha_sets(run: Run, nfiles: Optional[int] = None) -> Tuple[Run, Optional[Run]]:
+    """
+    Populate alpha monitoring sets from Ch4_* subdirectories.
+    
+    Args:
+        run: Run object with root_directory
+        nfiles: Optional limit on files per set
+        
+    Returns:
+        Tuple of (alpha_run, alpha_run_noSCA_or_None)
+
+    Note:
+        The returned Runs are ephemeral and meant for calibration only.
+        `alpha_run` contains all discovered `Ch4_*` sets. `alpha_run_noSCA` is
+        a Run containing a single `Ch4_noSCA` set when present, otherwise None.
+    """
+    alpha_sets = []
+    subdirs = [d for d in run.root_directory.iterdir() if (d.is_dir() and d.name.startswith('Ch4'))]
+
+    for subdir in sorted(subdirs):
+        try:
+            set_pmt = set_from_dir(subdir, nfiles=nfiles)
+            alpha_sets.append(set_pmt)
+            
+            # Log FastFrame info
+            ff_info = f"FastFrame ({set_pmt.nframes} frames/file)" if set_pmt.ff else "single-frame"
+            print(f"  Alpha set: {subdir.name} - {len(set_pmt)} files ({set_pmt.n_waveforms} waveforms) [{ff_info}]")
+        except Exception as e:
+            print(f"  Warning: Failed to load alpha set {subdir.name}: {e}")
+    
+
+    # Create an ephemeral run containing only the alpha sets (patch to prevent modifying populate_run)
+    alpha_run = replace(run, sets=alpha_sets)
+
+    noSCA_set = next((s for s in alpha_sets if 'noSCA' in s.source_dir.name), None)
+    alpha_run_noSCA = replace(run, sets=[noSCA_set]) if noSCA_set is not None else None
+
+    return alpha_run, alpha_run_noSCA
 
 # ------------------------
 # --- Set constructors ---
