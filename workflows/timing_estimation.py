@@ -327,7 +327,7 @@ def estimate_s1_in_run(run: Run,
                                  workflow_func=workflow_s1_timing,
                                  workflow_name="S1 timing estimation",
                                  cache_key="t_s1",
-                                 data_file_suffix="s1.npz",
+                                 data_file_suffix="t_s1.npz",
                                  max_frames=max_frames,
                                  threshold_s1=threshold_s1)
 
@@ -341,7 +341,7 @@ def estimate_s2_in_run(run: Run,
                                  workflow_func=workflow_s2_timing,
                                  workflow_name="S2 timing estimation",
                                  cache_key="t_s2_start",
-                                 data_file_suffix="s2.npz",
+                                 data_file_suffix="t_s2.npz",
                                  max_frames=max_frames,
                                  threshold_s2=threshold_s2,
                                  s2_duration_cuts=s2_duration_cuts)

@@ -25,7 +25,7 @@ Usage:
     python scripts/run_analysis.py path/to/config.yaml --prepare-only
     
     # Only integration stage (assumes preparation done)
-    python scripts/run_analysis.py path/to/config.yaml --integrate-only
+    python scripts/run_analysis.py path/to/config.yaml --recoil-only
     
     # Only X-ray classification (assumes preparation done)
     python scripts/run_analysis.py path/to/config.yaml --xray-only
@@ -182,7 +182,7 @@ def main():
                        help='Only run alpha energy mapping and calibration')
     parser.add_argument('--prepare-only', action='store_true',
                        help='Only run preparation (skip integration)')
-    parser.add_argument('--integrate-only', action='store_true',
+    parser.add_argument('--recoil-only', action='store_true',
                        help='Only run integration (assumes preparation done)')
     parser.add_argument('--xray-only', action='store_true',
                        help='Only run X-ray classification pipeline')
@@ -197,7 +197,7 @@ def main():
     args = parser.parse_args()
     
     # Validate arguments - only one "only" flag allowed
-    only_flags = [args.alphas_only, args.prepare_only, args.integrate_only, args.xray_only, args.only_unified]
+    only_flags = [args.alphas_only, args.prepare_only, args.recoil_only, args.xray_only, args.only_unified]
     if sum(only_flags) > 1:
         parser.error("Cannot specify multiple --*-only flags")
     run_all = not any(only_flags)
@@ -213,7 +213,7 @@ def main():
     stages = {
         'alphas': args.alphas_only or run_all,  # Run alphas for both modes when run_all or alphas_only
         'preparation': args.prepare_only or run_all,
-        'integration': args.integrate_only or run_all,
+        'recoil': args.recoil_only or run_all,
         'xray': args.xray_only or run_all
     }
     
@@ -368,7 +368,7 @@ def main():
     # ========================================================================
     # The following blocks are mutually exclusive:
     # - If run_all (default) or --only-unified is set, run the unified pipeline and skip the old pipelines.
-    # - If --integrate-only or --xray-only is set, run only the corresponding pipeline.
+    # - If --recoil-only or --xray-only is set, run only the corresponding pipeline.
     # This prevents double processing of the same data.
     # ========================================================================
     if run_all or args.only_unified:
@@ -392,9 +392,9 @@ def main():
     # ========================================================================
     # INTEGRATION STAGE (only runs if unified pipeline is not selected)
     # ========================================================================
-    elif stages['integration']:
+    elif stages['recoil']:
         print("\n" + "="*60)
-        print("STAGE 2: INTEGRATION")
+        print("STAGE 2: RECOIL INTEGRATION")
         print("="*60)
         
         if is_multiiso:
@@ -412,9 +412,9 @@ def main():
         
         print("\n✓ Integration complete")
         
-        if args.integrate_only:
+        if args.recoil_only:
             print(f"\n{'='*60}")
-            print("STOPPING AFTER INTEGRATION (--integrate-only flag)")
+            print("STOPPING AFTER INTEGRATION (--recoil-only flag)")
             print(f"{'='*60}")
             return
     

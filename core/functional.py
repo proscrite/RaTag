@@ -75,7 +75,8 @@ def compute_max_files(max_frames: Optional[int], nframes_per_file: int) -> tuple
     """
     if max_frames is None:
         return None, None
-    
+    max_frames = int(float(max_frames))
+
     max_files = int(np.ceil(max_frames / nframes_per_file))
     actual_frames = max_files * nframes_per_file
     
@@ -117,19 +118,26 @@ def with_persistence(fn: Callable[[T], T],
                      save_fn: Callable[[T], None]) -> Callable[[T], T]:
     """
     Wrap a function to automatically save its result.
-    
+
     Args:
         fn: Function to wrap
         save_fn: Function to save the result
-        
+
     Returns:
-        Wrapped function that saves after execution
+        A wrapper function that calls `fn`, then calls `save_fn(result)` and
+        returns the result. Exceptions raised while saving are caught and
+        logged without interrupting the normal flow.
     """
-    def wrapped(item: T) -> T:
-        result = fn(item)
-        save_fn(result)
+
+    def wrapper(*args, **kwargs):
+        result = fn(*args, **kwargs)
+        try:
+            save_fn(result)
+        except Exception as e:
+            print(f"  ⚠ Failed to persist result: {e}")
         return result
-    return wrapped
+
+    return wrapper
 
 
 # ============================================================================

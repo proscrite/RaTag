@@ -162,4 +162,17 @@ def integrate_unified_in_run(run: Run,
     Uses apply_workflow_to_run for set-level orchestration and caching.
     """
     
-    return apply_workflow_to_run(run, workflow_func=workflow_unified_integration, workflow_name="Unified X-ray + S2 integration", cache_key="n_s2_integrated", data_file_suffix="s2_areas.npz", range_sets=range_sets, max_frames=max_frames, integration_config=integration_config, xray_config=xray_config)
+    # Allow processing a subset of sets via range_sets (consistent with other run-level wrappers)
+    if range_sets is not None:
+        filtered_run = replace(run, sets=run.sets[range_sets])
+    else:
+        filtered_run = run
+
+    return apply_workflow_to_run(filtered_run,
+                                 workflow_func=workflow_unified_integration,
+                                 workflow_name="Unified X-ray + S2 integration",
+                                 cache_key="area_s2_mean",
+                                 data_file_suffix="s2_areas.npz",
+                                 max_frames=max_frames,
+                                 integration_config=integration_config,
+                                 xray_config=xray_config)
