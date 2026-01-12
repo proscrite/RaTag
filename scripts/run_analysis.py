@@ -59,6 +59,7 @@ from RaTag.pipelines.recoil_only import recoil_pipeline, recoil_pipeline_multiis
 from RaTag.pipelines.xray_only import xray_pipeline, xray_pipeline_multiiso
 from RaTag.pipelines.alpha_calibration import alpha_calibration, alpha_calibration_singleiso
 from RaTag.pipelines.unified_xray_and_recoil import unified_pipeline
+from RaTag.pipelines.recombination_analysis import recombination_pipeline
 
 def load_config(config_path: Path) -> dict:
     """Load YAML configuration file."""
@@ -80,9 +81,7 @@ def create_run_from_config(config: dict) -> Run:
         sampling_rate=exp['sampling_rate'],
         el_gap=exp['el_gap'],
         drift_gap=exp['drift_gap'],
-        width_s2=exp['width_s2'],
-        W_value=exp['W_value'],
-        E_gamma_xray=exp['E_gamma_xray'],
+        recoil_energy=exp.get('recoil_energy', 96.8),
         sets=[]
     )
 
@@ -192,12 +191,14 @@ def main():
                        help='Override: use YAML ranges instead of computed overlap-resolved ranges')
     parser.add_argument('--only-unified', action='store_true',
                        help='Run only the unified X-ray + S2 workflow (bypasses separate pipelines)')
+    parser.add_argument('--recombination-only', action='store_true',
+                       help='Only run recombination analysis (assumes prior stages done)')
     
     
     args = parser.parse_args()
     
     # Validate arguments - only one "only" flag allowed
-    only_flags = [args.alphas_only, args.prepare_only, args.recoil_only, args.xray_only, args.only_unified]
+    only_flags = [args.alphas_only, args.prepare_only, args.recoil_only, args.xray_only, args.only_unified, args.recombination_only]
     if sum(only_flags) > 1:
         parser.error("Cannot specify multiple --*-only flags")
     run_all = not any(only_flags)
@@ -214,7 +215,8 @@ def main():
         'alphas': args.alphas_only or run_all,  # Run alphas for both modes when run_all or alphas_only
         'preparation': args.prepare_only or run_all,
         'recoil': args.recoil_only or run_all,
-        'xray': args.xray_only or run_all
+        'xray': args.xray_only or run_all,
+        'recombination': args.recombination_only or run_all
     }
     
     # Log start
@@ -445,7 +447,26 @@ def main():
             print(f"{'='*60}")
             return
     
-    
+    # ========================================================================
+    # RECOMBINATION ANALYSIS STAGE
+    # ========================================================================
+    if stages['recombination']:
+        print("\n" + "="*60)
+        print("STAGE 4: RECOMBINATION ANALYSIS")
+        print("="*60)
+
+        path_gs2 = config.get('recombination_analysis', {}).get('gs2_path', None)
+        if path_gs2 is None:
+            raise ValueError("gs2_path should be provided as a config parameter")
+        df_recomb = recombination_pipeline(run, path_gs2=path_gs2)
+
+        print("\n✓ Recombination analysis complete")
+        if args.recombination_only:
+            print(f"\n{'='*60}")
+            print("STOPPING AFTER RECOMBINATION ANALYSIS (--recombination-only flag)")
+            print(f"{'='*60}")
+            return
+
     # ========================================================================
     # SUMMARY
     # ========================================================================

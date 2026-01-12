@@ -432,13 +432,12 @@ def _fit_signal_crystalball(cbins: np.ndarray,
     
     # Fit Crystal Ball
     cb_sig = lmfit.Model(v_crystalball_right, prefix='sig_')
-    params_sig = cb_sig.make_params(
-        sig_N=n_sig.max(),
-        sig_x0=1.8,
-        sig_sigma=0.5,
-        sig_beta=1.0,
-        sig_m=2.0
-    )
+    params_sig = cb_sig.make_params(sig_N=n_sig.max(), 
+                                    sig_x0=1.8, 
+                                    sig_sigma=0.5, 
+                                    sig_beta=1.0, 
+                                    sig_m=2.0)
+    
     params_sig['sig_x0'].set(min=lower_bound, max=3.5)
     params_sig['sig_sigma'].set(min=0.2, max=1.5)
     params_sig['sig_beta'].set(min=0.3, max=5.0)
@@ -703,14 +702,7 @@ def fit_s2_area_auto(data, bin_cuts=(0, 10), nbins=100, **kwargs):
         Fit results (same structure as fit_s2_simple_cb or fit_s2_two_stage)
         with additional key:
         - 'method': str, 'simple' or 'two_stage'
-        
-    Examples
-    --------
-    >>> result = fit_s2_area_auto(s2_areas)
-    >>> print(f"Peak: {result['peak_position']:.3f} ± {result['peak_stderr']:.3f} mV·µs")
-    >>> print(f"Method used: {result['method']}")
-    >>> print(f"Chi²/dof: {result['redchi']:.2f}")
-    
+            
     Notes
     -----
     This is the recommended top-level function for S2 area fitting.

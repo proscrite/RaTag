@@ -85,3 +85,7 @@ pipeline:
     n_pedestal: 200           # Samples for pedestal calculation
     ma_window: 10             # Moving average window size
     dt: 0.0002                # µs - Integration timestep
+
+# Recombination analysis configuration
+recombination_analysis:
+  gs2_path: '/Volumes/KINGSTON/RaTag_data/RUN21_xrays/processed_data/xray_calibration_results.json'

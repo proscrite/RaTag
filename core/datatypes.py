@@ -216,11 +216,10 @@ class Run:
     width_s2: float = 1.1 # in µs
     t_s1: float = 0.0  # can be refined by batch analysis
 
-    # Calibration constants
+    # Recombination constants
+    recoil_energy: float = 96.8         # keV (Th228 recoil)
     W_value: float = 22.0               # eV per e-ion pair (gas Xe @ 2 bar)
     E_gamma_xray: float = 12.3e3        # eV X-ray energy (for Th228 decay)
-    A_x_mean: Optional[float] = None    # mean X-ray S2 area
-    N_e_exp: Optional[float] = None     # expected electrons
     g_S2: Optional[float] = None        # mV·µs per electron
 
     # Alpha spectrum calibration results (populated by alpha_calibration pipeline)

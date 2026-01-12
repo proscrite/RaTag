@@ -531,6 +531,10 @@ def load_xray_results(run: Run) -> dict[str, XRayResults]:
     Raises:
         ValueError: If no X-ray results could be loaded from any set
     """
+    raise NotImplementedError(
+        "store_xrayset() is deprecated. "
+        "Use store_s2area(s2_areas, set_pmt, suffix='xray_areas') instead."
+    )
     xray_results = {}
     
     for set_pmt in run.sets:
