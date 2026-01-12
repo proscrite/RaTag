@@ -2,13 +2,13 @@
 # Copy this file and customize for your specific run
 # Example: cp run_analysis_template.yaml ../../configs/run8_analysis.yaml
 
-run_id: "RUN_X"
+run_id: "RUN_19"
 description: "Description of this run"
 
 # Data location
 data:
-  raw_data_path: "E:/Pablos_Mighty_measurements/RUN20"
-  output_base: "E:/Pablos_Mighty_measurements/RUN20"  # Optional, defaults to raw_data_path
+  raw_data_path: "E:/Pablos_Mighty_measurements/RUN19"
+  output_base: "E:/Pablos_Mighty_measurements/RUN19"  # Optional, defaults to raw_data_path
 
 # Run parameters
 experiment:

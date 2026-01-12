@@ -11,7 +11,6 @@ from os import path
 from typing import Dict, Tuple, Optional
 import json
 
-from regex import F
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
