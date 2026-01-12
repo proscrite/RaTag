@@ -34,7 +34,8 @@ def recoil_pipeline(run: Run,
                     range_sets: slice = None,
                     max_frames: Optional[int] = None,
                     integration_config: IntegrationConfig = IntegrationConfig(),
-                    fit_config: FitConfig = FitConfig()) -> Run:
+                    fit_config: FitConfig = FitConfig(),
+                    force_refit: bool = False) -> Run:
     """
     Execute complete ion recoil S2 analysis pipeline.
     
@@ -79,7 +80,8 @@ def recoil_pipeline(run: Run,
         
         # Stage 2: Fit S2 area distributions in each set
         partial(fit_s2_in_run,
-                fit_config=fit_config),
+                fit_config=fit_config,
+                force_refit=force_refit),
         
         # Stage 3: Run-level summary plot
         summarize_s2_vs_field
@@ -105,7 +107,8 @@ def recoil_pipeline_multiiso(run: Run,
                              range_sets: slice = None,
                              max_frames: Optional[int] = None,
                              integration_config: IntegrationConfig = IntegrationConfig(),
-                             fit_config: FitConfig = FitConfig()) -> Run:
+                             fit_config: FitConfig = FitConfig(),
+                             force_refit: bool = False) -> Run:
     """
     Complete ion recoil S2 analysis pipeline (multi-isotope with fitting).
     
@@ -130,7 +133,8 @@ def recoil_pipeline_multiiso(run: Run,
         
         # Standard fitting (aggregated)
         partial(fit_s2_in_run,
-                fit_config=fit_config),
+                fit_config=fit_config,
+                force_refit=force_refit),
         
         # Map to isotopes
         partial(run_s2_area_multiiso,
@@ -139,7 +143,8 @@ def recoil_pipeline_multiiso(run: Run,
         # Fit each isotope distribution
         partial(fit_multiiso_s2_in_run,
                 isotope_ranges=isotope_ranges,
-                fit_config=fit_config),
+                fit_config=fit_config,
+                force_refit=force_refit),
         
         # Summary plot (aggregated)
         summarize_s2_vs_field,

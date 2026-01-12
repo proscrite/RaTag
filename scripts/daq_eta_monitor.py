@@ -92,6 +92,10 @@ def monitor_and_plot(path: Path, total_files: int, poll_interval: float = 5.0) -
 
     try:
         # Continuous monitoring loop; recompute ETA based on the most recent moving-average value
+        # guardrail: abort if no new files are created for N consecutive polls
+        last_count = 0
+        no_new_iterations = 0
+        max_no_new = 3
         while True:
             ctimes = get_ctimes(path)
             n_files = 0 if ctimes.size == 0 else (ctimes.size)
@@ -105,6 +109,16 @@ def monitor_and_plot(path: Path, total_files: int, poll_interval: float = 5.0) -
                 print("Only 1 file present — waiting until at least 10 files are available...")
                 time.sleep(poll_interval)
                 continue
+
+            # Guardrail: detect if no new files are being created. Count only after at least 2 files exist.
+            if n_files > last_count:
+                last_count = n_files
+                no_new_iterations = 0
+            else:
+                no_new_iterations += 1
+                if no_new_iterations >= max_no_new:
+                    print(f"No new files created for {no_new_iterations} consecutive polls ({poll_interval}s each); aborting monitoring.")
+                    break
 
             diffs = diffs_from_ctimes(ctimes)
             if diffs.size == 0:

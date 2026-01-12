@@ -286,7 +286,8 @@ def workflow_s2_area_multiiso(set_pmt: SetPmt,
 
 def workflow_fit_multiiso_s2(set_pmt: SetPmt,
                               isotope_ranges: Dict[str, tuple],
-                              fit_config: FitConfig = FitConfig()) -> Dict[str, dict]:
+                              fit_config: FitConfig = FitConfig(),
+                              force_refit: bool = False) -> Dict[str, dict]:
     """
     Fit S2 area distributions for each isotope and save plot with fits.
     
@@ -297,7 +298,7 @@ def workflow_fit_multiiso_s2(set_pmt: SetPmt,
         set_pmt: Set with isotope-mapped data
         isotope_ranges: Dictionary of {isotope: (Emin, Emax)}
         fit_config: Fitting configuration
-        
+        force_refit: Not implemented yet (for future use)
     Returns:
         Dictionary of {isotope: fit_result_dict}
     """
@@ -391,7 +392,8 @@ def integrate_s2_in_run(run: Run,
 
 
 def fit_s2_in_run(run: Run,
-                  fit_config: FitConfig = FitConfig()) -> Run:
+                  fit_config: FitConfig = FitConfig(),
+                  force_refit: bool = False) -> Run:
     """Fit Gaussian to S2 area distributions for all sets."""
     print("\n" + "="*60)
     print("S2 AREA FITTING")
@@ -405,15 +407,17 @@ def fit_s2_in_run(run: Run,
         print(f"\nSet {i}/{len(run.sets)}: {set_pmt.source_dir.name}")
         
         # Check cache
-        if 'area_s2_mean' in set_pmt.metadata:
+        if not force_refit and 'area_s2_mean' in set_pmt.metadata:
             print(f"  📂 Loaded from cache")
             updated_sets.append(set_pmt)
             continue
         
         # Load S2 areas
-        data_dir = set_pmt.source_dir.parent / "processed_data"
-        s2 = load_s2area(set_pmt, input_dir=data_dir)
-        
+        try:
+            data_dir = set_pmt.source_dir.parent / "processed_data"
+            s2 = load_s2area(set_pmt, input_dir=data_dir)
+        except FileNotFoundError:
+            s2 = None
         if s2 is None:
             print(f"  ⚠ No S2 areas found - run integration first")
             updated_sets.append(set_pmt)
@@ -441,7 +445,8 @@ def run_s2_area_multiiso(run: Run,
 
 def fit_multiiso_s2_in_run(run: Run,
                            isotope_ranges: dict,
-                           fit_config: FitConfig = FitConfig()) -> Run:
+                           fit_config: FitConfig = FitConfig(),
+                           force_refit: bool = False) -> Run:
     """
     Run-level wrapper for fitting isotope-separated S2 distributions.
     
@@ -451,7 +456,8 @@ def fit_multiiso_s2_in_run(run: Run,
                                workflow_func=workflow_fit_multiiso_s2,
                                workflow_name="Multi-isotope S2 fitting",
                                isotope_ranges=isotope_ranges,
-                               fit_config=fit_config)
+                               fit_config=fit_config,
+                               force_refit=force_refit)
 
 # ============================================================================
 # HELPER FUNCTIONS
