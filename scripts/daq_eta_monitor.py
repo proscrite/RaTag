@@ -1,0 +1,162 @@
+"""DAQ efficiency monitoring script.
+
+Usage: python daq_efficiency_monitor.py <path_to_daq_dir> <total_files>
+
+This script:
+- monitors .wfm files in the given directory using the file creation time (st_ctime)
+- computes time differences between consecutive files
+- determines a moving-average window size based on the number of files (min 10, max 100)
+  - if only 1 file is present it waits until at least 10 files are available
+- plots only the moving-average of the CTime differences
+- prints an estimated remaining time formatted like "1 hour, 37 min"
+
+Only the creation time (st_ctime) is used for live estimation.
+"""
+from __future__ import annotations
+
+import argparse
+import time
+from glob import glob
+from pathlib import Path
+from typing import Tuple
+
+# plotting disabled: comment out matplotlib dependency for headless use
+# import matplotlib.pyplot as plt
+import numpy as np
+
+
+def get_ctimes(path_daq: Path) -> np.ndarray:
+    """Return sorted creation times (relative to first file) for all .wfm files."""
+    file_list = sorted(glob(str(path_daq / "*.wfm")))
+    if not file_list:
+        return np.array([])
+    times = np.array(sorted([Path(f).stat().st_ctime for f in file_list]))
+    times = times - times[0]
+    return times
+
+
+def diffs_from_ctimes(ctimes: np.ndarray) -> np.ndarray:
+    """Return array of time differences between consecutive creation times.
+
+    If fewer than 2 files exist, returns an empty array.
+    """
+    if ctimes.size < 2:
+        return np.array([])
+    return ctimes[1:] - ctimes[:-1]
+
+
+def moving_average(data: np.ndarray, window_size: int) -> np.ndarray:
+    if data.size == 0 or window_size < 1:
+        return np.array([])
+    if window_size == 1:
+        return data.copy()
+    return np.convolve(data, np.ones(window_size) / window_size, mode="valid")
+
+
+def format_eta(seconds: float) -> str:
+    """Format seconds as 'H hour(s), M min' or 'M min' if under 1 hour."""
+    total_seconds = int(round(seconds))
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    if hours > 0:
+        hour_label = "hour" if hours == 1 else "hours"
+        return f"{hours} {hour_label}, {minutes} min"
+    return f"{minutes} min"
+
+
+def choose_window_size(n_files: int) -> int:
+    """Choose window_size according to rules:
+    - If only 1 file: caller should wait until >=10
+    - When >=10 files available, use at least 10
+    - When >=20 files available, use 20
+    - Cap at 100
+    Implementation: window = min(max(10, n_files), 100)
+    The actual window used for moving average must not exceed len(diffs).
+    """
+    return min(max(10, n_files), 100)
+
+
+def monitor_and_plot(path: Path, total_files: int, poll_interval: float = 5.0) -> None:
+    path = Path(path)
+    if not path.exists():
+        raise SystemExit(f"Path does not exist: {path}")
+
+    print(f"Monitoring directory: {path}  — target total files: {total_files}")
+    # Plotting disabled — keep the code below commented out if you want to re-enable later
+    # # Prepare a figure/axis for plotting (kept but not shown); we'll update it in the loop
+    # fig, ax = plt.subplots(figsize=(10, 5))
+    # line, = ax.plot([], [], label="CTime moving avg")
+    # ax.set(xlabel="Index (moving average)", ylabel="Time between files (s)",
+    #        title=f"DAQ Efficiency Monitoring — {path.name}")
+    # ax.legend()
+
+    try:
+        # Continuous monitoring loop; recompute ETA based on the most recent moving-average value
+        while True:
+            ctimes = get_ctimes(path)
+            n_files = 0 if ctimes.size == 0 else (ctimes.size)
+
+            if n_files == 0:
+                print("No .wfm files found yet. Waiting...")
+                time.sleep(poll_interval)
+                continue
+
+            if n_files == 1:
+                print("Only 1 file present — waiting until at least 10 files are available...")
+                time.sleep(poll_interval)
+                continue
+
+            diffs = diffs_from_ctimes(ctimes)
+            if diffs.size == 0:
+                print("Not enough timestamps yet. Waiting...")
+                time.sleep(poll_interval)
+                continue
+
+            chosen_window = choose_window_size(n_files)
+            actual_window = min(chosen_window, diffs.size)
+            movavg = moving_average(diffs, actual_window)
+
+            # Use the most recent moving-average value for ETA if available; else fall back to mean
+            if movavg.size > 0:
+                total_avg = float(movavg[-1])
+            else:
+                total_avg = float(np.mean(diffs))
+
+            current_count = n_files
+            remaining_files = max(0, total_files - current_count)
+
+            if remaining_files <= 0:
+                print(f"Target reached: {current_count} files (>= {total_files}).")
+                break
+
+            estimated = remaining_files * total_avg
+            formatted = format_eta(estimated)
+            print(f"Current: {current_count} files. Estimated time remaining for {remaining_files} files: {formatted}")
+
+            # Plot update disabled (headless mode). To re-enable plotting, uncomment below
+            # x = np.arange(len(movavg))
+            # line.set_data(x, movavg)
+            # ax.relim()
+            # ax.autoscale_view()
+            # fig.canvas.draw_idle()
+
+            # Sleep until next poll
+            time.sleep(poll_interval)
+    except KeyboardInterrupt:
+        print("Monitoring canceled by user.")
+    finally:
+        # If plotting is re-enabled, close the figure to free resources:
+        # plt.close(fig)
+        pass
+
+
+def main():
+    p = argparse.ArgumentParser(description="DAQ efficiency monitoring (uses st_ctime only)")
+    p.add_argument("path", type=str, help="Path where DAQ stores .wfm files")
+    p.add_argument("total_files", type=int, help="Desired total number of files to acquire")
+    args = p.parse_args()
+    monitor_and_plot(Path(args.path), int(args.total_files))
+
+
+if __name__ == "__main__":
+    main()
