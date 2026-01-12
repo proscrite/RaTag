@@ -107,8 +107,8 @@ def _extract_fit_metadata(fit_result: dict, isotope: str) -> dict:
 
 
 def _integrate_s2_in_set(set_pmt: SetPmt,
-                          max_frames: Optional[int],
-                          integration_config: IntegrationConfig) -> S2Areas:
+                         max_frames: Optional[int],
+                         integration_config: IntegrationConfig) -> S2Areas:
     """
     Integrate S2 areas for all frames in a set.
     
@@ -207,6 +207,8 @@ def workflow_s2_integration(set_pmt: SetPmt,
     s2 = _integrate_s2_in_set(set_pmt, max_frames=max_frames, 
                               integration_config=integration_config)
 
+    new_metadata = {**set_pmt.metadata, 'n_areas_recoil': len(s2.areas)}
+    set_pmt = replace(set_pmt, metadata=new_metadata)
     # Save raw areas immediately (store_s2area prints the save message)
     store_s2area(s2, set_pmt=set_pmt, output_dir=data_dir)
     
@@ -223,7 +225,11 @@ def _fit_and_save_s2_histogram(set_pmt: SetPmt,
     s2_fitted = fit_set_s2(s2,
                            bin_cuts=fit_config.bin_cuts,
                            nbins=fit_config.nbins,
-                           flag_plot=False)
+                           flag_plot=False,
+                           bg_threshold=fit_config.bg_threshold,
+                           bg_cutoff=fit_config.bg_cutoff,
+                           n_sigma=fit_config.n_sigma,
+                           upper_limit=fit_config.upper_limit,)
     
     if s2_fitted.fit_success:
         # Extract method info if available
@@ -378,7 +384,7 @@ def integrate_s2_in_run(run: Run,
     return apply_workflow_to_run(filtered_run,
                                  workflow_func=workflow_s2_integration,
                                  workflow_name="S2 area integration",
-                                 cache_key="area_s2_mean",
+                                 cache_key="n_areas_recoil",
                                  data_file_suffix="s2_areas.npz",
                                  max_frames=max_frames,
                                  integration_config=integration_config)
