@@ -6,9 +6,9 @@ import pytest
 import numpy as np
 from pathlib import Path
 
-from waveform.integration import integrate_s2_in_frame
-from core.config import IntegrationConfig
-from core.dataIO import load_wfm, iter_frames
+from RaTag.waveform.integration import integrate_s2_in_frame
+from RaTag.core.config import IntegrationConfig
+from RaTag.core.dataIO import load_wfm, iter_frames
 
 
 def test_integrate_s2_in_frame_single(sample_set):
@@ -65,11 +65,11 @@ def test_integrate_s2_config_parameters(sample_set):
 
 def test_integrate_s2_requires_metadata(sample_set):
     """Test that integration requires S2 window metadata."""
-    from workflows.recoil_integration import workflow_s2_integration
+    from RaTag.workflows.recoil_integration import workflow_s2_integration
     from dataclasses import replace
     
     # Remove S2 metadata
     set_without_s2 = replace(sample_set, metadata={})
     
     with pytest.raises(ValueError, match="missing S2 window metadata"):
-        workflow_s2_integration(set_without_s2, max_files=1)
+        workflow_s2_integration(set_without_s2, max_frames=1)

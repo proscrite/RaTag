@@ -2,18 +2,18 @@
 # Copy this file and customize for your specific run
 # Example: cp run_analysis_template.yaml ../../configs/run8_analysis.yaml
 
-run_id: "RUN_22"
-description: "Description of this run"
+run_id: "RUN_23"
+description: "Single isotope Ra224 analysis"
 
 # Data location
 data:
-  raw_data_path: "E:/Pablos_Mighty_measurements/RUN22_Th228"
-  output_base: "E:/Pablos_Mighty_measurements/RUN22_Th228"  # Optional, defaults to raw_data_path
+  raw_data_path: "E:/Pablos_Mighty_measurements/RUN23_Ra224"
+  output_base: "E:/Pablos_Mighty_measurements/RUN23_Ra224"  # Optional, defaults to raw_data_path
 
 # Run parameters
 experiment:
   el_field: 2350.0          # V/cm - EL field
-  target_isotope: "Th228"   # Isotope being studied
+  target_isotope: "Ra224"   # Isotope being studied
   pressure: 2.0             # bar - Gas pressure
   temperature: 297.0        # K - Temperature
   sampling_rate: 5.0e9      # Hz - Oscilloscope sampling rate
@@ -27,7 +27,7 @@ experiment:
 multi_isotope:
   enabled: false
   isotope_ranges:
-    Th228: [4.0, 4.7]       # keV
+    Ra224: [4.9, 5.1]       # keV
 
 # Energy mapping and calibration configuration
 energy_mapping:
@@ -66,7 +66,7 @@ pipeline:
       nbins: 100              # Number of histogram bins
       exclude_index: 1       # Bins to exclude from fit (deprecated - use automatic method)
       bg_threshold: 0.4       # Background fraction threshold for two-stage fitting (0-1)
-      bg_cutoff: 0.3          # mV·µs - Upper limit for background fitting
+      bg_cutoff: 0.5          # mV·µs - Upper limit for background fitting
       n_sigma: 2.5            # Sigmas above background mean for signal region cutoff
       upper_limit: 5.0        # mV·µs - Upper limit for signal fitting range
   

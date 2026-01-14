@@ -396,9 +396,10 @@ def _fit_background_gaussian(cbins: np.ndarray,
 
 
 def _fit_signal_crystalball(cbins: np.ndarray,
-                            counts: np.ndarray,
-                            lower_bound: float,
-                            upper_limit: float = 5.0) -> Tuple[Dict[str, float], Any]:
+                            n: np.ndarray,
+                            lower_bound: float= 0.2,
+                            upper_limit: float= 5.0) -> Tuple[Dict[str, float], Any]:
+
     """
     Fit Crystal Ball model to signal region of histogram.
     
@@ -423,27 +424,21 @@ def _fit_signal_crystalball(cbins: np.ndarray,
         result : lmfit.ModelResult
             Full fit result object
     """
-    # Apply cluster detection + bounds
-    main_cluster_mask = find_main_cluster(counts, threshold_fraction=0.01)
-    signal_mask = main_cluster_mask & (cbins >= lower_bound) & (cbins <= upper_limit)
-    
-    cbins_sig = cbins[signal_mask]
-    n_sig = counts[signal_mask]
     
     # Fit Crystal Ball
     cb_sig = lmfit.Model(v_crystalball_right, prefix='sig_')
-    params_sig = cb_sig.make_params(sig_N=n_sig.max(), 
-                                    sig_x0=1.8, 
+    params_sig = cb_sig.make_params(sig_N=n.max(), 
+                                    sig_x0=cbins[np.argmax(n)], 
                                     sig_sigma=0.5, 
                                     sig_beta=1.0, 
                                     sig_m=2.0)
     
-    params_sig['sig_x0'].set(min=lower_bound, max=3.5)
+    params_sig['sig_x0'].set(min=lower_bound, max=upper_limit)
     params_sig['sig_sigma'].set(min=0.2, max=1.5)
     params_sig['sig_beta'].set(min=0.3, max=5.0)
     params_sig['sig_m'].set(min=1.1, max=10.0)
     
-    result_sig = cb_sig.fit(n_sig, params=params_sig, x=cbins_sig)
+    result_sig = cb_sig.fit(n, params=params_sig, x=cbins)
     
     params_dict = {
         'peak_position': result_sig.params['sig_x0'].value,
@@ -634,7 +629,6 @@ def fit_s2_two_stage(data, bin_cuts=(0, 10), nbins=100, bg_cutoff=1.0,
     Uses background statistics (μ_bg + n_sigma*σ_bg) to automatically determine
     signal region, avoiding hardcoded thresholds while maintaining robustness.
     """
-    
     # Create histogram
     filtered = data[(data >= bin_cuts[0]) & (data <= bin_cuts[1])]
     n, bins = np.histogram(filtered, bins=nbins, range=bin_cuts)
@@ -651,6 +645,7 @@ def fit_s2_two_stage(data, bin_cuts=(0, 10), nbins=100, bg_cutoff=1.0,
     n_subtracted = np.maximum(n - bg_full, 0)  # No negative counts
     
     # Calculate smart lower bound based on background statistics
+    print(f"    Background peak with {n_sigma:.1f} sigmas at {bg_center:.2f} ± {bg_sigma:.2f} mV·µs")
     lower_bound = bg_center + n_sigma * bg_sigma
     
     # Fit signal region
@@ -717,7 +712,8 @@ def fit_s2_area_auto(data, bin_cuts=(0, 10), nbins=100, **kwargs):
     
     if detection['recommendation'] == 'two_stage':
         print("  Using two-stage fitting with background subtraction...")
-        result = fit_s2_two_stage(data, bin_cuts, nbins, **kwargs)
+        result = fit_s2_two_stage(data, bin_cuts, nbins, n_sigma=kwargs.get('n_sigma', 2.5),
+                                  bg_cutoff=kwargs.get('bg_cutoff', 1.0), upper_limit=kwargs.get('upper_limit', 5.0)) 
     else:
         print("  Using simple Crystal Ball fitting...")
         result = fit_s2_simple_cb(data, bin_cuts, nbins)

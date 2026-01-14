@@ -18,7 +18,7 @@ import argparse
 import time
 from glob import glob
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Optional
 
 # plotting disabled: comment out matplotlib dependency for headless use
 # import matplotlib.pyplot as plt
@@ -76,26 +76,69 @@ def choose_window_size(n_files: int) -> int:
     return min(max(10, n_files), 100)
 
 
-def monitor_and_plot(path: Path, total_files: int, poll_interval: float = 5.0) -> None:
+def monitor_and_plot(path: Path,
+                     total_files: int,
+                     poll_interval: float = 5.0,
+                     method: str = "ewma",
+                     alpha: float = 0.25,
+                     plot: bool = False,
+                     max_no_new: int = 3) -> None:
     path = Path(path)
     if not path.exists():
         raise SystemExit(f"Path does not exist: {path}")
 
+    # If the provided path contains subdirectories, choose the first-level child
+    # which contains the most recently modified .wfm file. This lets you specify
+    # a parent folder and automatically monitor the newest run.
+    def _choose_latest_child(parent: Path) -> Optional[Path]:
+        child_dirs = [p for p in parent.iterdir() if p.is_dir()]
+        best = None
+        best_time = -1.0
+        for d in child_dirs:
+            files = sorted(glob(str(d / "*.wfm")))
+            if not files:
+                continue
+            # use file modified time for selection (most recent activity)
+            mtimes = [Path(f).stat().st_mtime for f in files]
+            mtime_max = max(mtimes)
+            if mtime_max > best_time:
+                best_time = mtime_max
+                best = d
+        return best
+
+    # If the path itself has subdirs with .wfm files, switch to the most recent child
+    chosen_child = _choose_latest_child(path)
+    if chosen_child is not None:
+        print(f"Parent path given; auto-selecting most-recent child: {chosen_child}")
+        path = chosen_child
+
     print(f"Monitoring directory: {path}  — target total files: {total_files}")
-    # Plotting disabled — keep the code below commented out if you want to re-enable later
-    # # Prepare a figure/axis for plotting (kept but not shown); we'll update it in the loop
-    # fig, ax = plt.subplots(figsize=(10, 5))
-    # line, = ax.plot([], [], label="CTime moving avg")
-    # ax.set(xlabel="Index (moving average)", ylabel="Time between files (s)",
-    #        title=f"DAQ Efficiency Monitoring — {path.name}")
-    # ax.legend()
+
+    # Optionally prepare plotting (import matplotlib only when requested)
+    fig = ax = None
+    lines = {}
+    if plot:
+        import matplotlib.pyplot as plt
+        plt.ion()
+        fig, ax = plt.subplots(figsize=(10, 5))
+        lines['movavg'], = ax.plot([], [], label='CTime moving avg')
+        if method == 'ewma':
+            lines['ewma'], = ax.plot([], [], label=f'EWMA (alpha={alpha})')
+        ax.set(xlabel='Index (moving average)', ylabel='Time between files (s)',
+               title=f'DAQ Efficiency Monitoring — {path.name}')
+        # secondary axis for ETA (minutes)
+        ax_eta = ax.twinx()
+        lines['eta'], = ax_eta.plot([], [], color='C2', linestyle='--', label='ETA (min)')
+        ax_eta.set_ylabel('Estimated time remaining (min)', color='C2')
+        ax.legend(loc='upper left')
 
     try:
         # Continuous monitoring loop; recompute ETA based on the most recent moving-average value
         # guardrail: abort if no new files are created for N consecutive polls
         last_count = 0
         no_new_iterations = 0
-        max_no_new = 3
+        eta_history = []
+        iteration = 0
         while True:
             ctimes = get_ctimes(path)
             n_files = 0 if ctimes.size == 0 else (ctimes.size)
@@ -130,11 +173,37 @@ def monitor_and_plot(path: Path, total_files: int, poll_interval: float = 5.0) -
             actual_window = min(chosen_window, diffs.size)
             movavg = moving_average(diffs, actual_window)
 
-            # Use the most recent moving-average value for ETA if available; else fall back to mean
-            if movavg.size > 0:
-                total_avg = float(movavg[-1])
+            # Compute estimator according to method
+            total_avg = None
+            if method == 'last':
+                # most recent moving-average
+                if movavg.size > 0:
+                    total_avg = float(movavg[-1])
+                else:
+                    total_avg = float(np.mean(diffs))
+            elif method == 'median':
+                # median of last up-to-10 movavg values
+                if movavg.size > 0:
+                    k = min(10, movavg.size)
+                    total_avg = float(np.median(movavg[-k:]))
+                else:
+                    total_avg = float(np.median(diffs))
+            elif method == 'ewma':
+                # compute EWMA across the movavg series for plotting and estimator
+                if movavg.size > 0:
+                    ewma = np.empty_like(movavg)
+                    ewma[0] = movavg[0]
+                    for i in range(1, len(movavg)):
+                        ewma[i] = alpha * movavg[i] + (1 - alpha) * ewma[i - 1]
+                    total_avg = float(ewma[-1])
+                else:
+                    total_avg = float(np.mean(diffs))
             else:
-                total_avg = float(np.mean(diffs))
+                # fallback to last
+                if movavg.size > 0:
+                    total_avg = float(movavg[-1])
+                else:
+                    total_avg = float(np.mean(diffs))
 
             current_count = n_files
             remaining_files = max(0, total_files - current_count)
@@ -147,12 +216,37 @@ def monitor_and_plot(path: Path, total_files: int, poll_interval: float = 5.0) -
             formatted = format_eta(estimated)
             print(f"Current: {current_count} files. Estimated time remaining for {remaining_files} files: {formatted}")
 
-            # Plot update disabled (headless mode). To re-enable plotting, uncomment below
-            # x = np.arange(len(movavg))
-            # line.set_data(x, movavg)
-            # ax.relim()
-            # ax.autoscale_view()
-            # fig.canvas.draw_idle()
+            # record ETA history (in minutes)
+            eta_minutes = estimated / 60.0
+            eta_history.append(eta_minutes)
+
+            # Update plot when enabled
+            if plot and movavg.size > 0:
+                x = np.arange(len(movavg))
+                lines['movavg'].set_data(x, movavg)
+                if method == 'ewma' and 'ewma' in lines:
+                    lines['ewma'].set_data(x, ewma)
+                # update eta plot
+                x_eta = np.arange(len(eta_history))
+                lines['eta'].set_data(x_eta, eta_history)
+                # rescale both axes
+                ax.relim()
+                ax.autoscale_view()
+                try:
+                    ax_eta.relim()
+                    ax_eta.autoscale_view()
+                except Exception:
+                    pass
+                # update legends to include ETA
+                try:
+                    h1, l1 = ax.get_legend_handles_labels()
+                    h2, l2 = ax_eta.get_legend_handles_labels()
+                    ax.legend(h1 + h2, l1 + l2, loc='upper left')
+                except Exception:
+                    pass
+                fig.canvas.draw()
+                fig.canvas.flush_events()
+                plt.show()
 
             # Sleep until next poll
             time.sleep(poll_interval)
@@ -168,8 +262,15 @@ def main():
     p = argparse.ArgumentParser(description="DAQ efficiency monitoring (uses st_ctime only)")
     p.add_argument("path", type=str, help="Path where DAQ stores .wfm files")
     p.add_argument("total_files", type=int, help="Desired total number of files to acquire")
+    p.add_argument("--method", choices=["last", "ewma", "median"], default="ewma",
+                   help="Estimator method: 'last' uses the last movavg, 'ewma' uses EWMA, 'median' uses recent median")
+    p.add_argument("--alpha", type=float, default=0.25, help="Alpha for EWMA (only used with --method ewma)")
+    p.add_argument("--plot", action="store_true", help="Enable plotting (imports matplotlib and shows live plot)")
+    p.add_argument("--poll-interval", type=float, default=5.0, help="Seconds between polling the directory")
+    p.add_argument("--max-no-new", type=int, default=3, help="Consecutive polls with no new files before abort")
     args = p.parse_args()
-    monitor_and_plot(Path(args.path), int(args.total_files))
+    monitor_and_plot(Path(args.path), int(args.total_files), poll_interval=float(args.poll_interval),
+                     method=args.method, alpha=float(args.alpha), plot=bool(args.plot), max_no_new=int(args.max_no_new))
 
 
 if __name__ == "__main__":
