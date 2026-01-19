@@ -286,14 +286,21 @@ def v_crystalball_right(x, N, beta, m, x0, sigma):
     
     # Gaussian core
     gauss = np.exp(-0.5 * z**2)
-    
+
     # Power-law tail parameters
+    # protect absb to avoid division by zero
+    if absb == 0:
+        absb = 1e-12
+
     A_tail = (m / absb)**m * np.exp(-0.5 * absb**2)
     B = m / absb - absb
-    
+
     # RIGHT tail: use +z (not -z) in denominator
-    tail = A_tail / (B + z)**m
-    
+    denom = B + z
+    # Avoid divide-by-zero by adding tiny epsilon where denom is zero
+    denom_safe = denom + (denom == 0) * 1e-12
+    tail = A_tail / (denom_safe)**m
+
     # Use Gaussian for z < beta, tail for z >= beta
     return N * np.where(z < absb, gauss, tail)
 
@@ -371,12 +378,45 @@ def _fit_background_gaussian(cbins: np.ndarray,
             Full fit result object
     """
     # Restrict to background region
+    cbins = np.asarray(cbins).ravel()
+    counts = np.asarray(counts).ravel()
     bg_mask = cbins <= bg_cutoff
     cbins_bg = cbins[bg_mask]
     n_bg = counts[bg_mask]
-    
+
     # Fit Gaussian
     gauss_bg = GaussianModel(prefix='bg_')
+
+    # If there are too few points or all zeros, avoid calling lmfit.fit which can fail
+    if len(cbins_bg) < 5 or np.all(n_bg == 0):
+        # Build reasonable parameter estimates so downstream code can evaluate the background
+        if len(cbins_bg) == 0:
+            bg_center = min(bg_cutoff, 0.3)
+            bg_sigma = 0.2
+            amp = 0.0
+        else:
+            if n_bg.sum() > 0:
+                bg_center = (cbins_bg * n_bg).sum() / n_bg.sum()
+                bg_sigma = float(np.sqrt(np.abs(((n_bg * (cbins_bg - bg_center)**2).sum()) / n_bg.sum())))
+                amp = float(n_bg.max())
+            else:
+                bg_center = float(np.median(cbins_bg))
+                bg_sigma = float(np.std(cbins_bg)) if len(cbins_bg) > 1 else 0.2
+                amp = 0.0
+
+        params_bg = gauss_bg.make_params(bg_amplitude=amp, bg_center=bg_center, bg_sigma=bg_sigma)
+        try:
+            params_bg['bg_center'].set(min=0, max=bg_cutoff)
+            params_bg['bg_sigma'].set(min=0.01, max=max(0.5, bg_sigma * 5))
+        except Exception:
+            pass
+
+        # Provide an object with .params and .eval so callers can use result_bg.eval(...)
+        from types import SimpleNamespace
+        result_bg = SimpleNamespace(params=params_bg, eval=lambda x, **kw: gauss_bg.eval(x=x, params=params_bg, **kw))
+
+        return bg_center, bg_sigma, result_bg
+
     params_bg = gauss_bg.make_params(
         bg_amplitude=n_bg.max(),
         bg_center=0.3,
@@ -384,12 +424,25 @@ def _fit_background_gaussian(cbins: np.ndarray,
     )
     params_bg['bg_center'].set(min=0, max=bg_cutoff)
     params_bg['bg_sigma'].set(min=0.05, max=0.5)
-    
-    result_bg = gauss_bg.fit(n_bg, params=params_bg, x=cbins_bg)
-    
+
+    try:
+        # Diagnostic prints are helpful when fitting fails intermittently
+        # print(f"_fit_background_gaussian: cbins_bg.shape={cbins_bg.shape}, n_bg.shape={n_bg.shape}")
+        # print(f"_fit_background_gaussian: cbins_bg[:6]={cbins_bg[:6].tolist()}, n_bg[:6]={n_bg[:6].tolist()}")
+        result_bg = gauss_bg.fit(n_bg, params=params_bg, x=cbins_bg)
+    except Exception:
+        # If fitting fails, fall back to parameter estimates and expose eval
+        bg_center = float(np.median(cbins_bg))
+        bg_sigma = float(np.std(cbins_bg)) if len(cbins_bg) > 1 else 0.2
+        params_bg = gauss_bg.make_params(bg_amplitude=float(n_bg.max()), bg_center=bg_center, bg_sigma=bg_sigma)
+        from types import SimpleNamespace
+        result_bg = SimpleNamespace(params=params_bg, eval=lambda x, **kw: gauss_bg.eval(x=x, params=params_bg, **kw))
+
+        return bg_center, bg_sigma, result_bg
+
     bg_center = result_bg.params['bg_center'].value
     bg_sigma = result_bg.params['bg_sigma'].value
-    
+
     return bg_center, bg_sigma, result_bg
 
 
@@ -554,15 +607,15 @@ def fit_s2_simple_cb(data, bin_cuts=(0, 10), nbins=100):
     # Initial parameters
     params = cb_model.make_params(
         sig_N=n.max(),
-        sig_x0=1.5,
+        sig_x0=cbins[np.argmax(n)],
         sig_sigma=0.5,
         sig_beta=1.0,
         sig_m=2.0
     )
     
     # Constraints
-    params['sig_x0'].set(min=0.5, max=bin_cuts[1] - 1.0)
-    params['sig_sigma'].set(min=0.1, max=2.0)
+    params['sig_x0'].set(min=bin_cuts[0], max=bin_cuts[1] - 1.0)
+    params['sig_sigma'].set(min=0.1, max=2.5)
     params['sig_beta'].set(min=0.3, max=5.0)
     params['sig_m'].set(min=1.1, max=10.0)
     
@@ -657,8 +710,22 @@ def fit_s2_two_stage(data, bin_cuts=(0, 10), nbins=100, bg_cutoff=1.0,
     # Calculate smart lower bound based on background statistics
     lower_bound = bg_center + n_sigma * bg_sigma
     
+    # Select the fitting region between lower_bound and upper_limit
+    cbins = np.asarray(cbins).ravel()
+    n_subtracted = np.asarray(n_subtracted).ravel()
+    fit_mask = (cbins >= lower_bound) & (cbins <= upper_limit)
+    cbins_fit = cbins[fit_mask]
+    n_fit = n_subtracted[fit_mask]
+
+    # Require a minimal number of bins to attempt the fit
+    if len(cbins_fit) < 5:
+        raise RuntimeError(
+            f"Signal fit region too small: {len(cbins_fit)} bins between {lower_bound:.3f} and {upper_limit:.3f}. "
+            f"Try lowering n_sigma or increasing nbins/bin range. cbins.shape={cbins.shape}, n_subtracted.shape={n_subtracted.shape}"
+        )
+
     # Fit signal region
-    signal_params, result_sig = _fit_signal_crystalball(cbins, n_subtracted, 
+    signal_params, result_sig = _fit_signal_crystalball(cbins_fit, n_fit, 
                                                          lower_bound, upper_limit)
     
     return {

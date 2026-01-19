@@ -2,18 +2,18 @@
 # Copy this file and customize for your specific run
 # Example: cp run_analysis_template.yaml ../../configs/run8_analysis.yaml
 
-run_id: "RUN_24"
-description: "Single isotope Ra224 analysis, 3.35 kV/cm EL field"
+run_id: "RUN_26"
+description: "Single isotope Th228 analysis, 3.35 kV/cm EL field"
 
 # Data location
 data:
-  raw_data_path: "E:/Pablos_Mighty_measurements/RUN24_Ra224_EL2700"
-  output_base: "E:/Pablos_Mighty_measurements/RUN24_Ra224_EL2700"  # Optional, defaults to raw_data_path
+  raw_data_path: "E:/Pablos_Mighty_measurements/RUN26_Th228_EL2700"
+  output_base: "E:/Pablos_Mighty_measurements/RUN26_Th228_EL2700"  # Optional, defaults to raw_data_path
 
 # Run parameters
 experiment:
   el_field: 3350.0          # V/cm - EL field
-  target_isotope: "Ra224"   # Isotope being studied
+  target_isotope: "Th228"   # Isotope being studied
   pressure: 2.0             # bar - Gas pressure
   temperature: 297.0        # K - Temperature
   sampling_rate: 5.0e9      # Hz - Oscilloscope sampling rate
@@ -27,7 +27,7 @@ experiment:
 multi_isotope:
   enabled: false
   isotope_ranges:
-    Ra224: [4.9, 5.1]       # keV
+    Th228: [4.0, 4.7]       # keV
 
 # Energy mapping and calibration configuration
 energy_mapping:
