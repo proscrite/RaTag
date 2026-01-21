@@ -189,7 +189,7 @@ def main():
                        help='Force recomputation of calibration/ranges/plots (energy maps cached)')
     parser.add_argument('--use-yaml-ranges', action='store_true',
                        help='Override: use YAML ranges instead of computed overlap-resolved ranges')
-    parser.add_argument('--only-unified', action='store_true',
+    parser.add_argument('--unified-only', action='store_true',
                        help='Run only the unified X-ray + S2 workflow (bypasses separate pipelines)')
     parser.add_argument('--recombination-only', action='store_true',
                        help='Only run recombination analysis (assumes prior stages done)')
@@ -198,7 +198,7 @@ def main():
     args = parser.parse_args()
     
     # Validate arguments - only one "only" flag allowed
-    only_flags = [args.alphas_only, args.prepare_only, args.recoil_only, args.xray_only, args.only_unified, args.recombination_only]
+    only_flags = [args.alphas_only, args.prepare_only, args.recoil_only, args.xray_only, args.unified_only, args.recombination_only]
     if sum(only_flags) > 1:
         parser.error("Cannot specify multiple --*-only flags")
     run_all = not any(only_flags)
@@ -215,7 +215,7 @@ def main():
         'alphas': args.alphas_only or run_all,  # Run alphas for both modes when run_all or alphas_only
         'preparation': args.prepare_only or run_all,
         'recoil': args.recoil_only or run_all,
-        'xray': args.xray_only or run_all,
+        'xray': args.xray_only,
         'recombination': args.recombination_only or run_all
     }
     
@@ -321,7 +321,8 @@ def main():
                             max_frames_s2=int(prep_cfg['max_frames_s2']),
                             threshold_s1=float(prep_cfg['threshold_s1']),
                             threshold_s2=float(prep_cfg['threshold_s2']),
-                            s2_duration_cuts=tuple(prep_cfg['s2_duration_cuts']))
+                            s2_duration_cuts=tuple(prep_cfg['s2_duration_cuts']),
+                            force_refit=args.force_refit)
         
         print("\n✓ Preparation complete")
         
@@ -369,11 +370,13 @@ def main():
     # PIPELINE SELECTION LOGIC
     # ========================================================================
     # The following blocks are mutually exclusive:
-    # - If run_all (default) or --only-unified is set, run the unified pipeline and skip the old pipelines.
+    # - If run_all (default) or --unified-only is set, run the unified pipeline and skip the old pipelines.
     # - If --recoil-only or --xray-only is set, run only the corresponding pipeline.
     # This prevents double processing of the same data.
     # ========================================================================
-    if run_all or args.only_unified:
+    # Prefer the recoil pipeline by default. The unified pipeline runs only
+    # when explicitly requested via --unified-only.
+    if args.unified_only:
         print("\n" + "="*60)
         print("STAGE 2: UNIFIED X-RAY + S2 INTEGRATION")
         print("="*60)
@@ -384,16 +387,18 @@ def main():
                                 fit_config=fit_config,
                                 isotope_ranges=isotope_ranges,)
         print("\n✓ Unified integration complete")
-        if args.only_unified:
+        if args.unified_only:
             print(f"\n{'='*60}")
-            print("STOPPING AFTER UNIFIED INTEGRATION (--only-unified flag)")
+            print("STOPPING AFTER UNIFIED INTEGRATION (--unified-only flag)")
             print(f"{'='*60}")
             return
-    
+
 
     # ========================================================================
-    # INTEGRATION STAGE (only runs if unified pipeline is not selected)
-    # ========================================================================
+    # INTEGRATION STAGE
+    # By default (no flags) we now run the recoil integration rather than the
+    # unified pipeline. The --recoil-only flag or run_all will select this
+    # branch unless --unified-only was explicitly provided above.
     elif stages['recoil']:
         print("\n" + "="*60)
         print("STAGE 2: RECOIL INTEGRATION")

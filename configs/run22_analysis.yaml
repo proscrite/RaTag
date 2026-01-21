@@ -85,4 +85,4 @@ pipeline:
 
 # Recombination analysis configuration
 recombination_analysis:
-  gs2_path: 'H:\RaTag_data\RUN21_xrays\processed_data\xray_calibration_results.json'
+  gs2_path: 'E:\Pablos_Mighty_measurements\RUN21_xrays\processed_data\xray_calibration_results.json'

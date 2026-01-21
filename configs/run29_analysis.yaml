@@ -2,18 +2,18 @@
 # Copy this file and customize for your specific run
 # Example: cp run_analysis_template.yaml ../../configs/run8_analysis.yaml
 
-run_id: "RUN_25"
-description: "Single isotope Ra224 analysis, 1.35 kV/cm EL field"
+run_id: "RUN_29"
+description: "Single isotope Th228 analysis, 2.35 kV/cm EL field, Bias -50 V"
 
 # Data location
 data:
-  raw_data_path: "E:/Pablos_Mighty_measurements/RUN25_Ra224_EL1100"
-  output_base: "E:/Pablos_Mighty_measurements/RUN25_Ra224_EL1100"  # Optional, defaults to raw_data_path
+  raw_data_path: "E:/Pablos_Mighty_measurements/RUN29_Th228_EL1500"  # Path to raw waveform data
+  output_base: "E:/Pablos_Mighty_measurements/RUN29_Th228_EL1500"  # Optional, defaults to raw_data_path
 
 # Run parameters
 experiment:
-  el_field: 1350.0          # V/cm - EL field
-  target_isotope: "Ra224"   # Isotope being studied
+  el_field: 2350.0          # V/cm - EL field
+  target_isotope: "Th228"   # Isotope being studied
   pressure: 2.0             # bar - Gas pressure
   temperature: 297.0        # K - Temperature
   sampling_rate: 5.0e9      # Hz - Oscilloscope sampling rate
@@ -27,7 +27,7 @@ experiment:
 multi_isotope:
   enabled: false
   isotope_ranges:
-    Ra224: [4.9, 5.1]       # keV
+    Th228: [4.0, 4.7]       # keV
 
 # Energy mapping and calibration configuration
 energy_mapping:
@@ -62,12 +62,12 @@ pipeline:
       bs_threshold: 0.03      # mV - Baseline subtraction threshold
       dt: 0.0002              # µs - Time step for integration (0.2 ns for 5 GS/s)
     fit_config:
-      bin_cuts: [0, 5]       # mV·µs - Histogram range
-      nbins: 200              # Number of histogram bins
+      bin_cuts: [0, 10]       # mV·µs - Histogram range
+      nbins: 100              # Number of histogram bins
       exclude_index: 1       # Bins to exclude from fit (deprecated - use automatic method)
-      bg_threshold: 0.05       # Background fraction threshold for two-stage fitting (0-1)
-      bg_cutoff: 0.05          # mV·µs - Upper limit for background fitting
-      n_sigma: 2.0            # Sigmas above background mean for signal region cutoff
+      bg_threshold: 0.4       # Background fraction threshold for two-stage fitting (0-1)
+      bg_cutoff: 0.3          # mV·µs - Upper limit for background fitting
+      n_sigma: 2.5            # Sigmas above background mean for signal region cutoff
       upper_limit: 5.0        # mV·µs - Upper limit for signal fitting range
   
   # X-ray classification (optional - use --xray-only flag)

@@ -125,6 +125,19 @@ def save_timing_results(set_pmt: SetPmt,
     
     print(f"    💾 Saved to {data_file.relative_to(data_dir.parent)}")
 
+
+def _plot_exists(plot_path: Path) -> bool:
+    """
+    Helper to check whether a plot file already exists on disk.
+
+    Returns True if the file exists (so plotting can be skipped), False otherwise.
+    """
+    try:
+        return plot_path.exists()
+    except Exception:
+        # Be conservative: if we cannot determine, assume we should regenerate
+        return False
+
 # ============================================================================
 # S1 COMPUTATION (pure)
 # ============================================================================
@@ -370,7 +383,7 @@ def run_s2_multiiso(run: Run, isotope_ranges: dict) -> Run:
 # VALIDATION STEP WITH PLOTTING (pure QA)
 # ============================================================================
 
-def validate_timing_windows(run: Run, n_waveforms: int = 5) -> Run:
+def validate_timing_windows(run: Run, n_waveforms: int = 5, force: bool = False) -> Run:
     """
     Visual validation of timing windows across all sets.
     
@@ -380,6 +393,7 @@ def validate_timing_windows(run: Run, n_waveforms: int = 5) -> Run:
     Args:
         run: Run with timing estimates
         n_waveforms: Number of random waveforms to plot per set
+        force: If True, regenerate plots even if the PNG already exists (overwrites)
         
     Returns:
         Same Run (unchanged)
@@ -400,8 +414,15 @@ def validate_timing_windows(run: Run, n_waveforms: int = 5) -> Run:
             continue
         
         try:
-            fig, ax = plot_n_waveforms(set_pmt, n_waveforms=n_waveforms)
             plot_path = validation_dir / f"{set_pmt.source_dir.name}_validation.png"
+            # Skip plotting if the validation image already exists (unless force=True)
+            if _plot_exists(plot_path) and not force:
+                print(f"  ⏭ Skipping (plot exists): {plot_path.name}")
+                continue
+            if _plot_exists(plot_path) and force:
+                print(f"  ⚡ Force enabled — overwriting existing plot: {plot_path.name}")
+
+            fig, ax = plot_n_waveforms(set_pmt, n_waveforms=n_waveforms)
             save_figure(fig, plot_path)
             print(f"  ✓ Saved validation plot")
         except Exception as e:

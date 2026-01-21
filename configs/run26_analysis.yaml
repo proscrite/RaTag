@@ -65,11 +65,11 @@ pipeline:
       bin_cuts: [0, 10]       # mV·µs - Histogram range
       nbins: 100              # Number of histogram bins
       exclude_index: 1       # Bins to exclude from fit (deprecated - use automatic method)
-      bg_threshold: 0.3       # Background fraction threshold for two-stage fitting (0-1)
+      bg_threshold: 0.5       # Background fraction threshold for two-stage fitting (0-1)
       bg_cutoff: 0.7          # mV·µs - Upper limit for background fitting
-      n_sigma: 3.0            # Sigmas above background mean for signal region cutoff
-      upper_limit: 5.0        # mV·µs - Upper limit for signal fitting range
-  
+      n_sigma: 2.0            # Sigmas above background mean for signal region cutoff
+      upper_limit: 10.0       # mV·µs - Upper limit for signal fitting range
+
   # X-ray classification (optional - use --xray-only flag)
   xray_classification:
     max_frames: null          # null = all frames, or specify number
@@ -85,4 +85,4 @@ pipeline:
 
 # Recombination analysis configuration
 recombination_analysis:
-  gs2_path: 'H:\RaTag_data\RUN21_xrays\processed_data\xray_calibration_results.json'
+  gs2_path: 'E:\Pablos_Mighty_measurements\RUN21_xrays\processed_data\xray_calibration_results.json'

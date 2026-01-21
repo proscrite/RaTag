@@ -21,7 +21,8 @@ def prepare_run(run: Run,
                 max_frames_s2: int = 500,
                 threshold_s1: float = 1.0,
                 threshold_s2: float = 0.8,
-                s2_duration_cuts: tuple = (3, 35)) -> Run:
+                s2_duration_cuts: tuple = (3, 35),
+                force_refit: bool = False) -> Run:
     """
     Complete run preparation pipeline.
     
@@ -58,7 +59,7 @@ def prepare_run(run: Run,
                 max_frames=max_frames_s2,
                 threshold_s2=threshold_s2,
                 s2_duration_cuts=s2_duration_cuts),
-        partial(validate_timing_windows, n_waveforms=5),
+        partial(validate_timing_windows, n_waveforms=5, force=force_refit),
         summarize_timing_vs_field
     ]
     
