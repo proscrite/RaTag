@@ -1,0 +1,488 @@
+# transmission_efficiency.yaml
+
+experiment: "Grids_Transmission_Efficiency"
+data_dir: "/Users/pabloherrero/sabat/RaTagging/scope_data/collection_efficiency/"
+
+experiment: "Ra224_Transmission_Efficiency"
+data_dir: "scope_data/collection_efficiency/"
+
+# ==========================================
+# 1. PLOT CONFIGURATIONS (Frontend)
+# ==========================================
+plots:
+  collection_saturation:
+    title: "Collection Saturation"
+    type: "primary"
+    runs: ["Run2", "Run7"]
+    sweep_variable: "v_cathode" 
+
+  braking_efficiencies:
+    title: "Braking Efficiencies"
+    type: "primary"
+    runs: ["Run3", "Run8", "Run9", "Run10", "Run11", "Run19"]
+    sweep_variable: "v_anode"
+
+  transmission_efficiency:
+    title: "Transmission Efficiency"
+    type: "primary"
+    runs: ["Run14", "Run15"]
+    sweep_variable: "v_gate"
+
+  transmission_efficiency_constant_ratio:
+    title: "Transmission Efficiency (Constant EL/Drift Ratio)"
+    type: "primary"
+    runs: ["Run16", "Run17", "Run18"]
+    sweep_variable: "v_gate"
+
+  gte_vs_anode:
+    title: "GTE vs Anode Voltage"
+    type: "derived"
+    runs: ["Run3", "Run8", "Run9", "Run10", "Run11", "Run19"]
+    sweep_variable: "v_anode"
+
+  gte_vs_el_field:
+    title: "GTE vs EL Field"
+    type: "derived"
+    runs: ["Run3", "Run8", "Run9", "Run10", "Run11", "Run19"]
+    sweep_variable: "e_el_V_cm"
+
+  gte_vs_r_factor:
+    title: "GTE vs R Factor"
+    type: "derived"
+    runs: ["Run3", "Run8", "Run9", "Run10", "Run11", "Run19"]
+    sweep_variable: "r_factor"
+  
+  transparency_surface:
+    title: "Physics-Informed Transparency Surface"
+    type: "surface"
+    runs: ["Run3", "Run8", "Run9", "Run10", "Run11", "Run19"]
+
+# ==========================================
+# 2. RUN DEFINITIONS (Backend Data Mapping)
+# ==========================================
+runs:
+  # ----------------------------------------
+  # Collection Saturation
+  # ----------------------------------------
+  Run2:
+    description: "Collection saturation curve, fixed anode -200 V"
+    fixed_params:
+      gate_voltage: 0
+      anode_voltage: -204
+    measurements:
+      - point: P1
+        cathode_voltage: -100 # e.g., -50
+        file_prefix: "RUN2_P1"
+      - point: P2
+        cathode_voltage: -50
+        file_prefix: "RUN2_P2"
+      - point: P3
+        cathode_voltage: -200
+        file_prefix: "RUN2_P3"
+      - point: P4
+        cathode_voltage: -300
+        file_prefix: "RUN2_P4"
+      - point: P5
+        cathode_voltage: -500
+        file_prefix: "RUN2_P5"
+      - point: P6
+        cathode_voltage: -30
+        file_prefix: "RUN2_P6"
+      - point: P7
+        cathode_voltage: -700
+        file_prefix: "RUN2_P7"
+
+  Run7:
+    description: "Collection saturation curve, fixed anode -1000 V"
+    fixed_params:
+      gate_voltage: 0
+      anode_voltage: -1000
+    measurements:
+      - point: P1
+        cathode_voltage: -50
+        file_prefix: "RUN7_P1"
+      - point: P2
+        cathode_voltage: -500
+        file_prefix: "RUN7_P2"
+      - point: P3
+        cathode_voltage: -100
+        file_prefix: "RUN7_P3"
+      - point: P4
+        cathode_voltage: -200
+        file_prefix: "RUN7_P4"
+      - point: P5
+        cathode_voltage: -350
+        file_prefix: "RUN7_P5"
+      - point: P6
+        cathode_voltage: -700
+        file_prefix: "RUN7_P6"
+      - point: P7
+        cathode_voltage: -1000
+        file_prefix: "RUN7_P7"
+      - point: P8
+        cathode_voltage: -25
+        file_prefix: "RUN7_P8"
+      
+
+  # ----------------------------------------
+  # Braking Efficiencies (Includes Run 12 zero-points)
+  # ----------------------------------------
+  Run3:
+    description: "Braking efficiency at V_cath = -200 V"
+    fixed_params:
+      cathode_voltage: -200
+      gate_voltage: 0
+    measurements:
+      - point: P1
+        anode_voltage: 50
+        file_prefix: "RUN3_P1"
+      - point: P2
+        anode_voltage: 100
+        file_prefix: "RUN3_P2"
+      - point: P3
+        anode_voltage: 200
+        file_prefix: "RUN3_P3"
+      - point: P4
+        anode_voltage: 300
+        file_prefix: "RUN3_P4"
+      - point: P5
+        anode_voltage: 500
+        file_prefix: "RUN3_P5"
+      - point: P6
+        anode_voltage: 700
+        file_prefix: "RUN3_P6"
+      - point: P7
+        anode_voltage: 1000
+        file_prefix: "RUN3_P7"
+      - point: P8
+        anode_voltage: 1200
+        file_prefix: "RUN3_P8"
+      - point: P9
+        anode_voltage: 1600
+        file_prefix: "RUN3_P9"
+      - point: P10
+        anode_voltage: 1800
+        file_prefix: "RUN3_P10"
+      - point: P11
+        anode_voltage: 2000
+        file_prefix: "RUN3_P11"
+      - point: P_ZeroAnode
+        anode_voltage: 0
+        file_prefix: "RUN12_P5" # <-- Adjust P1 to whichever Run12 point matches this run's fixed params
+
+  Run8:
+    description: "Braking efficiency at V_cath = -100 V"
+    fixed_params:
+      cathode_voltage: -103
+      gate_voltage: 0
+    measurements:
+      - point: P1
+        anode_voltage: 100
+        file_prefix: "RUN8_P1"
+      - point: P2
+        anode_voltage: 200
+        file_prefix: "RUN8_P2"
+      - point: P3
+        anode_voltage: 300
+        file_prefix: "RUN8_P3"
+      - point: P4
+        anode_voltage: 500
+        file_prefix: "RUN8_P4"
+      - point: P5
+        anode_voltage: 700
+        file_prefix: "RUN8_P5"
+      - point: P6
+        anode_voltage: 1000
+        file_prefix: "RUN8_P6"
+      - point: P7
+        anode_voltage: 1500
+        file_prefix: "RUN8_P7"
+      - point: P_ZeroAnode
+        anode_voltage: 0
+        file_prefix: "RUN12_P4"
+
+  Run9:
+    description: "Braking efficiency at V_cath = -500 V"
+    fixed_params:
+      cathode_voltage: -510
+      gate_voltage: 0
+    measurements:
+      - point: P1
+        anode_voltage: 200
+        file_prefix: "RUN9_P1"
+      - point: P2
+        anode_voltage: 300
+        file_prefix: "RUN9_P2"
+      - point: P3
+        anode_voltage: 500
+        file_prefix: "RUN9_P3"
+      - point: P4
+        anode_voltage: 700
+        file_prefix: "RUN9_P4"
+      - point: P5
+        anode_voltage: 1000
+        file_prefix: "RUN9_P5"
+      - point: P6
+        anode_voltage: 1500
+        file_prefix: "RUN9_P6"
+      - point: P7
+        anode_voltage: 2000
+        file_prefix: "RUN9_P7"
+      - point: P8
+        anode_voltage: 2400
+        file_prefix: "RUN9_P8"
+      - point: P_ZeroAnode
+        anode_voltage: 0
+        file_prefix: "RUN12_P2" 
+
+  Run10:
+    description: "Braking efficiency at V_cath = -50 V"
+    fixed_params:
+      cathode_voltage: -52
+      gate_voltage: 0
+    measurements:
+      - point: P1
+        anode_voltage: 50
+        file_prefix: "RUN10_P1"
+      - point: P2
+        anode_voltage: 100
+        file_prefix: "RUN10_P2"
+      - point: P3
+        anode_voltage: 300
+        file_prefix: "RUN10_P3"
+      - point: P4
+        anode_voltage: 500
+        file_prefix: "RUN10_P4"
+      - point: P5
+        anode_voltage: 700
+        file_prefix: "RUN10_P5"
+      - point: P6
+        anode_voltage: 1000
+        file_prefix: "RUN10_P6"
+      - point: P_ZeroAnode
+        anode_voltage: 0
+        file_prefix: "RUN12_P3" 
+
+  Run11:
+    description: "Braking efficiency at V_cath = -300 V"
+    fixed_params:
+      cathode_voltage: -300
+      gate_voltage: 0
+    measurements:
+      - point: P1
+        anode_voltage: 200
+        file_prefix: "RUN11_P1"
+      - point: P2
+        anode_voltage: 400
+        file_prefix: "RUN11_P2"
+      - point: P3
+        anode_voltage: 700
+        file_prefix: "RUN11_P3"
+      - point: P4
+        anode_voltage: 1000
+        file_prefix: "RUN11_P4"
+      - point: P5
+        anode_voltage: 1500
+        file_prefix: "RUN11_P5"
+      - point: P6
+        anode_voltage: 2000
+        file_prefix: "RUN11_P6"
+      - point: P7
+        anode_voltage: 2300
+        file_prefix: "RUN11_P7"
+      - point: P_ZeroAnode
+        anode_voltage: 0
+        file_prefix: "RUN12_P1" 
+
+  Run19:
+    description: "Braking efficiency at V_cath = -1400 V"
+    fixed_params:
+      cathode_voltage: -1400
+      gate_voltage: 0
+    measurements:
+      - point: P1
+        anode_voltage: 0
+        file_prefix: "RUN19_P1"
+      - point: P2
+        anode_voltage: 200
+        file_prefix: "RUN19_P2"
+      - point: P3
+        anode_voltage: 400
+        file_prefix: "RUN19_P3"
+      - point: P4
+        anode_voltage: 600
+        file_prefix: "RUN19_P4"
+      - point: P5
+        anode_voltage: 1000
+        file_prefix: "RUN19_P5"
+      - point: P6
+        anode_voltage: 1500
+        file_prefix: "RUN19_P6"
+      - point: P7
+        anode_voltage: 1700
+        file_prefix: "RUN19_P7"
+      - point: P8   
+        anode_voltage: 2000
+        file_prefix: "RUN19_P8"
+      # - point: P9   # This measurement a bit off for some reason
+      #   anode_voltage: 1900
+      #   file_prefix: "RUN19_P9"
+      - point: P10
+        anode_voltage: 2200
+        file_prefix: "RUN19_P10"
+
+  # ----------------------------------------
+  # Transmission Efficiency
+  # ----------------------------------------
+  Run14:
+    description: "Transmission efficiency, V_cath = -500 V"
+    fixed_params:
+      cathode_voltage: -510
+      anode_voltage: 0
+    measurements:
+      - point: P1
+        gate_voltage: -400
+        file_prefix: "RUN14_P1"
+      - point: P2
+        gate_voltage: -300
+        file_prefix: "RUN14_P2"
+      - point: P3
+        gate_voltage: -200
+        file_prefix: "RUN14_P3"
+      - point: P4
+        gate_voltage: -100
+        file_prefix: "RUN14_P4"
+      - point: P5
+        gate_voltage: -50
+        file_prefix: "RUN14_P5"
+      - point: P6
+        gate_voltage: 0
+        file_prefix: "RUN14_P6"
+
+  Run15:
+    description: "Transmission efficiency, V_cath = -300 V"
+    fixed_params:
+      cathode_voltage: -300
+      anode_voltage: 0
+    measurements:
+      - point: P1
+        gate_voltage: -250
+        file_prefix: "RUN15_P1"
+      - point: P2
+        gate_voltage: -150
+        file_prefix: "RUN15_P2"
+      - point: P3
+        gate_voltage: -100
+        file_prefix: "RUN15_P3"
+      - point: P4
+        gate_voltage: -50
+        file_prefix: "RUN15_P4"
+      - point: P5
+        gate_voltage: 0
+        file_prefix: "RUN15_P5"
+
+  # ----------------------------------------
+  # Transmission Efficiency (Constant Ratio)
+  # ----------------------------------------
+  Run16:
+    description: "Constant EL/drift ratio = 5"
+    fixed_params:
+      anode_voltage: 0
+    measurements:
+      - point: P1
+        gate_voltage: -74
+        cathode_voltage: -100
+        file_prefix: "RUN16_P1"
+      - point: P2
+        gate_voltage: -148
+        cathode_voltage: -200
+        file_prefix: "RUN16_P2"
+      # point: P3 was defective
+      - point: P4
+        gate_voltage: -222
+        cathode_voltage: -300
+        file_prefix: "RUN16_P4"
+      - point: P5
+        gate_voltage: -444
+        cathode_voltage: -600
+        file_prefix: "RUN16_P5"
+      - point: P6
+        gate_voltage: -592
+        cathode_voltage: -800
+        file_prefix: "RUN16_P6"
+      - point: P7
+        gate_voltage: -740
+        cathode_voltage: -1000
+        file_prefix: "RUN16_P7"
+
+  Run17:
+    description: "Constant EL/drift ratio = 2"
+    fixed_params:
+      anode_voltage: 0
+    measurements:
+      - point: P1
+        gate_voltage: -53
+        cathode_voltage: -100
+        file_prefix: "RUN17_P1"
+      - point: P2
+        gate_voltage: -107
+        cathode_voltage: -200
+        file_prefix: "RUN17_P2"
+      - point: P3
+        gate_voltage: -213
+        cathode_voltage: -400
+        file_prefix: "RUN17_P3"
+      - point: P4
+        gate_voltage: -320
+        cathode_voltage: -600
+        file_prefix: "RUN17_P4"
+      - point: P5
+        gate_voltage: -427
+        cathode_voltage: -800
+        file_prefix: "RUN17_P5"
+      - point: P6
+        gate_voltage: -533
+        cathode_voltage: -1000
+        file_prefix: "RUN17_P6"
+      - point: P7
+        gate_voltage: -640
+        cathode_voltage: -1200
+        file_prefix: "RUN17_P7"
+      - point: P8
+        gate_voltage: -800
+        cathode_voltage: -1500
+        file_prefix: "RUN17_P8"
+
+  Run18:
+    description: "Constant EL/drift ratio = 8"
+    fixed_params:
+      anode_voltage: 0
+    measurements:
+      - point: P1
+        gate_voltage: -82
+        cathode_voltage: -100
+        file_prefix: "RUN18_P1"
+      - point: P2
+        gate_voltage: -164
+        cathode_voltage: -200
+        file_prefix: "RUN18_P2"
+      - point: P3
+        gate_voltage: -328
+        cathode_voltage: -400
+        file_prefix: "RUN18_P3"
+      - point: P4
+        gate_voltage: -491
+        cathode_voltage: -600
+        file_prefix: "RUN18_P4"
+      - point: P5
+        gate_voltage: -655
+        cathode_voltage: -800
+        file_prefix: "RUN18_P5"
+      - point: P6
+        gate_voltage: -819
+        cathode_voltage: -1000
+        file_prefix: "RUN18_P6"
+      - point: P7
+        gate_voltage: -246
+        cathode_voltage: -300
+        file_prefix: "RUN18_P7"
