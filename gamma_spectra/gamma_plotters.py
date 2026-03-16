@@ -93,8 +93,8 @@ def generate_decay_diagnostics(rate_batches: Dict[str, pd.DataFrame],
     
     for batch_id, df in rate_batches.items():
         times_seconds = parse_timestamps(df["Datetime"])
-        rates = df["net_counts"].values
-        errors = df["net_counts_error"].values
+        rates = df["rate_cps"].values
+        errors = df["rate_cps_error"].values
         
         fig = plot_bateman_decay(times_seconds, rates, errors, population_fits[batch_id], batch_id)
         fig.savefig(out_dir / f"{batch_id}_DecayCurve.png", dpi=150)
@@ -105,21 +105,47 @@ def plot_accumulation_activities(accumulation_metrics: Dict[str, dict], out_path
     out_path.mkdir(parents=True, exist_ok=True)
     
     batch_names = list(accumulation_metrics.keys())
-    ra_activities = [metrics['n_ra_fit'] for metrics in accumulation_metrics.values()]
-    pb_activities = [metrics['n_pb_fit'] for metrics in accumulation_metrics.values()]
-    ra_act_err = [metrics['n_ra_fit_err'] for metrics in accumulation_metrics.values()]
-    pb_act_err = [metrics['n_pb_fit_err'] for metrics in accumulation_metrics.values()]
+    ra_activities = [metrics.get('ra_activity_bq', 0) for metrics in accumulation_metrics.values()]
+    pb_activities = [metrics.get('pb_activity_bq', 0) for metrics in accumulation_metrics.values()]
+    ra_act_err = [metrics.get('ra_activity_err_bq', 0) for metrics in accumulation_metrics.values()]
+    pb_act_err = [metrics.get('pb_activity_err_bq', 0) for metrics in accumulation_metrics.values()]
 
     x = np.arange(len(batch_names))
     
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.errorbar(x, ra_activities, yerr=ra_act_err, label='Ra-224 counts', color='blue', markersize=8, capsize=2, fmt='o')
-    ax.errorbar(x, pb_activities, yerr=pb_act_err, label='Pb-212 counts', color='orange', markersize=8, capsize=2, fmt='o')
-    
-    ax.set(ylabel='Number of Atoms', title ='Fitted Activities by Batch', yscale='log')
+    ax.errorbar(x, ra_activities, yerr=ra_act_err, label='Ra-224 Activity', color='blue', markersize=8, capsize=2, fmt='o')
+    ax.errorbar(x, pb_activities, yerr=pb_act_err, label='Pb-212 Activity', color='orange', markersize=8, capsize=2, fmt='o')
+    ax.set(ylabel='Activity [Bq]', title ='Fitted Activities by Batch', yscale='log')
+
     ax.legend()
     ax.grid(True, alpha=0.3)
     
     fig.tight_layout()
     fig.savefig(str(out_path / "AccumulationActivities.png"), dpi=150)
+    plt.close(fig)
+
+def plot_rate_counts(accumulation_metrics: Dict[str, dict], out_path: Path):
+    """Generates a bar plot comparing the fitted Ra and Pb atom counts at t=0 across batches."""
+    out_path.mkdir(parents=True, exist_ok=True)
+    batch_names = list(accumulation_metrics.keys())
+
+    ra_counts = [metrics.get('n_ra_fit', 0) for metrics in accumulation_metrics.values()]
+    pb_counts = [metrics.get('n_pb_fit', 0) for metrics in accumulation_metrics.values()]
+    ra_counts_err = [metrics.get('n_ra_fit_err', 0) for metrics in accumulation_metrics.values()]
+    pb_counts_err = [metrics.get('n_pb_fit_err', 0) for metrics in accumulation_metrics.values()]
+    x = np.arange(len(batch_names))
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    ax.errorbar(x, ra_counts, yerr=ra_counts_err, label='Ra-224 Atoms at t=0', color='blue', markersize=4, capsize=2, fmt='s')
+    ax.errorbar(x, pb_counts, yerr=pb_counts_err, label='Pb-212 Atoms at t=0', color='orange', markersize=4, capsize=2, fmt='s')
+    ax.set_ylabel('Fitted Atom Counts at t=0', color='blue')
+    ax.tick_params(axis='y', labelcolor='blue')
+    ax.set_yscale('log')
+
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    fig.tight_layout()
+    fig.savefig(str(out_path / "RateCounts.png"), dpi=150)
     plt.close(fig)

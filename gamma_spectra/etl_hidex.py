@@ -98,10 +98,11 @@ def transform_spectra_to_rates(raw_df: pd.DataFrame) -> pd.DataFrame:
     Takes the raw DataFrame (with the 'Spectrum' array column) and applies 
     the gamma peak fitting algorithm across all rows.
     """
-    def apply_fit(spectrum: np.ndarray) -> pd.Series:
+    def apply_fit(row: pd.Series) -> pd.Series:
+        spectrum = row['Spectrum']
         # Safety catch for entirely empty spectra
         if np.any(np.isnan(spectrum)):
-            return pd.Series({'A': 0.0, 'mu': 0.0, 'sigma': 0.0, 'b': 0.0, 'c': 0.0, 'net_counts': 0.0, 'net_counts_error': 0.0, 'R_sq': 0.0})
+            return pd.Series({'A': 0.0, 'mu': 0.0, 'sigma': 0.0, 'b': 0.0, 'c': 0.0, 'net_counts': 0.0, 'net_counts_error': 0.0, 'rate_cps': 0.0, 'rate_cps_error': 0.0, 'R_sq': 0.0})
         
         x = np.arange(len(spectrum), dtype=float)
         popt, pcov, r_sq = fit_gamma_peak(x, spectrum)
@@ -111,6 +112,14 @@ def transform_spectra_to_rates(raw_df: pd.DataFrame) -> pd.DataFrame:
         net_counts = a * sigma * np.sqrt(2 * np.pi)
         net_counts_error = calculate_net_counts_error(pcov, a, sigma)
         
+        # Calculate count rate (Counts Per Second)
+        count_time = float(row.get('CountTime_sec', 1.0))
+        if count_time <= 0:
+            count_time = 1.0  # Prevent division by zero just in case
+            
+        rate_cps = net_counts / count_time
+        rate_cps_error = net_counts_error / count_time
+        
         return pd.Series({
             'A': a,
             'mu': mu,
@@ -119,10 +128,12 @@ def transform_spectra_to_rates(raw_df: pd.DataFrame) -> pd.DataFrame:
             'c': c,
             'net_counts': net_counts,
             'net_counts_error': net_counts_error,
+            'rate_cps': rate_cps,
+            'rate_cps_error': rate_cps_error,
             'R_sq': r_sq,
         })
 
-    fits_df = raw_df['Spectrum'].apply(apply_fit)
+    fits_df = raw_df.apply(apply_fit, axis=1)
     
     # Concatenate the new fit results with the original metadata (dropping the raw arrays to save memory)
     return pd.concat([raw_df.drop(columns=['Spectrum']), fits_df], axis=1)

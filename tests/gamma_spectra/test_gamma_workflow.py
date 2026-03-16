@@ -84,8 +84,8 @@ class TestFitBatchGammaSpectra:
         for name, df in rate_batches.items():
             cols = set(df.columns)
             assert "R_sq" in cols, f"Batch {name!r} missing column: R_sq"
-            assert ("A" in cols or "net_counts" in cols), (
-                f"Batch {name!r} missing rate column (expected 'A' or 'net_counts')"
+            assert ("A" in cols or "rate_cps" in cols), (
+                f"Batch {name!r} missing rate column (expected 'A' or 'rate_cps')"
             )
             assert ("ColA" in cols or "Datetime" in cols), (
                 f"Batch {name!r} missing time column (expected 'ColA' or 'Datetime')"
@@ -178,8 +178,8 @@ class TestExportBatchArtifacts:
             df = pd.read_csv(csv_file)
             cols = set(df.columns)
             assert "R_sq" in cols, f"{csv_file.name} missing column 'R_sq'"
-            assert ("A" in cols or "net_counts" in cols), (
-                f"{csv_file.name} missing rate column (expected 'A' or 'net_counts')"
+            assert ("A" in cols or "rate_cps" in cols), (
+                f"{csv_file.name} missing rate column (expected 'A' or 'rate_cps')"
             )
 
     def test_no_extra_files_created(self, rate_batches, tmp_path):

@@ -14,7 +14,7 @@ def extract_hidex_raw_data(filepath: Path) -> pd.DataFrame:
     # 1. Read the Results Block (starting at Excel row 27)
     results_df = pd.read_excel(filepath, sheet_name="Results", 
                                usecols="A:E", skiprows=26, header=None, engine="openpyxl")
-    results_df.columns = ["ColA", "Datetime", "ParamC", "ParamD", "ParamE"]
+    results_df.columns = ["ColA", "Datetime", "ParamC", "CountTime_mins", "ParamE"]
 
     # 2. Read the full Spectra sheet (no skiprows) so we can compute absolute
     # Excel row mappings robustly. We'll extract the C:BZV columns later.
@@ -67,5 +67,8 @@ def extract_hidex_raw_data(filepath: Path) -> pd.DataFrame:
 
     valid_results["Spectrum"] = [row for row in spectra_values]
     valid_results = valid_results.iloc[:-1]
+    
+    # Calculate count time in seconds
+    valid_results["CountTime_sec"] = pd.to_numeric(valid_results["CountTime_mins"], errors="coerce") * 60.0
 
     return valid_results

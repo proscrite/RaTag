@@ -1,10 +1,17 @@
 import pandas as pd
 import re
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Tuple
+import numpy as np
+from datetime import datetime
 
 from .hidex_read import extract_hidex_raw_data
-from .etl_hidex import transform_spectra_to_rates, fit_initial_populations, parse_timestamps, backcalculate_accumulation
+from .etl_hidex import transform_spectra_to_rates, fit_initial_populations, parse_timestamps, backcalculate_accumulation, LAMBDA_RA, LAMBDA_PB
+
+# Th-228 Half-life in days
+TH228_HALF_LIFE_DAYS = 1.9116 * 365.25
+LAMBDA_TH228_DAYS = np.log(2) / TH228_HALF_LIFE_DAYS
+LAMBDA_RA224_SEC = np.log(2) / (3.6319 * 24 * 3600)
 
 def ingest_hidex_directory(data_dir: Path) -> Dict[str, pd.DataFrame]:
     """
@@ -81,8 +88,8 @@ def extract_bateman_populations(rate_batches: Dict[str, pd.DataFrame]) -> Dict[s
     for batch_name, df in rate_batches.items():
         # The variables times_sec, rates, errors are extracted here
         times_sec = parse_timestamps(df["Datetime"])
-        rates = df["net_counts"].values
-        errors = df["net_counts_error"].values
+        rates = df["rate_cps"].values
+        errors = df["rate_cps_error"].values
         
         # Call the core math function
         population_results[batch_name] = fit_initial_populations(times_sec, rates, errors)
@@ -120,8 +127,12 @@ def compute_recoil_accumulation_limits(population_fits: Dict[str, dict], accumul
         accumulation_results[batch_name] = {
             "n_ra_fit": n_ra_fit,
             "n_ra_fit_err": n_ra_fit_err,
+            "ra_activity_bq": n_ra_fit * LAMBDA_RA,
+            "ra_activity_err_bq": n_ra_fit_err * LAMBDA_RA,
             "n_pb_fit": n_pb_fit,
             "n_pb_fit_err": n_pb_fit_err,
+            "pb_activity_bq": n_pb_fit * LAMBDA_PB,
+            "pb_activity_err_bq": n_pb_fit_err * LAMBDA_PB,
             "delay_minutes": float(delay_seconds) / 60.0,
             "n_ra_end_acc": backcalc.get("n_ra_end_acc"),
             "n_pb_end_acc": backcalc.get("n_pb_end_acc"),
@@ -147,11 +158,12 @@ def export_accumulation_summary(accumulation_metrics: Dict[str, dict], output_cs
     # Ensure column order and presence (fill missing with NaN)
     cols = [
         'Batch_ID',
-        'n_ra_fit', 'n_ra_fit_err',
-        'n_pb_fit', 'n_pb_fit_err',
+        'n_ra_fit', 'n_ra_fit_err', 'ra_activity_bq', 'ra_activity_err_bq',
+        'n_pb_fit', 'n_pb_fit_err', 'pb_activity_bq', 'pb_activity_err_bq',
         'delay_minutes',
         'n_ra_end_acc', 'n_pb_end_acc',
         'max_ra_capacity', 'saturation_pct',
+        'th228_true_bq', 'desorption_probability_pct',
     ]
     for c in cols:
         if c not in summary_df.columns:
@@ -162,3 +174,51 @@ def export_accumulation_summary(accumulation_metrics: Dict[str, dict], output_cs
     # Write numeric values in scientific notation where appropriate
     summary_df.to_csv(output_csv, index=False, float_format='%.2e')
     print(f"  Saved accumulation summary to {output_csv.name}")
+
+def get_mca_results(mca_csv_path, mca_channels):
+    mca_integration_time = float(pd.read_csv(mca_csv_path, skiprows=9, nrows=1).columns[0].split(' ')[0])
+    mca_date_str = pd.read_csv(mca_csv_path, skiprows=7, nrows=1).columns[0].split(' ')[0]
+    mca_date = datetime.strptime(mca_date_str, "%m/%d/%Y")
+
+    dfmca = pd.read_csv(mca_csv_path, skiprows=11, nrows=2048)
+    mca_counts = dfmca[mca_channels[0]: mca_channels[1]].sum().values[0]
+    mca_activity = mca_counts / mca_integration_time
+    return {'mca_activity': mca_activity, 'mca_date': mca_date}
+
+
+def decay_correct_activity(a0: float, date0: str, date_target: str) -> float:
+    """Decay corrects the Th-228 activity between two date strings (YYYY-MM-DD)."""
+    t0 = datetime.strptime(date0, "%Y-%m-%d")
+    t1 = datetime.strptime(date_target, "%Y-%m-%d")
+    delta_days = (t1 - t0).days
+    return a0 * np.exp(-LAMBDA_TH228_DAYS * delta_days)
+
+def compute_desorption_probabilities(metrics: Dict, rate_batches: Dict[str, pd.DataFrame], mca_csv_path: str, mca_channels: list,
+                                     foil_geometry_fraction: float = 0.5) -> Dict:
+    """Unifies the Alpha and Gamma pipelines to find P_desorp."""
+    
+    # 1. Load MCA Data
+    mca_results = get_mca_results(mca_csv_path=mca_csv_path, mca_channels=mca_channels)
+    mca_date_str = mca_results['mca_date'].strftime("%Y-%m-%d")
+
+    updated_metrics = {}
+    for batch_name, batch_metrics in metrics.items():
+        # Get gamma measurement date from the first row of Datetime
+        first_dt = pd.to_datetime(rate_batches[batch_name]["Datetime"].iloc[0])
+        gamma_date_str = first_dt.strftime("%Y-%m-%d")
+
+        # 2. Decay correct the Th-228 source to the date of the Gamma measurement
+        th228_true_bq = decay_correct_activity(mca_results['mca_activity'], mca_date_str, gamma_date_str)
+        
+        # Convert capacity atoms to Bq
+        ra224_foil_capacity_bq = batch_metrics['max_ra_capacity'] * LAMBDA_RA224_SEC
+        
+        # P_desorp = Foil_Bq / (Source_Bq * Geometry)
+        desorption_probability_pct = (ra224_foil_capacity_bq / (th228_true_bq * foil_geometry_fraction))
+        
+        new_metrics = batch_metrics.copy()
+        new_metrics['th228_true_bq'] = th228_true_bq
+        new_metrics['desorption_probability_pct'] = desorption_probability_pct
+        updated_metrics[batch_name] = new_metrics
+        
+    return updated_metrics

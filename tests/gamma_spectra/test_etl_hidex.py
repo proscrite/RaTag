@@ -297,7 +297,7 @@ class TestTransformSpectraToRates:
         result = transform_spectra_to_rates(synthetic_raw_df)
         # Expect the detailed fit outputs from apply_fit: amplitude, fitted
         # parameters, net counts and R_sq
-        expected = {"A", "mu", "sigma", "b", "c", "net_counts", "net_counts_error", "R_sq"}
+        expected = {"A", "mu", "sigma", "b", "c", "rate_cps", "rate_cps_error", "R_sq"}
         missing = expected - set(result.columns)
         assert not missing, f"Missing columns: {missing}"
 
