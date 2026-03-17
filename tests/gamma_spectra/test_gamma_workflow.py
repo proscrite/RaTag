@@ -25,6 +25,7 @@ from RaTag.gamma_spectra.gamma_workflow import (
     export_batch_artifacts,
     extract_bateman_populations,
     compute_recoil_accumulation_limits,
+    compute_desorption_probabilities,
 )
 
 
@@ -297,3 +298,41 @@ class TestFullPipeline:
             assert 0.0 < metrics["saturation_pct"] <= 100.0, (
                 f"Batch {name!r}: saturation_pct={metrics['saturation_pct']:.2f} out of range"
             )
+
+
+class TestComputeDesorptionProbabilities:
+    """Stage 6: Desorption Probabilities (integration with MCA)"""
+
+    def test_desorption_probability_computation(self, tmp_path, rate_batches):
+        populations = extract_bateman_populations(rate_batches)
+        trivial_config = {
+            name: {"delay_seconds": 0, "acc_seconds": 3600}
+            for name in populations
+        }
+        accumulation_metrics = compute_recoil_accumulation_limits(populations, trivial_config)
+        
+        # Create Dummy MCA CSV File
+        mca_csv = tmp_path / "dummy_mca.csv"
+        lines = [
+            "dummy", "dummy", "dummy", "dummy", "dummy", "dummy", "dummy", 
+            "12/01/2021 12:00:00 - Date string", "dummy",
+            "3600.0s - Integration time", "dummy", "dummy",
+        ] + [str(10) for _ in range(2048)]
+        mca_csv.write_text("\n".join(lines))
+        
+        results = compute_desorption_probabilities(
+            metrics=accumulation_metrics, 
+            rate_batches=rate_batches,
+            mca_csv_path=str(mca_csv),
+            mca_channels=[0, 100], 
+            foil_geometry_fraction=0.5
+        )
+        
+        assert isinstance(results, dict)
+        assert results.keys() == accumulation_metrics.keys()
+        
+        for name, metrics in results.items():
+            assert "th228_true_bq" in metrics, f"Batch {name!r}: missing 'th228_true_bq'"
+            assert "desorption_probability_pct" in metrics, f"Batch {name!r}: missing 'desorption_probability_pct'"
+            assert metrics["th228_true_bq"] > 0
+            assert metrics["desorption_probability_pct"] > 0

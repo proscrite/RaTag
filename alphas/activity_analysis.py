@@ -83,37 +83,6 @@ class ActivityMeasurement:
     set_name: str = ""
 
 
-@dataclass(frozen=True)
-class DecayFitResult:
-    """
-    Exponential decay fit result.
-    
-    Model: A(t) = A0 * exp(-λ*t) where λ = ln(2)/T½
-    
-    Attributes:
-        isotope: Isotope name
-        A0: Initial activity [Bq]
-        A0_err: Uncertainty on A0 [Bq]
-        lambda_decay: Decay constant [1/hour]
-        lambda_err: Uncertainty on λ [1/hour]
-        half_life: Fitted half-life [hours]
-        half_life_err: Uncertainty on T½ [hours]
-        half_life_literature: Literature value [hours]
-        chi2_reduced: Reduced chi-squared
-        fit_result: lmfit ModelResult for detailed diagnostics
-    """
-    isotope: str
-    A0: float
-    A0_err: float
-    lambda_decay: float
-    lambda_err: float
-    half_life: float
-    half_life_err: float
-    half_life_literature: float
-    chi2_reduced: float
-    fit_result: lmfit.model.ModelResult
-
-
 # ============================================================================
 # TIMESTAMP EXTRACTION
 # ============================================================================
@@ -346,76 +315,6 @@ def measure_activity_timeseries(timestamped_spectra: List[TimeStampedSpectrum],
 # ============================================================================
 # DECAY CURVE FITTING
 # ============================================================================
-
-def fit_exponential_decay(measurements: List[ActivityMeasurement],
-                         half_life_literature: float) -> DecayFitResult:
-    """
-    Fit exponential decay to activity measurements.
-    
-    Model: A(t) = A0 * exp(-λ*t)
-    where λ = ln(2) / T½
-    
-    Args:
-        measurements: List of ActivityMeasurement (must have activity and activity_err)
-        half_life_literature: Literature half-life [hours] for comparison
-        
-    Returns:
-        DecayFitResult with fitted parameters
-        
-    Example:
-        >>> # Ra-224: T½ = 3.6 days = 86.4 hours
-        >>> decay_fit = fit_exponential_decay(activity_measurements, half_life_literature=86.4)
-        >>> print(f"Fitted T½: {decay_fit.half_life:.1f} ± {decay_fit.half_life_err:.1f} hours")
-        >>> print(f"Literature: {decay_fit.half_life_literature:.1f} hours")
-    """
-    # Extract data
-    t = np.array([m.timestamp for m in measurements])
-    t = (t - t[0]) / 3600.0  # Convert to hours since first measurement
-    
-    A = np.array([m.activity for m in measurements])
-    A_err = np.array([m.activity_err for m in measurements])
-    
-    # Define exponential decay model
-    def decay_model(t, A0, lambda_decay):
-        return A0 * np.exp(-lambda_decay * t)
-    
-    # Fit with lmfit
-    model = lmfit.Model(decay_model)
-    params = model.make_params()
-    
-    # Initial guess: λ from literature, A0 from first data point
-    lambda_init = np.log(2) / half_life_literature
-    params['A0'].set(value=A[0], min=0)
-    params['lambda_decay'].set(value=lambda_init, min=0)
-    
-    # Weighted fit using measurement uncertainties
-    weights = 1.0 / A_err
-    result = model.fit(A, params=params, t=t, weights=weights)
-    
-    # Extract fitted parameters
-    A0 = result.params['A0'].value
-    A0_err = result.params['A0'].stderr if result.params['A0'].stderr else 0.0
-    
-    lambda_fit = result.params['lambda_decay'].value
-    lambda_err = result.params['lambda_decay'].stderr if result.params['lambda_decay'].stderr else 0.0
-    
-    # Compute fitted half-life
-    half_life_fit = np.log(2) / lambda_fit
-    half_life_err = (np.log(2) / lambda_fit**2) * lambda_err  # Error propagation
-    
-    return DecayFitResult(
-        isotope=measurements[0].isotope,
-        A0=A0,
-        A0_err=A0_err,
-        lambda_decay=lambda_fit,
-        lambda_err=lambda_err,
-        half_life=half_life_fit,
-        half_life_err=half_life_err,
-        half_life_literature=half_life_literature,
-        chi2_reduced=result.redchi,
-        fit_result=result
-    )
-
 
 # ============================================================================
 # REFERENCE VALUES
