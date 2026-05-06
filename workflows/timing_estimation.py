@@ -12,6 +12,7 @@ from RaTag.core.functional import apply_workflow_to_run, map_isotopes_in_run, co
 from RaTag.alphas.energy_join import map_results_to_isotopes, generic_multiiso_workflow
 from RaTag.waveform.s1s2_detection import detect_s1_in_frame, detect_s2_in_frame
 from RaTag.plotting import plot_time_histograms, plot_n_waveforms, plot_timing_vs_drift_field, plot_grouped_histograms
+from RaTag.core.paths import get_output_root
 # ============================================================================
 # SHARED UTILITIES (private)
 # ============================================================================
@@ -110,10 +111,9 @@ def save_timing_results(set_pmt: SetPmt,
     # Save metadata (at root level)
     save_set_metadata(set_pmt)
     
-    # Save raw data as npz in all/ subdirectory
-    all_dir = data_dir / "all"
-    all_dir.mkdir(parents=True, exist_ok=True)
-    data_file = all_dir / f"{set_pmt.source_dir.name}_{signal_type}.npz"
+    # Save raw data as npz
+    data_dir.mkdir(parents=True, exist_ok=True)
+    data_file = data_dir / f"{set_pmt.source_dir.name}_{signal_type}.npz"
     
     if isinstance(timing_data, np.ndarray):
         # S1: single array
@@ -247,14 +247,14 @@ def workflow_s1_timing(set_pmt: SetPmt,
                                        max_frames=max_frames,
                                        threshold_s1=threshold_s1)
     
-    # Default directories
-    data_dir = set_pmt.source_dir.parent / "processed_data"
+    # Default directories (use centralized processed run root)
+    data_dir = get_output_root(set_pmt.source_dir.parent)
     data_dir.mkdir(parents=True, exist_ok=True)
-    
-    plots_dir = set_pmt.source_dir.parent / "plots" / "all" / "t_s1"
+
+    plots_dir = get_output_root(set_pmt.source_dir.parent) / "plots"  / "t_s1"
     plots_dir.mkdir(parents=True, exist_ok=True)
-    
-    print(f"  Saving S1 timing results in {data_dir.relative_to(set_pmt.source_dir.parent)}")
+
+    print(f"  Saving S1 timing results in {data_dir}")
     # Save
     save_timing_results(updated_set, uids_s1, s1_times, data_dir, signal_type='t_s1')
     
@@ -280,11 +280,11 @@ def workflow_s2_timing(set_pmt: SetPmt,
                                       threshold_s2=threshold_s2,
                                       s2_duration_cuts=s2_duration_cuts)
     
-    # Default directories
-    data_dir = set_pmt.source_dir.parent / "processed_data"
+    # Default directories (use centralized processed run root)
+    data_dir = get_output_root(set_pmt.source_dir.parent)
     data_dir.mkdir(parents=True, exist_ok=True)
-    
-    plots_dir = set_pmt.source_dir.parent / "plots" / "all" / "t_s2"
+
+    plots_dir = get_output_root(set_pmt.source_dir.parent) / "plots"  / "t_s2"
     plots_dir.mkdir(parents=True, exist_ok=True)
     
     # Save
@@ -402,7 +402,7 @@ def validate_timing_windows(run: Run, n_waveforms: int = 5, force: bool = False)
     print("TIMING VALIDATION")
     print("="*60)
     
-    validation_dir = run.root_directory / "plots" / "all" / "validation"
+    validation_dir = get_output_root(run) / "plots"  / "validation"
     validation_dir.mkdir(parents=True, exist_ok=True)
     
     for i, set_pmt in enumerate(run.sets, 1):
@@ -492,7 +492,7 @@ def summarize_timing_vs_field(run: Run,
     
     # Set up output directory
     if plots_dir is None:
-        plots_dir = run.root_directory / "plots" / "all" / "summary_preparation"
+        plots_dir = get_output_root(run) / "plots"  / "summary_preparation"
     plots_dir.mkdir(parents=True, exist_ok=True)
     
     # Collect data for all timing parameters

@@ -11,6 +11,7 @@ from .units import V_to_mV, s_to_us
 from .datatypes import SiliconWaveform, Waveform, SetPmt, Run, S2Areas, PMTWaveform, XRayResults, FrameProxy
 from .wfm2read_fast import wfm2read # type: ignore
 PathLike = Union[str, Path]
+from RaTag.core.paths import get_processed_run_dir, get_output_root
 
 # -------------------------------------
 # --- Load waveform from .wfm file  ---
@@ -197,7 +198,7 @@ def save_set_metadata(set_pmt: SetPmt) -> None:
     
     File location: {run_dir}/processed_data/{set_name}_metadata.json
     """
-    metadata_dir = set_pmt.source_dir.parent / "processed_data"
+    metadata_dir = get_output_root(set_pmt.source_dir.parent) / "set_summaries"
     metadata_dir.mkdir(parents=True, exist_ok=True)
     
     metadata_file = metadata_dir / f"{set_pmt.source_dir.name}_metadata.json"
@@ -241,8 +242,8 @@ def load_set_metadata(set_pmt: SetPmt) -> Optional[SetPmt]:
     Returns:
         Updated SetPmt with loaded metadata, or None if file doesn't exist
     """
-    # Look in processed_data at run level
-    metadata_dir = set_pmt.source_dir.parent / "processed_data"
+    # Look in central processed run directory
+    metadata_dir = get_output_root(set_pmt.source_dir.parent) / "set_summaries"
     metadata_file = metadata_dir / f"{set_pmt.source_dir.name}_metadata.json"
     
     if not metadata_file.exists():
@@ -342,12 +343,12 @@ def store_s2area(s2: S2Areas,
     """
     # Determine base directory
     if output_dir is None:
-        base_dir = s2.source_dir.parent / "processed_data"
+        base_dir = get_output_root(s2.source_dir.parent)
     else:
         base_dir = output_dir
-    
-    # Always save to all/ subdirectory
-    all_dir = base_dir / "all"
+
+    # Save to s2_areas/ subdirectory
+    all_dir = base_dir / "s2_areas"
     all_dir.mkdir(parents=True, exist_ok=True)
     
     set_name = s2.source_dir.name
@@ -362,7 +363,7 @@ def store_s2area(s2: S2Areas,
                        uids=s2.uids.astype(np.uint32), 
                        **{area_key: s2.areas})
     
-    print(f"    💾 Saved {suffix.replace('_', ' ')} to all/{path_areas.name}")
+    print(f"    💾 Saved {suffix.replace('_', ' ')} to s2_areas/{path_areas.name}")
 
     if set_pmt is not None:
         save_set_metadata(set_pmt)
@@ -414,24 +415,20 @@ def load_s2area(set_pmt: SetPmt, input_dir: Optional[Path] = None) -> S2Areas:
     """
     # Determine base directory
     if input_dir is None:
-        base_dir = set_pmt.source_dir.parent / "processed_data"
+        base_dir = get_output_root(set_pmt.source_dir.parent)
     else:
         base_dir = input_dir
-    
-    # Always load from all/ subdirectory
-    all_dir = base_dir / "all"
     
     set_name = set_pmt.source_dir.name
     
     # Load raw areas from all/ subdirectory
-    path_areas = all_dir / f"{set_name}_s2_areas.npz"
+    path_areas = base_dir / f"{set_name}_s2_areas.npz"
     arr = np.load(path_areas, allow_pickle=True)
     
-    # Try to load complete results
-    # Note: metadata.json is at root level, not in all/ subdirectory
-    path_results = base_dir / f"{set_name}_metadata.json"
-    if path_results.exists():
-        with open(path_results, "r") as f:
+    # Try to load complete results from the set_summaries metadata directory
+    metadata_file = get_output_root(set_pmt.source_dir.parent) / "set_summaries" / f"{set_name}_metadata.json"
+    if metadata_file.exists():
+        with open(metadata_file, "r") as f:
             results = json.load(f)
         
         return S2Areas(
@@ -592,7 +589,7 @@ def aggregate_xray_areas(run: Run, output_dir: Optional[Path] = None) -> Run:
     all_uids = []
     
     for set_pmt in run.sets:
-        xray_file = set_pmt.source_dir.parent / "processed_data" / "all" / f"{set_pmt.source_dir.name}_xray_areas.npz"
+        xray_file = get_output_root(set_pmt.source_dir.parent) / "s2_areas" / f"{set_pmt.source_dir.name}_xray_areas.npz"
         
         if not xray_file.exists():
             print(f"  ⚠ No X-ray results for {set_pmt.source_dir.name} - skipping")

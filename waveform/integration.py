@@ -1,4 +1,5 @@
 import numpy as np # type: ignore
+from dataclasses import replace
 
 from RaTag.core.datatypes import PMTWaveform
 from RaTag.core.config import IntegrationConfig
@@ -30,6 +31,8 @@ def integrate_trapz(wf: PMTWaveform, dt: float = 2e-4) -> np.ndarray:
 def integrate_s2_in_frame(wf: PMTWaveform,
                           s2_start: float,
                           s2_end: float,
+                          s2_start_std: float,
+                          s2_end_std: float,
                           config: IntegrationConfig) -> float:
     """
     Integrate S2 signal in a single frame.
@@ -38,8 +41,11 @@ def integrate_s2_in_frame(wf: PMTWaveform,
         wf: Single frame waveform (ff=False)
         s2_start: S2 window start (µs)
         s2_end: S2 window end (µs)
-        config: Integration configuration
-        
+        s2_start_std: Standard deviation of S2 window start (µs)
+        s2_end_std: Standard deviation of S2 window end (µs)
+        n_sigma_start: Number of sigmas to extend start of S2 window
+        n_sigma_end: Number of sigmas to extend end of S2 window
+        config: Integration configuration parameters
     Returns:
         Integrated S2 area (mV·µs)
     """
@@ -48,8 +54,11 @@ def integrate_s2_in_frame(wf: PMTWaveform,
     wf = moving_average(wf, window=config.ma_window)
     wf = threshold_clip(wf, threshold=config.bs_threshold)
     
+    static_start = s2_start - (config.n_sigma_start * s2_start_std)
+    static_end = s2_end + (config.n_sigma_end * s2_end_std)
+
     # Extract S2 window and integrate
-    wf_s2 = extract_window(wf, s2_start, s2_end)
+    wf_s2 = extract_window(wf, t_start=static_start, t_end=static_end, dt=config.dt)
     areas = config.integrator(wf_s2, config.dt)
     
     return float(areas[-1])  # Last element contains total area

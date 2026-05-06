@@ -10,15 +10,26 @@ from .preprocessing import moving_average, subtract_pedestal, threshold_clip
 # ----------------------------------
 # --- Generic Window extraction ----
 # ----------------------------------
-def extract_window(wf: PMTWaveform, t_start: float, t_end: float) -> PMTWaveform:
-    """Extract time window from waveform, handling both FastFrame and single frame formats."""
-    mask = (wf.t >= t_start) & (wf.t <= t_end)
-    if wf.ff:
-        v = wf.v[:, mask]  # Apply mask to all frames along time axis
-    else:
-        v = wf.v[mask]
-    return replace(wf, t=wf.t[mask], v=v)
+# def extract_window_On(wf: PMTWaveform, t_start: float, t_end: float) -> PMTWaveform:
+#     """Extract time window from waveform, handling both FastFrame and single frame formats."""
+#     mask = (wf.t >= t_start) & (wf.t <= t_end)
+#     if wf.ff:
+#         v = wf.v[:, mask]  # Apply mask to all frames along time axis
+#     else:
+#         v = wf.v[mask]
+#     return replace(wf, t=wf.t[mask], v=v)
 
+def extract_window(wf: PMTWaveform, t_start: float, t_end: float, dt: float) -> PMTWaveform:
+    """Extract time window from waveform, handling both FastFrame and single frame formats. O(1) ."""
+    t0 = wf.t[0]
+    
+    start_idx = max(0, int((t_start - t0) / dt))
+    end_idx = min(len(wf.v), int((t_end - t0) / dt))
+    
+    if start_idx >= end_idx:
+        return 0.0
+        
+    return replace(wf, t=wf.t[start_idx:end_idx], v=wf.v[start_idx:end_idx])
 
 # ============================================================================
 # FRAME-LEVEL S1 DETECTION

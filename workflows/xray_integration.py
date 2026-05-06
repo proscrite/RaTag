@@ -23,6 +23,7 @@ import matplotlib.pyplot as plt
 from RaTag.core.datatypes import SetPmt, Run, S2Areas
 from RaTag.core.config import XRayConfig, FitConfig
 from RaTag.core.dataIO import iter_frameproxies, save_set_metadata, store_s2area, save_figure, save_run_metadata
+from RaTag.core.paths import get_output_root
 from RaTag.core.uid_utils import make_uid, decode_uid
 from RaTag.core.functional import apply_workflow_to_run, compute_max_files, map_isotopes_in_run
 from RaTag.core.fitting import fit_gaussian_to_histogram, plot_gaussian_fit
@@ -121,12 +122,13 @@ class _RejectionTracker:
 
 def _setup_set_directories(set_pmt: SetPmt) -> tuple[Path, Path]:
     """Setup output directories for set-level processing."""
-    plots_dir = set_pmt.source_dir.parent / "plots" / "all" / "xrays"
+    processed_run = get_output_root(set_pmt.source_dir.parent)
+    plots_dir = processed_run / "plots" / "xrays"
     plots_dir.mkdir(parents=True, exist_ok=True)
-    
-    data_dir = set_pmt.source_dir.parent / "processed_data"
+
+    data_dir = processed_run / "s2_areas"
     data_dir.mkdir(parents=True, exist_ok=True)
-    
+
     return plots_dir, data_dir
 
 
@@ -302,8 +304,9 @@ def workflow_xray_classification(set_pmt: SetPmt,
                         }
                     )
     
-    # Save X-ray areas using unified storage function
-    store_s2area(xray_areas, set_pmt, data_dir, suffix="xray_areas")
+    # Save X-ray areas using unified storage function (save under processed run root)
+    processed_run = get_output_root(set_pmt.source_dir.parent)
+    store_s2area(xray_areas, set_pmt=set_pmt, output_dir=processed_run, suffix="xray_areas")
     
     # Update metadata with statistics
     new_metadata = {
@@ -346,7 +349,7 @@ def _load_accepted_uids(set_pmt: SetPmt) -> np.ndarray:
     Returns:
         Array of accepted UIDs (empty if file doesn't exist)
     """
-    data_dir = set_pmt.source_dir.parent / "processed_data" / "all"
+    data_dir = get_output_root(set_pmt.source_dir.parent) / "s2_areas"
     xray_file = data_dir / f"{set_pmt.source_dir.name}_xray_areas.npz"
     
     if not xray_file.exists():
@@ -416,7 +419,7 @@ def _sample_xray_frames(set_pmt: SetPmt,
         (accepted_sample, rejected_sample) - lists of (file_seq, frame_idx) tuples
     """
     # Load accepted UIDs
-    data_dir = set_pmt.source_dir.parent / "processed_data" / "all"
+    data_dir = get_output_root(set_pmt.source_dir.parent) / "s2_areas"
     xray_file = data_dir / f"{set_pmt.source_dir.name}_xray_areas.npz"
     
     if xray_file.exists():
@@ -455,7 +458,7 @@ def validate_xray_classification(run: Run,
     print("X-RAY CLASSIFICATION VALIDATION")
     print("="*60)
     
-    validation_dir = run.root_directory / "plots" / "all" / "xray_validation"
+    validation_dir = get_output_root(run.root_directory) / "plots" / "xray_validation"
     validation_dir.mkdir(parents=True, exist_ok=True)
     
     for i, set_pmt in enumerate(run.sets, 1):
@@ -515,7 +518,7 @@ def fit_xray_areas(run: Run,
     print("="*60)
     
     # Load combined X-ray areas
-    data_dir = run.root_directory / "processed_data"
+    data_dir = get_output_root(run.root_directory) / "s2_areas"
     combined_file = data_dir / f"{run.run_id}_xray_areas_combined.npz"
     
     if not combined_file.exists():
@@ -544,7 +547,7 @@ def fit_xray_areas(run: Run,
                             color='green')
     
     # Save plot
-    plots_dir = run.root_directory / "plots"
+    plots_dir = get_output_root(run.root_directory) / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
     save_figure(fig, plots_dir / f"{run.run_id}_xray_area_histogram.png")
     

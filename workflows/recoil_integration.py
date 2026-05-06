@@ -21,13 +21,14 @@ import matplotlib.pyplot as plt
 
 from RaTag.core.datatypes import SetPmt, S2Areas, Run
 from RaTag.core.config import IntegrationConfig, FitConfig
-from RaTag.core.dataIO import iter_frameproxies, store_s2area, load_s2area, save_figure, save_set_metadata
+from RaTag.core.dataIO import iter_frameproxies, store_s2area, load_s2area, save_figure, save_set_metadata, load_set_metadata
 from RaTag.core.uid_utils import make_uid
 from RaTag.core.fitting import fit_set_s2, fit_multiiso_s2
 from RaTag.core.functional import apply_workflow_to_run, map_isotopes_in_run, compute_max_files
 from RaTag.alphas.energy_join import  generic_multiiso_workflow
 from RaTag.waveform.integration import integrate_s2_in_frame
 from RaTag.plotting import plot_s2_vs_drift, plot_hist_fit, plot_grouped_histograms
+from RaTag.core.paths import get_output_root
 
 
 # ============================================================================
@@ -45,13 +46,13 @@ def _setup_set_directories(set_pmt: SetPmt) -> tuple[Path, Path]:
         Tuple of (plots_dir, data_dir)
     """
 
-    plots_dir = set_pmt.source_dir.parent / "plots" / "all" / "s2_areas"
+    processed_run = get_output_root(set_pmt.source_dir.parent)
+    plots_dir = processed_run / "plots" / "s2_areas"
     plots_dir.mkdir(parents=True, exist_ok=True)
-    
 
-    data_dir = set_pmt.source_dir.parent / "processed_data"
+    data_dir = processed_run / "s2_areas"
     data_dir.mkdir(parents=True, exist_ok=True)
-    
+
     return plots_dir, data_dir
 
 
@@ -66,12 +67,13 @@ def _setup_run_directories(run: Run) -> tuple[Path, Path]:
         Tuple of (plots_dir, data_dir)
     """
 
-    plots_dir = run.root_directory / "plots" / "all" / "s2_areas"
+    processed_run = get_output_root(run.root_directory)
+    plots_dir = processed_run / "plots" / "s2_areas"
     plots_dir.mkdir(parents=True, exist_ok=True)
-    
-    data_dir = run.root_directory / "processed_data"
+
+    data_dir = processed_run / "s2_areas"
     data_dir.mkdir(parents=True, exist_ok=True)
-    
+
     return plots_dir, data_dir
 
 
@@ -127,6 +129,8 @@ def _integrate_s2_in_set(set_pmt: SetPmt,
     # Extract and ensure proper float type (metadata might store as string)
     s2_start = float(set_pmt.metadata['t_s2_start'])
     s2_end = float(set_pmt.metadata['t_s2_end'])
+    s2_start_std = float(set_pmt.metadata.get('t_s2_start_std', 0.0))
+    s2_end_std = float(set_pmt.metadata.get('t_s2_end_std', 0.0))
     
     print(f"  Integrating S2 window: [{s2_start:.2f}, {s2_end:.2f}] µs")
     
@@ -143,7 +147,9 @@ def _integrate_s2_in_set(set_pmt: SetPmt,
         try:
             uid = make_uid(frame_wf.file_seq, frame_wf.frame_idx)
             frame_pmt = frame_wf.load_pmt_frame()
-            area = integrate_s2_in_frame(frame_pmt, s2_start, s2_end, integration_config)
+            area = integrate_s2_in_frame(frame_pmt, s2_start=s2_start, s2_end=s2_end,
+                                          s2_start_std=s2_start_std, s2_end_std=s2_end_std, 
+                                          config=integration_config)
             areas.append(area)
             uids.append(uid)
         except Exception as e:
@@ -209,8 +215,11 @@ def workflow_s2_integration(set_pmt: SetPmt,
 
     new_metadata = {**set_pmt.metadata, 'n_areas_recoil': len(s2.areas)}
     set_pmt = replace(set_pmt, metadata=new_metadata)
-    # Save raw areas immediately (store_s2area prints the save message)
-    store_s2area(s2, set_pmt=set_pmt, output_dir=data_dir)
+    # Save raw areas immediately into the processed run root (store_s2area
+    # will create the `s2_areas/` subdirectory). Passing `data_dir` here
+    # previously caused a double `s2_areas/s2_areas` nesting.
+    processed_run = get_output_root(set_pmt.source_dir.parent)
+    store_s2area(s2, set_pmt=set_pmt, output_dir=processed_run)
     
     return set_pmt
 
@@ -304,7 +313,7 @@ def workflow_fit_multiiso_s2(set_pmt: SetPmt,
     """
     
     # Load parquet file
-    data_dir = set_pmt.source_dir.parent / "processed_data"
+    data_dir = get_output_root(set_pmt.source_dir.parent)
     multiiso_dir = data_dir / "multiiso"
     parquet_path = multiiso_dir / f"{set_pmt.source_dir.name}_s2_areas_multi.parquet"
     
@@ -344,7 +353,7 @@ def workflow_fit_multiiso_s2(set_pmt: SetPmt,
         save_set_metadata(updated_set)
         
         # Generate plot with fit overlays
-        plots_dir = set_pmt.source_dir.parent / "plots" / "multiiso" / "s2_areas_multi"
+        plots_dir = get_output_root(set_pmt.source_dir.parent) / "plots" / "multiiso" / "s2_areas_multi"
         plots_dir.mkdir(parents=True, exist_ok=True)
         
         fig = plot_grouped_histograms(df, ['s2_areas'], bins=100, fit_results=fit_results)
@@ -399,22 +408,29 @@ def fit_s2_in_run(run: Run,
     print("S2 AREA FITTING")
     print("="*60)
     
-    plots_dir = run.root_directory / "plots" / "all" / "s2_areas"
+    plots_dir = get_output_root(run.root_directory) / "plots" / "s2_areas"
     plots_dir.mkdir(parents=True, exist_ok=True)
     
     updated_sets = []
     for i, set_pmt in enumerate(run.sets, 1):
         print(f"\nSet {i}/{len(run.sets)}: {set_pmt.source_dir.name}")
+        # Reload metadata (ensure we see metadata written by set-level workflows)
         
-        # Check cache
-        if not force_refit and 'area_s2_mean' in set_pmt.metadata:
+        reloaded = load_set_metadata(set_pmt)
+        if reloaded:
+            set_pmt = reloaded
+        print(f"  → n_areas_recoil: {set_pmt.metadata.get('n_areas_recoil', 'N/A')}")
+
+        # Check cache: both metadata key AND data file must exist
+        data_file_check = get_output_root(set_pmt.source_dir.parent) / "s2_areas" / f"{set_pmt.source_dir.name}_s2_areas.npz"
+        if (not force_refit) and ('area_s2_mean' in set_pmt.metadata) and data_file_check.exists():
             print(f"  📂 Loaded from cache")
             updated_sets.append(set_pmt)
             continue
         
         # Load S2 areas
         try:
-            data_dir = set_pmt.source_dir.parent / "processed_data"
+            data_dir = get_output_root(set_pmt.source_dir.parent) / "s2_areas"
             s2 = load_s2area(set_pmt, input_dir=data_dir)
         except FileNotFoundError:
             s2 = None
@@ -552,7 +568,7 @@ def summarize_s2_vs_field(run: Run,
         return run
     
     # Save CSV
-    csv_file = data_dir / f"{run.run_id}_s2_vs_drift.csv"
+    csv_file = data_dir / f"{run.run_id}_s2_areas.csv"
     df.to_csv(csv_file, index=False, float_format='%.6f')
     print(f"  💾 Saved data to {csv_file.name}")
     

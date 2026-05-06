@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt # type: ignore
 from lmfit.models import GaussianModel # type: ignore
 import lmfit # type: ignore
 import pandas as pd # type: ignore
+from scipy.optimize import curve_fit
 
 from .datatypes import S2Areas
 from .config import FitConfig
@@ -304,6 +305,77 @@ def v_crystalball_right(x, N, beta, m, x0, sigma):
     # Use Gaussian for z < beta, tail for z >= beta
     return N * np.where(z < absb, gauss, tail)
 
+def _compute_x0_uncertainty(result: lmfit.model.ModelResult) -> float:
+    """Compute a robust uncertainty for the fitted peak position.
+
+    This helper accepts either a lmfit ModelResult *or* the top-level
+    fit-result dictionary returned by the higher-level fit functions.
+
+    Behaviour:
+    - find the fitted parameter corresponding to the peak (e.g. 'sig_x0',
+      'x0' or 'center') and use its stderr as the statistical uncertainty
+      (0 if stderr is None)
+    - if a histogram dictionary is available (keys 'bins' or 'bin_centers'),
+      compute bin width and add the binning uncertainty (w/sqrt(12)) in
+      quadrature with the statistical uncertainty
+    - if reduced chi-squared > 1, inflate the *statistical* component by
+      sqrt(redchi) (do not scale the binning contribution)
+
+    Returns
+    -------
+    float
+        Combined uncertainty on peak position
+    """
+    # Accept either a ModelResult or the fit-result dict
+    model_result = None
+    hist = None
+    if isinstance(result, dict):
+        # prefer the explicit signal/result objects if present
+        model_result = result.get('result_sig') or result.get('result')
+        hist = result.get('histogram')
+    else:
+        model_result = result
+
+    if model_result is None:
+        raise ValueError("No ModelResult found to compute x0 uncertainty")
+
+    # Find a sensible parameter name for the peak location
+    params = getattr(model_result, 'params', {})
+    param = None
+    for cand in ('sig_x0', 'x0', 'center', 'mu'):
+        if cand in params:
+            param = params[cand]
+            break
+    if param is None:
+        # fallback: look for any parameter name containing 'x0' or 'center'
+        for k in params:
+            if 'x0' in k or 'center' in k or 'mu' in k:
+                param = params[k]
+                break
+
+    stderr = float(param.stderr) if (param is not None and param.stderr is not None) else 0.0
+
+    # derive bin width from histogram if available
+    bin_width = None
+    if hist is not None and isinstance(hist, dict):
+        bins = hist.get('bins')
+        bin_centers = hist.get('bin_centers')
+        if bins is not None and len(bins) >= 2:
+            # bins are edges
+            bin_width = float(bins[1] - bins[0])
+        elif bin_centers is not None and len(bin_centers) >= 2:
+            bin_width = float(bin_centers[1] - bin_centers[0])
+
+    binning_uncertainty = (bin_width / np.sqrt(12.0)) if (bin_width is not None) else 0.0
+
+    # scale the statistical (stderr) part by sqrt(reduced_chi) if fit is poor
+    redchi = getattr(model_result, 'redchi', None)
+    stat = stderr
+    if redchi is not None and redchi > 1.0:
+        stat = stat * np.sqrt(redchi)
+
+    total_uncertainty = float(np.sqrt(stat**2 + binning_uncertainty**2))
+    return total_uncertainty
 
 def find_main_cluster(counts, threshold_fraction=0.01):
     """
@@ -479,7 +551,7 @@ def _fit_signal_crystalball(cbins: np.ndarray,
     main_cluster_mask = find_main_cluster(counts, threshold_fraction=0.01)
     signal_mask = main_cluster_mask & (cbins >= lower_bound) & (cbins <= upper_limit)
     print(f"User defined signal region: [{lower_bound}, {upper_limit}]")
-    print(f" Found main cluster in f{cbins[signal_mask]}")
+    # print(f" Found main cluster in f{cbins[signal_mask]}")
 
     cbins_sig = cbins[signal_mask]
     n_sig = counts[signal_mask]
@@ -835,10 +907,12 @@ def fit_set_s2(s2: S2Areas,
             plot_s2_fit_result(result, s2.areas, 
                              set_name=s2.source_dir.name if hasattr(s2, 'source_dir') else '')
         
+        x0_uncertainty = _compute_x0_uncertainty(result['result_sig'] if result['method'] == 'two_stage' else result['result'])
         return replace(s2,
                       mean=result['peak_position'],
                       sigma=result['sigma'],
-                      ci95=1.96 * result['peak_stderr'] if result['peak_stderr'] else 0.0,
+                    #   ci95=1.96 * result['peak_stderr'] if result['peak_stderr'] else 0.0,
+                      ci95= x0_uncertainty,
                       fit_result=result,  # Store full result dict
                       fit_success=True)
     
@@ -938,3 +1012,42 @@ def fit_multiiso_s2(df: pd.DataFrame,
     return result
 
 
+# 1. Define the sigmoid (logistic) function
+def sigmoid(x, k, x0):
+    # We fix the maximum value (L) to 1.0 for physical transparency
+    return 1 / (1 + np.exp(-k * (x - x0)))
+
+
+def fit_sigmoid(R_data, T_data, p0=[0.5, 7.0]):
+# p0 is an initial guess: [steepness, midpoint]
+    popt, pcov = curve_fit(sigmoid, R_data, T_data, p0=p0)
+
+    # 4. Generate the fit curve for plotting
+    R_fit = np.linspace(0, 35, 100)
+    T_fit = sigmoid(R_fit, *popt)
+    return popt, R_fit, T_fit
+
+def hard_knee_model(x, slope, x_intercept):
+    """
+    Piecewise linear grid transparency model.
+    T = 0 until x_intercept, rises linearly, clips hard at 1.0.
+    """
+    return np.clip(slope * (x - x_intercept), 0.0, 1.0)
+
+def fit_hard_knee(x_data, y_data, p0=(0.2, 2.0)):
+    """
+    Fits the piecewise hard knee model to transparency data.
+    Returns: popt (slope, x_intercept), x_fit, y_fit
+    """
+    try:
+        # Constrain slope > 0 and intercept > 0 to maintain physics
+        popt, pcov = curve_fit(hard_knee_model, x_data, y_data, p0=p0, bounds=(0, np.inf))
+        
+        # Generate a smooth curve for plotting
+        x_fit = np.linspace(min(x_data)*0.8, max(x_data)*1.5, 100)
+        y_fit = hard_knee_model(x_fit, *popt)
+        
+        return popt, x_fit, y_fit
+    except Exception as e:
+        print(f"Hard knee fit failed: {e}")
+        return None, None, None

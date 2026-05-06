@@ -21,6 +21,7 @@ import numpy as np
 import lmfit
 from lmfit.model import ModelResult
 
+from RaTag.core.paths import get_output_root
 from RaTag.alphas.energy_map_reader import load_energy_index
 
 
@@ -210,7 +211,7 @@ def load_spectrum_from_run(run,
     if aggregate:
         all_energies = []
         for set_pmt in run.sets:
-            energy_maps_dir = set_pmt.source_dir.parent / "energy_maps" / set_pmt.source_dir.name
+            energy_maps_dir = get_output_root(run) / "energy_maps" / set_pmt.source_dir.name
             if energy_maps_dir.exists():
                 _, energies = load_energy_index(str(energy_maps_dir), fmt='8b')
                 all_energies.append(energies)
@@ -226,7 +227,7 @@ def load_spectrum_from_run(run,
     else:
         # Use first set
         set_pmt = run.sets[0]
-        energy_maps_dir = set_pmt.source_dir.parent / "energy_maps" / set_pmt.source_dir.name
+        energy_maps_dir = get_output_root(run) / "energy_maps" / set_pmt.source_dir.name
         return load_spectrum_from_energy_maps(str(energy_maps_dir), energy_range)
 
 # ============================================================================

@@ -18,6 +18,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from RaTag.core.datatypes import Run
+from RaTag.core.paths import get_output_root
 from RaTag.core.config import ALPHA_PEAK_DEFINITIONS, ALPHA_SATELLITE_DEFINITIONS
 from RaTag.core.dataIO import save_figure
 from RaTag.alphas.spectrum_fitting import (
@@ -89,10 +90,10 @@ def load_computed_ranges(run_id: str, root_directory: Path) -> dict:
 
 def _setup_output_directories(run: Run) -> tuple[Path, Path]:
     """Setup output directories for spectrum calibration."""
-    plots_dir = run.root_directory / "plots" / "spectrum_calibration"
+    plots_dir = get_output_root(run) / "plots" / "spectrum_calibration"
     plots_dir.mkdir(parents=True, exist_ok=True)
     
-    data_dir = run.root_directory / "processed_data" / "spectrum_calibration"
+    data_dir = get_output_root(run) / "spectrum_calibration"
     data_dir.mkdir(parents=True, exist_ok=True)
     
     return plots_dir, data_dir
@@ -118,7 +119,7 @@ def create_alpha_overlay(run: Run,
         print("  ⚠ No sets in run - skipping overlay")
         return run
 
-    plots_dir = run.sets[0].source_dir.parent / "plots" / "alpha_spectra"
+    plots_dir = get_output_root(run) / "plots" / "alpha_spectra"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
     # Delete aggregated plot if exists (This is a patch to avoid modifying plot_energy_spectra_in_run)
@@ -133,7 +134,7 @@ def create_alpha_overlay(run: Run,
     # Prepare overlay
     fig, ax = plt.subplots(figsize=(12, 6))
     for set_pmt in run.sets:
-        energy_maps_dir = set_pmt.source_dir.parent / "energy_maps" / set_pmt.source_dir.name
+        energy_maps_dir = get_output_root(run) / "energy_maps" / set_pmt.source_dir.name
         if not energy_maps_dir.exists():
             print(f"  ⚠ No energy maps for {set_pmt.source_dir.name} - skipping")
             continue

@@ -21,6 +21,7 @@ from RaTag.core.dataIO import save_figure
 from RaTag.alphas.energy_map_writer import writer_main
 from RaTag.alphas.energy_map_reader import load_energy_index
 from RaTag.plotting import plot_alpha_energy_spectrum
+from RaTag.core.paths import get_output_root
 
 
 # ============================================================================
@@ -59,7 +60,7 @@ def generate_energy_maps_for_set(set_pmt: SetPmt,
         # Creates: energy_maps/FieldScan_Gate0050_Anode1950/energy_map_*.bin
     """
     # Setup output directory structure
-    energy_maps_dir = set_pmt.source_dir.parent / "energy_maps" / set_pmt.source_dir.name
+    energy_maps_dir = get_output_root(set_pmt.source_dir.parent) / "energy_maps" / set_pmt.source_dir.name
     energy_maps_dir.mkdir(parents=True, exist_ok=True)
     
     # Generate energy maps
@@ -122,7 +123,7 @@ def create_energy_maps_in_run(run: Run,
     # Custom cache check: look for energy_map_*.bin files
     def _check_energy_maps_exist(set_pmt: SetPmt) -> bool:
         """Check if energy maps already exist for this set."""
-        energy_maps_dir = set_pmt.source_dir.parent / "energy_maps" / set_pmt.source_dir.name
+        energy_maps_dir = get_output_root(set_pmt.source_dir.parent) / "energy_maps" / set_pmt.source_dir.name
         if not energy_maps_dir.exists():
             return False
         # Check if any .bin files exist
@@ -169,7 +170,7 @@ def create_energy_maps_in_run(run: Run,
 # ENERGY SPECTRUM PLOTTING
 # ============================================================================
 
-def _save_plot(fig, set_pmt: SetPmt, filename: str) -> None:
+def _save_plot(fig, run, set_pmt: SetPmt, filename: str) -> None:
     """
     Helper to save plot to standard location.
     
@@ -178,7 +179,7 @@ def _save_plot(fig, set_pmt: SetPmt, filename: str) -> None:
         set_pmt: Set object (used to determine save path)
         filename: Name of the output file
     """
-    plots_dir = set_pmt.source_dir.parent / "plots" / "alpha_spectra"
+    plots_dir = get_output_root(run) / "plots" / "alpha_spectra"
     plots_dir.mkdir(parents=True, exist_ok=True)
     save_figure(fig, plots_dir / filename)
     plt.close(fig)
@@ -207,7 +208,7 @@ def plot_energy_spectra_in_run(run: Run,
     for i, set_pmt in enumerate(run.sets, 1):
         print(f"\nSet {i}/{len(run.sets)}: {set_pmt.source_dir.name}")
         
-        energy_maps_dir = set_pmt.source_dir.parent / "energy_maps" / set_pmt.source_dir.name
+        energy_maps_dir = get_output_root(run) / "energy_maps" / set_pmt.source_dir.name
         
         if not energy_maps_dir.exists():
             print(f"  ⚠ No energy maps found - skipping")
@@ -221,7 +222,7 @@ def plot_energy_spectra_in_run(run: Run,
                                             title=f'{set_pmt.source_dir.name} - Alpha Energy Spectrum',
                                             nbins=nbins, 
                                             energy_range=energy_range)
-        _save_plot(fig, set_pmt, f"{set_pmt.source_dir.name}_alpha_spectrum.png")
+        _save_plot(fig, run, set_pmt, f"{set_pmt.source_dir.name}_alpha_spectrum.png")
         print(f"  📊 Saved spectrum plot")
         
         # Collect for aggregated plot
@@ -235,7 +236,7 @@ def plot_energy_spectra_in_run(run: Run,
                                             nbins=nbins,
                                             energy_range=energy_range)
         
-        _save_plot(fig, set_pmt, f"{run.run_id}_alpha_spectrum_aggregated.png")
+        _save_plot(fig, run, set_pmt, f"{run.run_id}_alpha_spectrum_aggregated.png")
         print(f"\n  📊 Saved aggregated spectrum plot")
     
     return run

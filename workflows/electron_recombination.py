@@ -17,6 +17,7 @@ import pandas as pd
 from dataclasses import replace
 
 from RaTag.core.datatypes import Run, S2Areas
+from RaTag.core.paths import get_output_root
 
 
 def compute_calibration_constants(A_x_mean: float, E_gamma: float, W_value: float) -> Tuple[float, float]:
@@ -92,7 +93,7 @@ def _load_ion_fitted_areas(run: Run) -> pd.DataFrame:
     Returns:
         DataFrame with fitted ion S2 areas per set
     """
-    path_csv = run.root_directory / 'processed_data' / f'{run.run_id}_s2_vs_drift.csv'
+    path_csv = get_output_root(run) / 'run_summaries' / f'{run.run_id}_s2_vs_drift.csv'
     return pd.read_csv(path_csv)
 
 def _get_expected_electrons(run: Run, W_factor: float) -> float:
@@ -185,10 +186,12 @@ def recombination_workflow(run: Run, path_gs2: str):
     # 5. Generate plots and persist results
     print("\n[4/4] Plotting and storing recombination results...")
     fig = _plot_calibration_results(run, df_recombination)
-    pathout_fig = run.root_directory / 'processed_data' / f'{run.run_id}_recombination_plots.png'
+    outdir = get_output_root(run) / 'run_summaries'
+    outdir.mkdir(parents=True, exist_ok=True)
+    pathout_fig = outdir / f'{run.run_id}_recombination_plots.png'
     fig.savefig(pathout_fig, dpi=300)
 
-    pathout_recomb = run.root_directory / 'processed_data' / f'{run.run_id}_recomb_factors.csv'
+    pathout_recomb = outdir / f'{run.run_id}_recomb_factors.csv'
     df_recombination.to_csv(pathout_recomb, index=False)
     print(f"  → Recombination results stored at: {pathout_recomb}")
     
