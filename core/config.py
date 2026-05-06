@@ -38,7 +38,11 @@ class IntegrationConfig:
     min_s2_sep: float = 1.0           # (µs)   -- min separation before S2
     min_s1_sep: float = 1.0           # (µs)   -- min separation after S1
     n_pedestal: int = 2000            # number of pre-trigger samples for pedestal
+    n_sigma_start: float = 1.0        # Number of sigmas to extend start of S2 window
+    n_sigma_end: float = 0.5          # Number of sigmas to extend end of S2 window
     ma_window: int = 9                # moving average window length (samples)
+    pre_time: float = 0.5             # µs - Time before S1 for integration window
+    post_time: float = 0.5            # µs - Time after S1 for integration
     dt: float = 2e-4                  # (µs) integration timestep: 0.2 ns = 0.0002 µs for 5 GS/s
     integrator: Callable[[PMTWaveform, float], np.ndarray] = field(default_factory=_default_integrator)
 
