@@ -19,6 +19,10 @@ import time
 from glob import glob
 from pathlib import Path
 from typing import Tuple, Optional
+import re
+import subprocess
+import sys
+import os
 
 # plotting disabled: comment out matplotlib dependency for headless use
 # import matplotlib.pyplot as plt
@@ -74,6 +78,76 @@ def choose_window_size(n_files: int) -> int:
     The actual window used for moving average must not exceed len(diffs).
     """
     return min(max(10, n_files), 100)
+
+
+def find_run_config_yaml_from_path(path: Path) -> Optional[Path]:
+    """Try to parse a run digits token like 'run18' from the given path (or its
+    parents) and construct the corresponding config YAML path.
+
+    Search strategy:
+    - Walk the path and its parents, look for a path part that matches r'run(\d+)'.
+    - If found, assume the YAML lives in the package's `configs/` directory as
+      `run<digits>_analysis.yaml`.
+    - Return the Path if that file exists, otherwise return None.
+    """
+    try:
+        # Determine RaTag package root (parent of this script's directory)
+        script_dir = Path(__file__).resolve().parent
+        ra_tag_root = script_dir.parent
+
+        for p in [path] + list(path.parents):
+            part = Path(p).name
+            m = re.search(r"run(\d{1,6})", part, re.IGNORECASE)
+            if m:
+                run_digits = m.group(1)
+                candidate = ra_tag_root / "configs" / f"run{run_digits}_analysis.yaml"
+                if candidate.exists():
+                    return candidate
+        return None
+    except Exception:
+        return None
+
+
+def launch_analysis_background(yaml_path: Path,
+                               python_exe: Optional[str] = None,
+                               extra_args: Optional[list] = None) -> subprocess.Popen:
+    """Launch `scripts/run_analysis.py` in the background using the provided
+    YAML config path. Returns the Popen object for the child process.
+
+    The function writes stdout/stderr to a small log file next to the YAML so
+    the user can inspect it later.
+    """
+    if python_exe is None:
+        python_exe = sys.executable or "python"
+
+    script_path = Path(__file__).resolve().parent / "run_analysis.py"
+    cmd = [str(python_exe), str(script_path), str(yaml_path)]
+    if extra_args:
+        cmd.extend(extra_args)
+
+    # Log file sitting next to the YAML (configs folder) so it's easy to find
+    log_path = yaml_path.with_name(yaml_path.stem + ".launch.log")
+    # Ensure parent exists (should), open in append mode so repeated launches are recorded
+    lf = open(log_path, "ab")
+
+    # Spawn background process; do not wait for it here.
+    # Force UTF-8 output in the child process so unicode characters printed by
+    # the analysis script (e.g. ✓ or superscripts) do not raise
+    # UnicodeEncodeError when the system default encoding is cp1252.
+    env = os.environ.copy()
+    # Newer Python respects PYTHONUTF8 for utf-8 mode; PYTHONIOENCODING forces
+    # the stdio encoding regardless of console/codepage.
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+
+    # Keep a simple, portable invocation; redirect stdout/stderr to the log file.
+    proc = subprocess.Popen(cmd,
+                            stdout=lf,
+                            stderr=subprocess.STDOUT,
+                            stdin=subprocess.DEVNULL,
+                            close_fds=True,
+                            env=env)
+    return proc
 
 
 def monitor_and_plot(path: Path,
@@ -210,6 +284,21 @@ def monitor_and_plot(path: Path,
 
             if remaining_files <= 0:
                 print(f"Target reached: {current_count} files (>= {total_files}).")
+                # Attempt to auto-launch analysis in the background using the
+                # run config YAML if it can be inferred from the monitored path.
+                try:
+                    cfg = find_run_config_yaml_from_path(path)
+                    if cfg is not None:
+                        print(f"Auto-launching analysis using config: {cfg}")
+                        try:
+                            proc = launch_analysis_background(cfg)
+                            print(f"Started background analysis (pid={proc.pid}); logs: {cfg.with_name(cfg.stem + '.launch.log')}")
+                        except Exception as e:
+                            print(f"Failed to launch background analysis: {e}")
+                    else:
+                        print("No matching run config YAML found; skipping automatic launch.")
+                except Exception as e:
+                    print(f"Error while attempting to auto-launch analysis: {e}")
                 break
 
             estimated = remaining_files * total_avg
