@@ -4,6 +4,7 @@ from typing import Callable, TypeVar, Optional
 from functools import reduce
 from dataclasses import replace
 from pathlib import Path
+from .paths import get_output_root
 import numpy as np
 
 T = TypeVar('T')
@@ -186,14 +187,20 @@ def apply_workflow_to_run(run,
     print("="*60)
     
     # Setup data directory (always needed)
-    data_dir = run.root_directory / "processed_data"
+    data_dir = get_output_root(run.root_directory)
     data_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Data files are stored in all/ subdirectory
-    data_file_dir = data_dir / "all"
+
+    # Data files are stored in a subdirectory derived from the data_file_suffix
+    # e.g. 's2_areas.npz' -> data_dir / 's2_areas'
+    suffix_stem = Path(data_file_suffix).stem if data_file_suffix else ""
+    if suffix_stem:
+        data_file_dir = data_dir / suffix_stem
+    else:
+        data_file_dir = data_dir
+    data_file_dir.mkdir(parents=True, exist_ok=True)
     
     # Setup plots directory
-    plots_dir = run.root_directory / "plots"
+    plots_dir = get_output_root(run.root_directory) / "plots"
     
     updated_sets = []
     for i, set_pmt in enumerate(run.sets, 1):
@@ -213,6 +220,7 @@ def apply_workflow_to_run(run,
         
         if has_cache_key and has_data_file:
             print(f"  📂 Loaded from cache ({cache_key}={set_pmt.metadata.get(cache_key)}, data file exists)")
+            print(f"   File path: {data_file}")
             updated_sets.append(set_pmt)
             continue
         

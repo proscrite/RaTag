@@ -58,6 +58,7 @@ from RaTag.pipelines.run_preparation import prepare_run, prepare_run_multiiso
 from RaTag.pipelines.recoil_only import recoil_pipeline, recoil_pipeline_multiiso
 from RaTag.pipelines.xray_only import xray_pipeline, xray_pipeline_multiiso
 from RaTag.pipelines.alpha_calibration import alpha_calibration, alpha_calibration_singleiso
+from RaTag.core.paths import get_output_root
 from RaTag.pipelines.unified_xray_and_recoil import unified_pipeline
 from RaTag.pipelines.recombination_analysis import recombination_pipeline
 
@@ -154,8 +155,9 @@ def prompt_verify_computed_ranges(run: Run, isotope_ranges: dict):
     print("⚠️  PROCEEDING WITH COMPUTED RANGES FOR DOWNSTREAM ANALYSIS")
     print(f"{'='*70}")
     print(f"\n  📊 VERIFY CALIBRATION PLOTS:")
-    print(f"     • processed_data/spectrum_calibration/{run.run_id}_calibration_summary.png")
-    print(f"     • processed_data/spectrum_calibration/{run.run_id}_overlap_resolution.png")
+    out_root = get_output_root(run)
+    print(f"     • {out_root}/spectrum_calibration/{run.run_id}_calibration_summary.png")
+    print(f"     • {out_root}/spectrum_calibration/{run.run_id}_overlap_resolution.png")
     print(f"\n  ✓ Computed ranges (overlap-resolved):")
     for iso, rng in isotope_ranges.items():
         print(f"     {iso:8s}: [{rng[0]:.3f}, {rng[1]:.3f}] MeV")

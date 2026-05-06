@@ -18,6 +18,7 @@ from RaTag.core.config import FitConfig
 from RaTag.core.datatypes import Run
 from RaTag.core.config import IntegrationConfig, FitConfig
 from RaTag.core.functional import pipe_run
+from RaTag.core.paths import get_output_root
 from RaTag.workflows.recoil_integration import (integrate_s2_in_run,
                                                 fit_s2_in_run,
                                                 summarize_s2_vs_field,
@@ -227,7 +228,7 @@ def recoil_pipeline_replot(run: Run,
     # Check that we have cached NPZ files
     sets_with_data = []
     for s in run.sets:
-        data_file = s.source_dir.parent / "processed_data" / "all" / f"{s.source_dir.name}_s2_areas.npz"
+        data_file = get_output_root(run) / "s2_areas" / f"{s.source_dir.name}_s2_areas.npz"
         if data_file.exists():
             sets_with_data.append(s)
     
@@ -279,7 +280,7 @@ def recoil_pipeline_multiiso_replot(run: Run,
     # Check that we have cached NPZ files
     sets_with_data = []
     for s in run.sets:
-        data_file = s.source_dir.parent / "processed_data" / "all" / f"{s.source_dir.name}_s2_areas.npz"
+        data_file = get_output_root(run) / "s2_areas" / f"{s.source_dir.name}_s2_areas.npz"
         if data_file.exists():
             sets_with_data.append(s)
     
