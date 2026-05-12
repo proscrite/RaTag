@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 
 from RaTag.core.datatypes import SetPmt, S2Areas, Run
 from RaTag.core.config import IntegrationConfig, FitConfig
-from RaTag.core.dataIO import iter_frameproxies, store_s2area, load_s2area, save_figure, save_set_metadata, load_set_metadata
+from RaTag.core.dataIO import iter_frameproxies, store_s2area, load_s2area, save_figure, save_set_metadata, load_set_metadata, save_fit_result, load_fit_result
 from RaTag.core.uid_utils import make_uid
 from RaTag.core.fitting import fit_set_s2, fit_multiiso_s2
 from RaTag.core.functional import apply_workflow_to_run, map_isotopes_in_run, compute_max_files
@@ -244,6 +244,15 @@ def _fit_and_save_s2_histogram(set_pmt: SetPmt,
         # Extract method info if available
         method = s2_fitted.fit_result.get('method', 'unknown') if isinstance(s2_fitted.fit_result, dict) else 'gaussian'
         print(f"    ✓ Fit ({method}): μ={s2_fitted.mean:.3f} ± {s2_fitted.ci95:.3f} mV·µs")
+        
+        # Explicit call to save the fit result explicitly
+        model_result = (s2_fitted.fit_result.get('result_sig') 
+                        if method == 'two_stage' 
+                        else s2_fitted.fit_result.get('result'))
+        if model_result is not None:
+            fit_output_path = get_output_root(set_pmt.source_dir.parent) / "fits" / f"{set_pmt.source_dir.name}_s2_areas_hist_fit.json"
+            save_fit_result(model_result, fit_output_path)
+            print(f"    💾 Saved explicit fit result to {fit_output_path.name}")
     else:
         print(f"    ✗ Fit failed")
     
@@ -421,12 +430,20 @@ def fit_s2_in_run(run: Run,
             set_pmt = reloaded
         print(f"  → n_areas_recoil: {set_pmt.metadata.get('n_areas_recoil', 'N/A')}")
 
-        # Check cache: both metadata key AND data file must exist
-        data_file_check = get_output_root(set_pmt.source_dir.parent) / "s2_areas" / f"{set_pmt.source_dir.name}_s2_areas.npz"
-        if (not force_refit) and ('area_s2_mean' in set_pmt.metadata) and data_file_check.exists():
-            print(f"  📂 Loaded from cache")
-            updated_sets.append(set_pmt)
-            continue
+        # Check cache: Check if fit was already attempted, and if successful, check if the JSON exists
+        fit_already_attempted = 'area_s2_fit_success' in set_pmt.metadata
+        fit_was_successful = set_pmt.metadata.get('area_s2_fit_success', False)
+        fit_file_check = get_output_root(set_pmt.source_dir.parent) / "fits" / f"{set_pmt.source_dir.name}_s2_areas_hist_fit.json"
+        
+        if (not force_refit) and fit_already_attempted:
+            if not fit_was_successful:
+                print(f"  📂 Loaded from cache (prior fit failed)")
+                updated_sets.append(set_pmt)
+                continue
+            elif fit_file_check.exists():
+                print(f"  📂 Loaded from cache (fit exists)")
+                updated_sets.append(set_pmt)
+                continue
         
         # Load S2 areas
         try:

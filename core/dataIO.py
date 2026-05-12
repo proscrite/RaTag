@@ -7,6 +7,9 @@ import json
 import itertools
 from dataclasses import replace
 
+import lmfit
+from lmfit.model import ModelResult
+
 from .units import V_to_mV, s_to_us
 from .datatypes import SiliconWaveform, Waveform, SetPmt, Run, S2Areas, PMTWaveform, XRayResults, FrameProxy
 from .wfm2read_fast import wfm2read # type: ignore
@@ -655,3 +658,42 @@ def save_figure(fig, filename: PathLike, dpi: int = 150) -> None:
     plt.close(fig)
     print(f"  → Saved: {filename}")
 
+
+# ----------------------------------------
+# --- Fit result saving and loading  -----
+# ----------------------------------------
+
+def save_fit_result(result: ModelResult, output_path: str | Path) -> Path:
+    """
+    Saves an lmfit ModelResult to a human-readable JSON file.
+    
+    Args:
+        result: The output from an lmfit Model.fit()
+        output_path: Destination path (e.g., 'processed/run_25/fits/alpha_1.json')
+        
+    Returns:
+        Path object to the saved file.
+    """
+    output_path = Path(output_path)
+    
+    # Ensure the target directory exists
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # result.dumps() serializes the model, parameters, bounds, and fit statistics
+    json_data = result.dumps()
+    
+    with open(output_path, 'w') as f:
+        f.write(json_data)
+        
+    return output_path
+
+def load_fit_result(input_path: str | Path) -> ModelResult:
+    """
+    Loads an lmfit ModelResult from a JSON file for downstream plotting or analysis.
+    """
+    input_path = Path(input_path)
+    
+    with open(input_path, 'r') as f:
+        json_data = f.read()
+        
+    return lmfit.model.load_modelresult(json_data)
