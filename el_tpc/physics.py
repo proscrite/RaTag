@@ -1,14 +1,11 @@
 import numpy as np
 from typing import Sequence
-from dataclasses import replace
-from .datatypes import Run
-from .config import DRIFT_VELOCITY_PARAMS
+from ..core.config import DRIFT_VELOCITY_PARAMS
 from scipy.optimize import brentq
 
 # -------------------------------
 # Gas properties
 # -------------------------------
-
 k_B = 1.380649e-23  # Boltzmann constant, J/K
 
 def gas_density_cm3(pressure_bar: float, temperature_K: float) -> float:
@@ -20,11 +17,6 @@ def gas_density_cm3(pressure_bar: float, temperature_K: float) -> float:
 def gas_density_N(n_cm3: float) -> float:
     """Convert number density in cm^-3 to N [atoms/cm^3]."""
     return n_cm3 * 6.022e23  # Convert to atoms/cm^3 using Avogadro's number
-
-def with_gas_density(run: Run) -> Run:
-    gd = gas_density_cm3(run.pressure, run.temperature)
-    return replace(run, gas_density=gd)
-
 
 # -------------------------------------------------------------------------------------------
 #  Drift velocity models
@@ -88,7 +80,7 @@ def speed_to_redfield(v_drift: float,
         return transport_saturation(rE, **params) - v_drift
     
     try:
-        return brentq(residual, rE_min, rE_max)
+        return brentq(residual, rE_min, rE_max) # type: ignore
     except ValueError as e:
         raise ValueError(f"Could not find solution for v_drift={v_drift} cm/μs. "
                         f"Valid range: [{transport_saturation(rE_min, **params):.3f}, "

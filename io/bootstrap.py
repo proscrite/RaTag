@@ -29,7 +29,6 @@ def _resolve_bootstrapping_params(run_dir: Path,
 def bootstrap_bare_set(dir_path: Path) -> SetPmt:
     """
     PURE: Maps raw strings to the base SetPmt structure.
-    No physics. No disk access.
     """
     voltage_dict = file_ops.parse_subdir_name(str(dir_path.name))
     
