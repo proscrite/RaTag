@@ -1,9 +1,9 @@
 from __future__ import annotations
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, fields, field, replace
 from pathlib import Path
 from functools import lru_cache
 
-from typing import Callable, Optional, Any, List, TYPE_CHECKING
+from typing import Callable, Optional, Dict, Any, List, TYPE_CHECKING
 import numpy as np
 
 import matplotlib.pyplot as plt     # type: ignore[import]
@@ -111,8 +111,6 @@ class FrameProxy:
     def _load_file_waveforms_cached(file_path: str, which: str = 'pmt'):
         """
         Should return numpy array shape (n_frames, n_samples) for channel4 or whatever.
-        Implement or import your existing loader here: e.g. load_alpha(file_path).v
-        Keep this function small and replace the internals with your repo's loader.
         """
         from RaTag.core.dataIO import load_alpha, load_wfm
         if which == 'alpha':
@@ -156,24 +154,44 @@ class SetPmt:
     # --- Provenance / housekeeping ---
     source_dir: Path
     filenames: list[str]     # lazy list of filenames (not waveforms!)
-    metadata: dict
     multiiso: bool = False   # Multi-isotope set
 
     # --- FastFrame properties ---
     ff: bool = False                 # Whether this set uses FastFrame files
     nframes: int = 1                 # Frames per file (1 for single-frame, typically 49 for FastFrame)
 
-    # --- Physics context ---
-    drift_field: float = None        # V/cm
-    EL_field: float = None           # V/cm
-    red_drift_field: float = None    # reduced drift field (Td)
-    red_EL_field: float = None       # reduced EL field (Td)
-    speed_drift: float = None        # mm/us
-    time_drift: float = None         # us
-    diffusion_coefficient: float = None    # mm/√cm 
+    gate: Optional[float] = None
+    anode: Optional[float] = None
+    sampling_rate: Optional[float] = None
 
-    # --- Cuts bookkeeping ---
-    rejection_log: List[Any] = field(default_factory=list)
+    # --- Physics context ---
+    drift_field: Optional[float] = None        # V/cm
+    EL_field: Optional[float] = None           # V/cm
+    red_drift_field: Optional[float] = None    # reduced drift field (Td)
+    red_EL_field: Optional[float] = None       # reduced EL field (Td)
+    speed_drift: Optional[float] = None        # mm/us
+    time_drift: Optional[float] = None         # us
+    diffusion_coefficient: Optional[float] = None    # mm/√cm 
+
+    # --- S1/S2 Timing Metadata ---
+    t_s1: Optional[float] = None
+    t_s1_std: Optional[float] = None
+    t_s2_start: Optional[float] = None
+    t_s2_start_std: Optional[float] = None
+    t_s2_end: Optional[float] = None
+    t_s2_end_std: Optional[float] = None
+    s2_duration: Optional[float] = None
+    s2_duration_std: Optional[float] = None
+
+    # --- Integration & Fit Metadata ---
+    n_areas_recoil: Optional[int] = None
+    area_s2_mean: Optional[float] = None
+    area_s2_sigma: Optional[float] = None
+    area_s2_ci95: Optional[float] = None
+    area_s2_fit_success: Optional[bool] = None
+
+    # --- Standalone Analysis Metadata ---
+    # xray_metadata: Optional[XRayMetadata] = None
 
     def __len__(self):
         """Return number of files."""
@@ -191,7 +209,14 @@ class SetPmt:
     
     def __str__(self):
         ff_str = f"FastFrame({self.nframes} frames/file)" if self.ff else "single-frame"
-        return f"SetPmt(source_dir={self.source_dir.name}, n_files={self.n_files}, n_waveforms={self.n_waveforms}, {ff_str})"
+        
+        overrides = {
+            'filenames': f"<{self.n_files} files, {self.n_waveforms} waveforms, {ff_str}>"
+        }
+        return format_dataclass_state(self, overrides=overrides)
+
+    def __repr__(self):        
+        return self.__str__()
 
 
 # -------------------------------
@@ -203,7 +228,7 @@ class Run:
     root_directory: Path
     run_id: str
     el_field: float
-    target_isotope: str = "Th228"
+    target_isotope: Optional[str] = "Th228"
     pressure: float = 2.0 # bar
     temperature: float = 293.0 # K
     sampling_rate: float = 1e9 
@@ -226,6 +251,13 @@ class Run:
     alpha_calibration: Optional[dict] = None  # Contains: fit_results, calibration_linear, calibration_quad, spectrum, spectrum_calibrated
     isotope_ranges: Optional[dict] = None     # Contains: {isotope: (E_min, E_max)}
 
+    def __str__(self):
+        overrides = {
+            'sets': f"<{len(self.sets)} SetPmt objects>"
+        }
+        return format_dataclass_state(self, overrides=overrides)
+    def __repr__(self):
+        return self.__str__()
     
 # -------------------------------
 # Integration results
@@ -290,3 +322,45 @@ class RejectionLog:
     passed: list[int]
     rejected: list[int]
     reason: str = ""
+
+
+# -------------------------------
+# --- Run & set print formatting --#
+# -------------------------------
+
+def format_dataclass_state(obj: Any, exclude: List[str] = None, overrides: Dict[str, str] = None) -> str:
+    """
+    Creates a clean, readable string representation of a dataclass,
+    separating populated fields from missing (None) fields.
+    """
+    exclude = exclude or []
+    overrides = overrides or {}
+    
+    populated = []
+    missing = []
+    
+    for f in fields(obj):
+        if f.name in exclude:
+            continue
+            
+        # Handle custom overrides (like n_sets or n_files)
+        if f.name in overrides:
+            populated.append(f"  {f.name} = {overrides[f.name]}")
+            continue
+            
+        val = getattr(obj, f.name)
+        if val is not None:
+            populated.append(f"  {f.name} = {val}")
+        else:
+            missing.append(f.name)
+            
+    # Build the final string
+    lines = [f"{obj.__class__.__name__} state:"]
+    lines.extend(populated)
+    
+    if missing:
+        lines.append("\n  Missing:")
+        # Wraps the missing list cleanly
+        lines.append(f"    {', '.join(missing)}")
+        
+    return "\n".join(lines)
