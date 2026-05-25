@@ -50,12 +50,12 @@ def plot_waveform(wf: PMTWaveform, frame: Optional[int] = None, ax=None, title: 
 # Advanced waveform plotters (with S1/S2 window)
 # ------------------------------------------------
 
-def _get_metadata_kwargs(kwargs: dict, metadata: dict):
-    """Helper to get timing parameters from kwargs or metadata."""
+def _get_metadata_kwargs(kwargs: dict, set_pmt: SetPmt):
+    """Helper to get timing parameters from kwargs or set attributes."""
     time_keys = ["t_s1", "t_s1_std", "t_s2_start", "t_s2_start_std", "t_s2_end", "t_s2_end_std"]
     for key in time_keys:
         if key not in kwargs:
-            kwargs[key] = metadata.get(key)
+            kwargs[key] = getattr(set_pmt, key, None)
 
     for key in kwargs.keys():    
         if key not in time_keys:
@@ -106,7 +106,7 @@ def plot_set_windows(set_pmt: SetPmt,
     """
 
     
-    kwargs = _get_metadata_kwargs(kwargs, set_pmt.metadata) # get timing params
+    kwargs = _get_metadata_kwargs(kwargs, set_pmt) # get timing params
     
     if file_index is None:
         file_index = np.random.randint(0, len(set_pmt.filenames))
@@ -117,7 +117,7 @@ def plot_set_windows(set_pmt: SetPmt,
         ax = plt.gca()
 
     wf = load_wfm(set_pmt.source_dir / fn)
-    _, v_max = plot_waveform(wf, frame=frame, ax=ax, title=f"Gate {set_pmt.metadata['gate']} V", color=color)
+    _, v_max = plot_waveform(wf, frame=frame, ax=ax, title=f"Gate {set_pmt.gate} V", color=color)
 
     _plot_window_shading(ax, kwargs, "t_s1", v_max, "green")
     _plot_window_shading(ax, kwargs, "t_s2_start", v_max, "red")
@@ -277,7 +277,7 @@ def make_interactive(plot_fn):
 def scroll_winS2(set_pmt: SetPmt, wf: PMTWaveform, width_s2: float, ts2_tol: float = 0, ax=None):
     """Interactive version of plot_winS2_wf."""
 
-    t_s1 = set_pmt.metadata.get("t_s1")
+    t_s1 = set_pmt.t_s1
     time_drift = set_pmt.time_drift
 
     if t_s1 is None:
@@ -299,7 +299,7 @@ def plot_run_winS2(run: Run, ts2_tol: float = 0, scroll: bool = False):
         fig, axes = None, []
 
     def _plot_adapter(set_pmt: SetPmt, wf: PMTWaveform, width_s2: float, ts2_tol: float, ax=None):
-        t_s1 = set_pmt.metadata.get("t_s1")
+        t_s1 = set_pmt.t_s1
         time_drift = set_pmt.time_drift
         return plot_winS2_wf(wf, t_s1, time_drift, width_s2, ts2_tol, ax)
 
@@ -936,16 +936,61 @@ def plot_grouped_histograms(df: pd.DataFrame,
     fig.tight_layout()
     return fig
 
+# --------------------------------
+# -- Combined timing histograms
+# --------------------------------
+
+def plot_combined_timing_histograms(timing_payload: dict, 
+                                    set_name: str, 
+                                    bins: int = 100,
+                                    ax: Optional[plt.Axes] = None) -> tuple:
+    """
+    Plots S1, S2 Start, and S2 End distributions on a single axis.
+    Expects the dense dictionary payload from resolve_set_timing.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 5))
+    else:
+        fig = ax.get_figure()
+
+    # Extract arrays and drop NaNs for plotting
+    t_s1 = timing_payload.get("t_s1", np.array([]))
+    t_s2_start = timing_payload.get("t_s2_start", np.array([]))
+    t_s2_end = timing_payload.get("t_s2_end", np.array([]))
+
+    s1_clean = t_s1[~np.isnan(t_s1)]
+    s2_start_clean = t_s2_start[~np.isnan(t_s2_start)]
+    s2_end_clean = t_s2_end[~np.isnan(t_s2_end)]
+
+    # Plot S1
+    if len(s1_clean) > 0:
+        ax.hist(s1_clean, bins=bins, alpha=0.7, color='tab:blue', label='S1 Times')
+        
+    # Plot S2 Start
+    if len(s2_start_clean) > 0:
+        ax.hist(s2_start_clean, bins=bins, alpha=0.7, color='tab:orange', label='S2 Start Times')
+        
+    # Plot S2 End
+    if len(s2_end_clean) > 0:
+        ax.hist(s2_end_clean, bins=bins, alpha=0.7, color='tab:green', label='S2 End Times')
+
+    ax.set_title(f"Timing Distributions - {set_name}")
+    ax.set_xlabel("Time (µs)")
+    ax.set_ylabel("Counts")
+    ax.legend(loc='upper right')
+    ax.grid(True, alpha=0.3)
+
+    return fig, ax
 
 # --------------------------------
-# Deprecated functions
+# -- Deprecated functions
 # --------------------------------
 
 
 def plot_waveform_with_cuts(wf: PMTWaveform, set_pmt: SetPmt,
                             width_s2: float):
     t, V = wf.t, wf.v
-    t_s1 = set_pmt.metadata["t_s1"]
+    t_s1 = set_pmt.t_s1
     t_drift = set_pmt.time_drift / 1e6 # convert us to s
     t_end = wf.t[-1]
 
@@ -977,7 +1022,7 @@ def plot_cut_results(wf: PMTWaveform, set_pmt: SetPmt, logs: list[RejectionLog],
         ax.plot(tsel, Vsel, color, label=f"{log.cut_name} {'PASS' if ok else 'FAIL'}")
 
     # markers for S1 / S2
-    t_s1 = set_pmt.metadata.get("t_s1")
+    t_s1 = set_pmt.t_s1
     t_drift = set_pmt.time_drift
     if t_s1 and t_drift:
         s2_start = t_s1 + t_drift
