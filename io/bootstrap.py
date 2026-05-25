@@ -60,7 +60,7 @@ def bootstrap_from_path(run_dir: Union[str, Path], run_id: Optional[str] = None,
 
     # 4. IO: Scan the disk for what exists
     raw_set_dirs = file_ops.scan_for_set_directories(run_dir)
-    
+    print(f"Found {len(raw_set_dirs)} set directories in {run_dir.name}: {[d.name for d in raw_set_dirs]}")
     # 5. ORCHESTRATE: Map the resolution logic over the directories
     bare_sets = [bootstrap_bare_set(path) for path in raw_set_dirs]
     

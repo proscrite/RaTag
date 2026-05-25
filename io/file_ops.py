@@ -2,14 +2,66 @@
 import yaml
 import json
 import re
+import numpy as np
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, Iterator, List, Tuple, Optional
 from dataclasses import asdict, replace, fields
+from functools import lru_cache
+from itertools import islice
 
-from RaTag.core.datatypes import SetPmt
 from RaTag.core.dataIO import load_wfm
 from RaTag.core.paths import get_output_root
+from RaTag.core.datatypes import PMTWaveform, Waveform, SetPmt
 
+# --- Lazy loader ---
+def iter_waveforms(set_pmt: SetPmt, max_files: int = None) -> Iterator[PMTWaveform]:
+    """Yield PMTWaveform objects lazily, one by one."""
+    
+    if max_files is not None:
+            waveforms = islice(set_pmt.filenames, max_files)
+
+    for fn in waveforms:
+        yield load_wfm(Path(set_pmt.source_dir) / Path(fn))
+
+
+# --- Extract single waveform from FastFrame ---
+def extract_single_frame(wf: Waveform, frame_idx: int) -> Waveform:
+    """Extract a single frame from a FastFrame waveform."""
+    
+    v_single = wf.v[frame_idx, :]
+    return Waveform(t=wf.t, v=v_single,
+                    source=wf.source, file_seq=wf.file_seq, frame_idx=frame_idx, 
+                    ff=False, nframes=1)
+
+
+def iter_frames(set_pmt, max_files: int = None) -> Iterator[Waveform]:
+    """
+    Iterate over individual frames from a set, handling both FastFrame and single-frame.
+    
+    This is the canonical way to iterate over frames in the codebase.
+    All analysis functions should use this to ensure consistency.
+    
+    Args:
+        set_pmt: SetPmt to iterate over
+        max_files: Optional limit on number of files to process
+        
+    Yields:
+        Individual PMTWaveform objects (with ff=False)
+    """
+    waveforms = iter_waveforms(set_pmt)
+    
+    if max_files is not None:
+        waveforms = islice(waveforms, max_files)
+    
+    for file_seq, wf in enumerate(waveforms):
+        wf.file_seq = file_seq  # annotate with file sequence for UID calculation
+        if wf.ff and wf.nframes > 1:
+            # FastFrame: yield each frame individually
+            for frame_idx in range(wf.nframes):
+                yield extract_single_frame(wf, frame_idx)
+        else:
+            # Single frame: yield as-is
+            yield wf
 
 def load_yaml(config_path: Path) -> dict:
     """Loads a YAML configuration file."""
@@ -97,7 +149,7 @@ def find_set_files(set_dir: Path, nfiles: Optional[int] = None) -> List[str]:
         wfm_files = wfm_files[:nfiles]
     
     filenames = [f.name for f in wfm_files]
-    print(f"  Found {len(filenames)} .wfm files in {set_dir.name}: {filenames[:5]}{'...' if len(filenames) > 5 else ''}")
+    print(f"  Found {len(filenames)} .wfm files in {set_dir.name}")
     return filenames
 
 def detect_multiiso_set(filenames: List[str]) -> bool:
