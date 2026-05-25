@@ -1,13 +1,12 @@
 from dataclasses import replace
 from typing import cast
 from RaTag.core.datatypes import Run, SetPmt
-from RaTag.io.decorators import disk_cache
 
 
 from dataclasses import replace
 from RaTag.core import units
 from RaTag.core.functional import map_over
-from RaTag.io.decorators import disk_cache, require_attributes
+from RaTag.core.decorators import disk_cache, require_attributes
 from RaTag.el_tpc import physics
 
 @require_attributes('pressure', 'temperature')
@@ -73,7 +72,7 @@ def set_transport(set_pmt: SetPmt, drift_gap_cm: float) -> SetPmt:
                    diffusion_coefficient=diffusion)
 
 
-def _resolve_set_drift(set_pmt: SetPmt, run: Run) -> SetPmt:
+def resolve_set_drift(set_pmt: SetPmt, run: Run) -> SetPmt:
     """Calculate fields and transport properties for a single set, given the run parameters."""
     # 1. Unpack & Math
 
@@ -89,7 +88,7 @@ def map_drift_physics(run: Run) -> Run:
     """Explicit, flat pipeline using safe FP mapping."""
     
     run_with_density = with_gas_density(run)
-    bound_func = lambda s: _resolve_set_drift(s, run_with_density)
+    bound_func = lambda s: resolve_set_drift(s, run_with_density)
     
     # map_over safely handles the loop and the try/except blocks
     enriched_sets = map_over(run_with_density.sets, bound_func, catch_errors=True)
