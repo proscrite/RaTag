@@ -1,5 +1,6 @@
 from functools import wraps
 from typing import Callable, Any, List, TypeVar
+from pathlib import Path
 import numpy as np
 
 from RaTag.io import file_ops
@@ -16,22 +17,26 @@ def disk_cache(target_attr: str):
     """
     def decorator(func: Callable[..., SetPmt]):
         @wraps(func)
-        def wrapper(set_pmt: SetPmt, *args, **kwargs) -> SetPmt:
-            
-            # 1. MEMORY CHECK: Is it already done?
-            if getattr(set_pmt, target_attr, None) is not None:
-                return set_pmt
+        def wrapper(set_pmt: SetPmt, *args, force: bool = False, **kwargs) -> SetPmt:
+            #  1. Is the decorator being overridden with force=True? If so, skip all checks and recompute.
+            if force:
+                print(f"  ⚡ Force enabled: Recomputing {target_attr}")
+            else:
                 
-            # 2. DISK CHECK: Did a previous run already compute this?
-            cached_set = file_ops.load_cache(set_pmt)
-            if cached_set and getattr(cached_set, target_attr, None) is not None:
-                print(f"  📂 {set_pmt.source_dir.name}: Loaded '{target_attr}' from cache")
-                return cached_set
+                # 2. MEMORY CHECK: Is it already done?
+                if getattr(set_pmt, target_attr, None) is not None:
+                    return set_pmt
+                    
+                # 3. DISK CHECK: Did a previous run already compute this?
+                cached_set = file_ops.load_cache(set_pmt)
+                if cached_set and getattr(cached_set, target_attr, None) is not None:
+                    print(f"  📂 {set_pmt.source_dir.name}: Loaded '{target_attr}' from cache")
+                    return cached_set
                 
-            # 3. COMPUTE: Execute the pure workflow function
+            # 4. COMPUTE: Execute the pure workflow function
             enriched_set = func(set_pmt, *args, **kwargs)
             
-            # 4. DISK SAVE: Update the JSON cache immediately
+            # 5. DISK SAVE: Update the JSON cache immediately
             file_ops.save_cache(enriched_set)
             print(f"  ✓ {set_pmt.source_dir.name}: Computed '{target_attr}' and cached")
             
@@ -99,27 +104,45 @@ def persist_results(signal_type: str):
         return wrapper
     return decorator
 
-def persist_plots(subfolder: str):
-    """Decorator to automate saving Matplotlib figures and managing memory."""
+def persist_plots(subfolder: str, expected_suffixes: list[str]):
+    """
+    Decorator to cache Matplotlib figures, auto-save them, and manage RAM.
+    Checks for file existence before running to save time, with force override.
+    """
     def decorator(func):
         @wraps(func)
-        def wrapper(set_pmt: SetPmt, *args, **kwargs):
-            # 1. Generate the figures
-            updated_set, figures_dict = func(set_pmt, *args, **kwargs)
+        def wrapper(obj, *args, force: bool = False, **kwargs):
+            # 1. Determine if we are wrapping a Run or a SetPmt
+            is_run = hasattr(obj, 'run_id')
+            name = obj.run_id if is_run else obj.source_dir.name
+            root = get_output_root(obj) if is_run else get_output_root(obj.source_dir.parent)
+            out_dir = root / "plots" / subfolder
             
-            # 2. Setup unified directory
-            out_dir = get_output_root(set_pmt.source_dir.parent) / "plots" / subfolder
-            out_dir.mkdir(parents=True, exist_ok=True)
+            # 2. Check Cache
+            target_files = [out_dir / Path(s).parent / f"{name}_{Path(s).name}.png" for s in expected_suffixes]
+            if not force and all(f.exists() for f in target_files):
+                print(f"  ⏭ Skipping plots for {name} (already exist)")
+                return obj
+                
+            if force:
+                print(f"  ⚡ Force enabled: Regenerating plots for {name}")
+
+            # 3. Execute the Plotting Function
+            updated_obj, figures_dict = func(obj, *args, **kwargs)
             
-            # 3. Save and close
-            for suffix, fig in figures_dict.items():
+            # 4. Save and Close (RAM Management)
+            for suffix_path, fig in figures_dict.items():
                 if fig is not None:
-                    file_path = out_dir / f"{set_pmt.source_dir.name}_{suffix}.png"
-                    # save_figure handles the actual saving logic you already wrote
-                    file_ops.save_figure(fig, file_path) 
-                    import matplotlib.pyplot as plt
-                    plt.close(fig) # Critical to prevent memory leaks in loops
+                    p = Path(suffix_path)
+                    file_path = out_dir / p.parent / f"{name}_{p.name}.png"
                     
-            return updated_set
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    file_ops.save_figure(fig, file_path) 
+                    
+                    # Import locally to avoid global dependencies where unneeded
+                    import matplotlib.pyplot as plt
+                    plt.close(fig) 
+                    
+            return updated_obj
         return wrapper
     return decorator

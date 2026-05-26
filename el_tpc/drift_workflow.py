@@ -16,7 +16,7 @@ def with_gas_density(run: Run) -> Run:
 
 @disk_cache(target_attr='drift_field')
 @require_attributes('gate', 'anode')
-def set_fields(set_pmt: SetPmt, el_gap_cm: float, drift_gap_cm: float) -> SetPmt:
+def set_fields(set_pmt: SetPmt, el_gap_cm: float, drift_gap_cm: float, force: bool = False) -> SetPmt:
     """
     Calculates the actual and reduced fields. 
     """
@@ -33,7 +33,7 @@ def set_fields(set_pmt: SetPmt, el_gap_cm: float, drift_gap_cm: float) -> SetPmt
 
 @disk_cache(target_attr='red_EL_field')
 @require_attributes('drift_field', 'EL_field')
-def set_reduced_fields(set_pmt: SetPmt, gas_density_cm3: float) -> SetPmt:
+def set_reduced_fields(set_pmt: SetPmt, gas_density_cm3: float, force: bool = False) -> SetPmt:
     """
         Calculates reduced fields from actual fields and gas density.
     """
@@ -52,7 +52,7 @@ def set_reduced_fields(set_pmt: SetPmt, gas_density_cm3: float) -> SetPmt:
 
 @disk_cache(target_attr='time_drift')
 @require_attributes('red_drift_field')
-def set_transport(set_pmt: SetPmt, drift_gap_cm: float) -> SetPmt:
+def set_transport(set_pmt: SetPmt, drift_gap_cm: float, force: bool = False) -> SetPmt:
     """
         Calculates drift velocities and times. 
     """        
@@ -72,23 +72,23 @@ def set_transport(set_pmt: SetPmt, drift_gap_cm: float) -> SetPmt:
                    diffusion_coefficient=diffusion)
 
 
-def resolve_set_drift(set_pmt: SetPmt, run: Run) -> SetPmt:
+def resolve_set_drift(set_pmt: SetPmt, run: Run, force: bool = False) -> SetPmt:
     """Calculate fields and transport properties for a single set, given the run parameters."""
     # 1. Unpack & Math
 
-    set_with_fields = set_fields(set_pmt, drift_gap_cm=run.drift_gap, el_gap_cm=run.el_gap)
-    set_with_red_fields = set_reduced_fields(set_with_fields, run.gas_density)
-    set_with_transport = set_transport(set_with_red_fields, drift_gap_cm=run.drift_gap)
+    set_with_fields = set_fields(set_pmt, drift_gap_cm=run.drift_gap, el_gap_cm=run.el_gap, force=force)
+    set_with_red_fields = set_reduced_fields(set_with_fields, run.gas_density, force=force)
+    set_with_transport = set_transport(set_with_red_fields, drift_gap_cm=run.drift_gap, force=force)
     
     # 2. Repack 
     return set_with_transport
 
 
-def map_drift_physics(run: Run) -> Run:
+def map_drift_physics(run: Run, force: bool = False) -> Run:
     """Explicit, flat pipeline using safe FP mapping."""
     
     run_with_density = with_gas_density(run)
-    bound_func = lambda s: resolve_set_drift(s, run_with_density)
+    bound_func = lambda s: resolve_set_drift(s, run_with_density, force=force)
     
     # map_over safely handles the loop and the try/except blocks
     enriched_sets = map_over(run_with_density.sets, bound_func, catch_errors=True)

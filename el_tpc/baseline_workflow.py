@@ -13,7 +13,7 @@ from RaTag.el_tpc.waveform_features import compute_waveform_baseline
 # ============================================================================
 @disk_cache(target_attr='baseline_std')
 @limit_frames
-def resolve_set_baseline(set_pmt: SetPmt, max_files: int, n_points: int = 200) -> SetPmt:
+def resolve_set_baseline(set_pmt: SetPmt, max_files: int, n_points: int = 200, force: bool = False) -> SetPmt:
     """
     Resolves the baseline median and standard deviation for a single set 
     by sampling the pre-trigger region of the first few waveforms.
@@ -41,11 +41,11 @@ def resolve_set_baseline(set_pmt: SetPmt, max_files: int, n_points: int = 200) -
 # PUBLIC API (The "map" functions called by pipeline.py)
 # ============================================================================
 
-def map_run_baseline(run: Run, max_frames: int = 480, n_points: int = 200) -> Run:
+def map_run_baseline(run: Run, max_frames: int = 480, n_points: int = 200, force: bool = False) -> Run:
     """
     Entry point: Maps the baseline calculation workflow over all sets in the Run.
     """
-    bound_baseline = lambda s: resolve_set_baseline(s, max_frames=max_frames, n_points=n_points)
+    bound_baseline = lambda s: resolve_set_baseline(s, max_frames=max_frames, n_points=n_points, force=force)
     
     new_sets = map_over(run.sets, bound_baseline, catch_errors=True)
     return replace(run, sets=new_sets)
