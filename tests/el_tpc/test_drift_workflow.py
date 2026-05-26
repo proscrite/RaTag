@@ -1,14 +1,15 @@
-from RaTag.el_tpc import physics
 import pytest
 from dataclasses import replace
 from pathlib import Path
 
-from RaTag.el_tpc.drift_pipeline import (
+from RaTag.el_tpc import physics
+from RaTag.el_tpc.drift_workflow import (
     with_gas_density,
     set_fields,
     set_reduced_fields,
     set_transport,
     map_drift_physics,
+    resolve_set_drift,
 )
 from RaTag.core.datatypes import SetPmt, Run
 from RaTag.core import units
@@ -17,9 +18,8 @@ from RaTag.core import units
 def _noop_load_cache(x): 
     return None
 
-def _noop_save_cache(x): 
+def _noop_save_cache(x):
     return None
-
 
 def test_with_gas_density_calculation(run8):
     expected = physics.gas_density_cm3(run8.pressure, run8.temperature)
@@ -117,3 +117,19 @@ def test_map_drift_physics_isolates_set_errors(run8, monkeypatch):
     # Good set should be enriched, bad set should be left in the original (no time_drift)
     assert getattr(out_run.sets[0], "time_drift", None) is not None
     assert getattr(out_run.sets[1], "time_drift", None) is None
+
+
+def test_resolve_set_drift_basic(run8, fresh_set, monkeypatch):
+    # Ensure the per-set pipeline (fields -> reduced -> transport) runs
+    monkeypatch.setattr("RaTag.io.file_ops.load_cache", _noop_load_cache)
+    monkeypatch.setattr("RaTag.io.file_ops.save_cache", _noop_save_cache)
+
+    s = replace(fresh_set, gate=50.0, anode=1950.0)
+    run_with_density = with_gas_density(run8)
+
+    out = resolve_set_drift(s, run_with_density)
+
+    # Fields and transport should be populated
+    assert getattr(out, 'drift_field', None) is not None
+    assert getattr(out, 'EL_field', None) is not None
+    assert getattr(out, 'time_drift', None) is not None
