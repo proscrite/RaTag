@@ -1,16 +1,18 @@
 import matplotlib.pyplot as plt # type: ignore
 import time
 import numpy as np 
+import math
+
 # import ipywidgets as widgets # type: ignore
 # from IPython.display import display
-from typing import Optional
+from typing import Optional, Tuple, Callable
 from pathlib import Path
 import pandas as pd
 
 from RaTag.core.datatypes import PMTWaveform, SetPmt, RejectionLog, S2Areas, Run
 from RaTag.core.dataIO import load_wfm, iter_waveforms
 from RaTag.core.units import s_to_us, V_to_mV
-
+from RaTag.core.paths import get_output_root
 # --------------------------------
 # Basic waveform plotter
 # --------------------------------
@@ -153,7 +155,7 @@ def plot_n_waveforms(set_pmt: SetPmt, n_waveforms: int, **kwargs) -> tuple:
         axes = [axes]
 
     selected_files = np.random.choice(set_pmt.filenames, size=n_waveforms, replace=False)
-    print(selected_files)
+    # print(selected_files)
 
     for ax, fn in zip(axes, selected_files):
         plot_set_windows(set_pmt, file_index=set_pmt.filenames.index(fn), ax=ax, **kwargs)
@@ -940,48 +942,110 @@ def plot_grouped_histograms(df: pd.DataFrame,
 # -- Combined timing histograms
 # --------------------------------
 
-def plot_combined_timing_histograms(timing_payload: dict, 
-                                    set_name: str, 
-                                    bins: int = 100,
-                                    ax: Optional[plt.Axes] = None) -> tuple:
-    """
-    Plots S1, S2 Start, and S2 End distributions on a single axis.
-    Expects the dense dictionary payload from resolve_set_timing.
-    """
+def load_timing_payload(set_pmt: SetPmt) -> dict:
+    """Helper to cleanly load the dense timing payload."""
+    data_file = get_output_root(set_pmt.source_dir.parent) / f"{set_pmt.source_dir.name}_timing.npz"
+    return dict(np.load(data_file)) if data_file.exists() else {}
+
+def plot_combined_timing_histograms(set_pmt: SetPmt, bins: int = 100, ax: Optional[plt.Axes] = None) -> tuple:
+    """Plots S1, S2 Start, and S2 End distributions. Auto-loads payload."""
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 5))
     else:
         fig = ax.get_figure()
 
-    # Extract arrays and drop NaNs for plotting
-    t_s1 = timing_payload.get("t_s1", np.array([]))
-    t_s2_start = timing_payload.get("t_s2_start", np.array([]))
-    t_s2_end = timing_payload.get("t_s2_end", np.array([]))
+    payload = load_timing_payload(set_pmt)
+    if not payload:
+        ax.text(0.5, 0.5, "No Timing Data", ha='center', va='center')
+        ax.set_title(set_pmt.source_dir.name)
+        return fig, ax
+    
+    signals_config = [
+        ("t_s1", "tab:blue", "S1 Times"),
+        ("t_s2_start", "tab:orange", "S2 Start Times"),
+        ("t_s2_end", "tab:green", "S2 End Times")
+    ]
 
-    s1_clean = t_s1[~np.isnan(t_s1)]
-    s2_start_clean = t_s2_start[~np.isnan(t_s2_start)]
-    s2_end_clean = t_s2_end[~np.isnan(t_s2_end)]
+    for key, color, label in signals_config:
+        arr = payload.get(key, np.array([]))
+        arr_clean = arr[~np.isnan(arr)]
+        if len(arr_clean) > 0:
+            ax.hist(arr_clean, bins=bins, alpha=0.7, color=color, label=label)
 
-    # Plot S1
-    if len(s1_clean) > 0:
-        ax.hist(s1_clean, bins=bins, alpha=0.7, color='tab:blue', label='S1 Times')
-        
-    # Plot S2 Start
-    if len(s2_start_clean) > 0:
-        ax.hist(s2_start_clean, bins=bins, alpha=0.7, color='tab:orange', label='S2 Start Times')
-        
-    # Plot S2 End
-    if len(s2_end_clean) > 0:
-        ax.hist(s2_end_clean, bins=bins, alpha=0.7, color='tab:green', label='S2 End Times')
-
-    ax.set_title(f"Timing Distributions - {set_name}")
-    ax.set_xlabel("Time (µs)")
-    ax.set_ylabel("Counts")
+    ax.set(title=f"Timing Distributions - {set_pmt.source_dir.name}", xlabel="Time (µs)", ylabel="Counts")
     ax.legend(loc='upper right')
     ax.grid(True, alpha=0.3)
 
     return fig, ax
 
+# --------------------------------
+# -- Run-level dashboards
+# --------------------------------
+def _get_grid_dims(n_items: int) -> tuple[int, int]:
+    cols = math.ceil(math.sqrt(n_items))
+    rows = math.ceil(n_items / cols) if cols > 0 else 1
+    return rows, cols
+
+def map_plot_to_grid(run: Run, plot_func: Callable, title: str = None) -> plt.Figure:
+    """
+    Generic factory that maps any set-level plotting function onto a run-level grid.
+    plot_func must accept (set_pmt: SetPmt, ax: plt.Axes)
+    """
+    rows, cols = _get_grid_dims(len(run.sets))
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 6, rows * 4))
+    axes = np.atleast_2d(axes)
+    
+    if title:
+        fig.suptitle(title, fontsize=16)
+
+    for idx, set_pmt in enumerate(run.sets):
+        r, c = divmod(idx, cols)
+        ax = axes[r, c]
+        try:
+            plot_func(set_pmt, ax=ax)
+        except Exception as e:
+            ax.text(0.5, 0.5, f"Plot Failed\n{e}", ha='center', va='center')
+            ax.set_title(set_pmt.source_dir.name)
+
+    # Clean empty axes
+    for idx in range(len(run.sets), rows * cols):
+        r, c = divmod(idx, cols)
+        axes[r, c].axis('off')
+        
+    fig.tight_layout(rect=[0, 0, 1, 0.96] if title else [0, 0, 1, 1])
+    return fig
+
+def plot_run_timing_vs_field(run: Run) -> plt.Figure:
+    """
+    Extracts timing attributes from the run and plots them vs drift field.
+    Returns None if no valid data is found.
+    """
+    param_names = ['t_s1', 't_s2_start', 't_s2_end']
+    
+    # 1. Filter to sets that actually have the calculated physics
+    valid_sets = [s for s in run.sets if all(getattr(s, p, None) is not None for p in param_names)]
+    
+    if not valid_sets:
+        return None
+        
+    # 2. Extract Data cleanly using list comprehensions
+    drift_fields = np.array([s.drift_field for s in valid_sets])
+    
+    timing_data = {}
+    for p in param_names:
+        timing_data[p] = {
+            'mean': np.array([getattr(s, p) for s in valid_sets]),
+            'std': np.array([getattr(s, f"{p}_std", 0.0) for s in valid_sets])
+        }
+        
+    # 3. Call your existing pure Matplotlib function
+    fig, _ = plot_timing_vs_drift_field(
+        drift_fields=drift_fields,
+        timing_data=timing_data,
+        title=f"Timing vs Drift Field - {run.run_id}"
+    )
+    
+    return fig
 # --------------------------------
 # -- Deprecated functions
 # --------------------------------

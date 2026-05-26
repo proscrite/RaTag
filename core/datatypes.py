@@ -128,8 +128,6 @@ class SetPmt:
     t_s2_start_std: Optional[float] = None
     t_s2_end: Optional[float] = None
     t_s2_end_std: Optional[float] = None
-    s2_duration: Optional[float] = None
-    s2_duration_std: Optional[float] = None
 
     # --- Integration & Fit Metadata ---
     n_areas_recoil: Optional[int] = None

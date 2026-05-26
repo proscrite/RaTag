@@ -4,10 +4,11 @@ import json
 import re
 import numpy as np
 from pathlib import Path
-from typing import Dict, Iterator, List, Tuple, Optional
+from typing import Dict, Iterator, List, Tuple, Optional, Union
 from dataclasses import asdict, replace, fields
 from functools import lru_cache
 from itertools import islice
+PathLike = Union[str, Path]
 
 from RaTag.core.dataIO import load_wfm
 from RaTag.core.paths import get_output_root
@@ -216,3 +217,22 @@ def load_cache(set_pmt: SetPmt) -> Optional[SetPmt]:
     update_kwargs = {k: v for k, v in data.items() if k in valid_keys}
             
     return replace(set_pmt, **update_kwargs)
+
+
+def save_figure(fig, filename: PathLike, dpi: int = 150) -> None:
+    """
+    Save matplotlib figure to disk.
+    
+    Args:
+        fig: Matplotlib figure
+        filename: Output path
+        dpi: Resolution for raster formats
+    """
+    import matplotlib.pyplot as plt
+    
+    filename = Path(filename)
+    
+    fig.savefig(filename, dpi=dpi, bbox_inches='tight')
+    plt.close(fig)
+    print(f"  → Saved: {filename}")
+
