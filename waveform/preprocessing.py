@@ -33,22 +33,10 @@ def standard_preprocessing(wf: PMTWaveform,
                            ma_window: int = 9,
                            threshold: float = 0.02) -> PMTWaveform:
     """Apply standard preprocessing: pedestal subtraction, moving average, threshold clipping."""
-    wf = subtract_pedestal(wf, n_points=n_pedestal)
+    wf = subtract_pedestal(wf, n_points=int(n_pedestal))
     wf = moving_average(wf, window=ma_window)
     wf = threshold_clip(wf, threshold=threshold)
     return wf
-# --------------------------------------
-# Batch processing helpers and averages
-# --------------------------------------
-
-def batch_filenames(filenames: list[Path], batch_size: int = 20):
-    """Yield batches of filenames (lists) of size batch_size."""
-    it = iter(sorted(filenames))
-    while True:
-        batch = list(itertools.islice(it, batch_size))
-        if not batch:
-            break
-        yield batch
 
 def average_waveform(batch_files: list[Path]) -> tuple[np.ndarray, np.ndarray]:
     """

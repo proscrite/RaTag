@@ -5,7 +5,8 @@ import math
 
 # import ipywidgets as widgets # type: ignore
 # from IPython.display import display
-from typing import Optional, Tuple, Callable
+from contextlib import contextmanager
+from typing import Optional, Tuple, Callable, Any
 from pathlib import Path
 import pandas as pd
 
@@ -13,6 +14,7 @@ from RaTag.core.datatypes import PMTWaveform, SetPmt, RejectionLog, S2Areas, Run
 from RaTag.core.dataIO import load_wfm, iter_waveforms
 from RaTag.core.units import s_to_us, V_to_mV
 from RaTag.core.paths import get_output_root
+from RaTag.io.file_ops import load_npz_payload, load_fit_result
 # --------------------------------
 # Basic waveform plotter
 # --------------------------------
@@ -161,6 +163,37 @@ def plot_n_waveforms(set_pmt: SetPmt, n_waveforms: int, **kwargs) -> tuple:
         plot_set_windows(set_pmt, file_index=set_pmt.filenames.index(fn), ax=ax, **kwargs)
     
     return fig, axes
+
+
+def plot_window_validation(ax: plt.Axes, 
+                           wf: PMTWaveform, 
+                           frame: Optional[int],
+                           set_pmt: SetPmt,
+                           color: str = "b") -> None:
+    """Pure plotting function for timing validation. Zero I/O."""
+    
+    # We pass the title directly to plot_waveform, which smartly appends the File Index to it!
+    title = f"{set_pmt.source_dir.name} | Gate {set_pmt.gate} V"
+    _, v_max = plot_waveform(wf, frame=frame, ax=ax, title=title, color=color)
+
+    _# Local helper for clean shading logic directly from SetPmt attributes
+    def shade_window(key: str, fill_color: str):
+        t_mean = getattr(set_pmt, key, None)
+        t_std = getattr(set_pmt, f"{key}_std", 0)
+        
+        if t_mean is not None:
+            label = f"{key.replace('t_', ' ')} ± σ"
+            ax.axvline(t_mean, color=fill_color, linestyle='--', lw=1.5, label=label)
+            
+        if t_std and t_std > 0:
+            ax.fill_betweenx([0, v_max], t_mean - t_std, t_mean + t_std, color=fill_color, alpha=0.1)
+
+    shade_window("t_s1", "green")
+    shade_window("t_s2_start", "red")
+    shade_window("t_s2_end", "purple")
+    
+    ax.legend(fontsize=10, loc='upper left')
+    ax.grid(alpha=0.3)
 
 def plot_timing_errorbar(drift_fields: np.ndarray,
                          means: np.ndarray,
@@ -942,23 +975,12 @@ def plot_grouped_histograms(df: pd.DataFrame,
 # -- Combined timing histograms
 # --------------------------------
 
-def load_timing_payload(set_pmt: SetPmt) -> dict:
-    """Helper to cleanly load the dense timing payload."""
-    data_file = get_output_root(set_pmt.source_dir.parent) / f"{set_pmt.source_dir.name}_timing.npz"
-    return dict(np.load(data_file)) if data_file.exists() else {}
-
-def plot_combined_timing_histograms(set_pmt: SetPmt, bins: int = 100, ax: Optional[plt.Axes] = None) -> tuple:
-    """Plots S1, S2 Start, and S2 End distributions. Auto-loads payload."""
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 5))
-    else:
-        fig = ax.get_figure()
-
-    payload = load_timing_payload(set_pmt)
+def plot_timing_histograms(ax: plt.Axes, set_name: str, payload: dict, bins: int = 100) -> None:
+    """Pure plotter. Accepts the payload dict directly. Zero I/O."""
     if not payload:
         ax.text(0.5, 0.5, "No Timing Data", ha='center', va='center')
-        ax.set_title(set_pmt.source_dir.name)
-        return fig, ax
+        ax.set_title(set_name)
+        return
     
     signals_config = [
         ("t_s1", "tab:blue", "S1 Times"),
@@ -972,11 +994,9 @@ def plot_combined_timing_histograms(set_pmt: SetPmt, bins: int = 100, ax: Option
         if len(arr_clean) > 0:
             ax.hist(arr_clean, bins=bins, alpha=0.7, color=color, label=label)
 
-    ax.set(title=f"Timing Distributions - {set_pmt.source_dir.name}", xlabel="Time (µs)", ylabel="Counts")
+    ax.set(title=f"Timing Distributions - {set_name}", xlabel="Time (µs)", ylabel="Counts")
     ax.legend(loc='upper right')
     ax.grid(True, alpha=0.3)
-
-    return fig, ax
 
 # --------------------------------
 # -- Run-level dashboards
@@ -986,34 +1006,36 @@ def _get_grid_dims(n_items: int) -> tuple[int, int]:
     rows = math.ceil(n_items / cols) if cols > 0 else 1
     return rows, cols
 
-def map_plot_to_grid(run: Run, plot_func: Callable, title: str = None) -> plt.Figure:
-    """
-    Generic factory that maps any set-level plotting function onto a run-level grid.
-    plot_func must accept (set_pmt: SetPmt, ax: plt.Axes)
-    """
+
+@contextmanager
+def catch_plot_errors(ax: plt.Axes, title: str):
+    """Context manager to gracefully catch and display plotting errors on the axis."""
+    try:
+        yield
+    except Exception as e:
+        ax.clear()
+        ax.text(0.5, 0.5, f"Plot Failed\n{e}", ha='center', va='center', wrap=True)
+        ax.set_title(title)
+
+def build_fig_grid(run: Run, title: str = None) -> tuple[plt.Figure, list[tuple[SetPmt, plt.Axes]]]:
+    """Creates a Matplotlib grid and returns the Figure + paired iterable cells."""
     rows, cols = _get_grid_dims(len(run.sets))
     fig, axes = plt.subplots(rows, cols, figsize=(cols * 6, rows * 4))
     axes = np.atleast_2d(axes)
     
-    if title:
-        fig.suptitle(title, fontsize=16)
+    if title: fig.suptitle(title, fontsize=16)
 
+    grid_cells = []
     for idx, set_pmt in enumerate(run.sets):
         r, c = divmod(idx, cols)
-        ax = axes[r, c]
-        try:
-            plot_func(set_pmt, ax=ax)
-        except Exception as e:
-            ax.text(0.5, 0.5, f"Plot Failed\n{e}", ha='center', va='center')
-            ax.set_title(set_pmt.source_dir.name)
+        grid_cells.append((set_pmt, axes[r, c]))
 
-    # Clean empty axes
     for idx in range(len(run.sets), rows * cols):
         r, c = divmod(idx, cols)
         axes[r, c].axis('off')
         
     fig.tight_layout(rect=[0, 0, 1, 0.96] if title else [0, 0, 1, 1])
-    return fig
+    return fig, grid_cells
 
 def plot_run_timing_vs_field(run: Run) -> plt.Figure:
     """
@@ -1038,13 +1060,61 @@ def plot_run_timing_vs_field(run: Run) -> plt.Figure:
             'std': np.array([getattr(s, f"{p}_std", 0.0) for s in valid_sets])
         }
         
-    # 3. Call your existing pure Matplotlib function
     fig, _ = plot_timing_vs_drift_field(
         drift_fields=drift_fields,
         timing_data=timing_data,
         title=f"Timing vs Drift Field - {run.run_id}"
     )
     
+    return fig
+
+
+
+def plot_s2areas_summary(ax: plt.Axes, 
+                    set_name: str, 
+                    s2_areas: Optional[S2Areas] = None, 
+                    fit_model: Optional[Any] = None, 
+                    fit_mean: Optional[float] = None) -> None:
+    """Plot S2 area histogram with optional fit overlay. Handles missing data gracefully."""
+    
+    if s2_areas is None or len(s2_areas.areas) == 0:
+        ax.text(0.5, 0.5, "No S2 Area Data", ha='center', va='center')
+        ax.set_title(set_name)
+        return
+
+    hist_range = (0, 10)
+    filtered_s2 = s2_areas.filter_by_range(*hist_range)
+    
+    # 1. Plot raw data (Guaranteed to execute if data exists)
+    ax.hist(filtered_s2.areas, bins=100, range=hist_range, alpha=0.5, color='orange', label='Data')
+    
+    # 2. Overlay fit (Safely skips if the fit model wasn't provided)
+    if fit_model is not None and fit_mean is not None:
+        x_smooth = np.linspace(hist_range[0], hist_range[1], 500)
+        y_fit = fit_model.eval(x=x_smooth)
+        ax.plot(x_smooth, y_fit, 'g-', lw=2, label=f"Fit (μ={fit_mean:.2f})")
+        ax.axvline(fit_mean, color='green', linestyle=':', alpha=0.7)
+
+    # 3. Formatting
+    ax.set(title=set_name, xlabel='S2 Area (mV·µs)', ylabel='Counts')
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+
+def plot_run_s2_vs_field(run: Run) -> plt.Figure:
+    """Extracts S2 metadata from the run and plots it vs drift field."""
+    valid_sets = [s for s in run.sets if s.area_s2_fit_success]
+    if not valid_sets:
+        return None
+        
+    import pandas as pd
+    df = pd.DataFrame([{
+        'drift_field': s.drift_field,
+        's2_mean': s.area_s2_mean,
+        's2_ci95': s.area_s2_ci95
+    } for s in valid_sets])
+    
+    # Call your existing function
+    fig, _ = plot_s2_vs_drift(df, run.run_id)
     return fig
 # --------------------------------
 # -- Deprecated functions

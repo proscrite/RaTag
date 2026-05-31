@@ -911,8 +911,8 @@ def fit_set_s2(s2: S2Areas,
         return replace(s2,
                       mean=result['peak_position'],
                       sigma=result['sigma'],
-                    #   ci95=1.96 * result['peak_stderr'] if result['peak_stderr'] else 0.0,
-                      ci95= x0_uncertainty,
+                      ci95=1.96 * result['peak_stderr'] if result['peak_stderr'] else 0.0,
+                    #   ci95= x0_uncertainty,
                       fit_result=result,  # Store full result dict
                       fit_success=True)
     

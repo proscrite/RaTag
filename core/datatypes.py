@@ -208,24 +208,24 @@ class Run:
 # -------------------------------
 # Integration results
 # -------------------------------
-
 @dataclass(frozen=True)
 class S2Areas:
-    source_dir: Path                    
-    areas: np.ndarray  
-    uids: np.ndarray             
-    method: str                     
-    params: dict[str, Any] = field(default_factory=dict)
+    """Transient payload representing dense, per-frame integration data."""
+    uids: np.ndarray
+    areas: np.ndarray
 
-    # Fit results
-    mean: Optional[float] = None    
-    sigma: Optional[float] = None   
-    ci95: Optional[float] = None    
-    fit_success: bool = False
-    fit_result: Any = None
-
-    def __repr__(self) -> str:
-        return f"S2Areas(source_dir={self.source_dir.name}, n_areas={len(self.areas)}, method={self.method})"
+    def filter_by_range(self, min_val: float, max_val: float) -> 'S2Areas':
+        """Safely masks BOTH areas and UIDs simultaneously to prevent desync."""
+        mask = (self.areas >= min_val) & (self.areas <= max_val)
+        return S2Areas(
+            uids=self.uids[mask],
+            areas=self.areas[mask]
+        )
+        
+    @property
+    def mean(self) -> float:
+        """Read-only convenience metric. Does not mutate state."""
+        return float(np.mean(self.areas)) if len(self.areas) > 0 else 0.0
 
 
 # -------------------------------

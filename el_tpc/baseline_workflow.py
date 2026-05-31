@@ -5,8 +5,23 @@ from RaTag.core.functional import map_over
 from RaTag.core.decorators import disk_cache, limit_frames
 from RaTag.io.file_ops import iter_waveforms
 
-# Import the low-level math function
-from RaTag.el_tpc.waveform_features import compute_waveform_baseline
+
+def compute_waveform_baseline(wf: Waveform, n_points: int = 200) -> tuple[float, float]:
+    """
+    Calculates the baseline median and noise floor (std) of a single waveform 
+    using the pre-trigger region.
+    """
+    n_samples = wf.v.shape[-1]
+    safe_points = min(n_points, n_samples)
+    
+    # Extract the pre-trigger slice safely for both 1D and 2D flat formats
+    pre_trigger_slice = wf.v[:, :safe_points] if wf.ff else wf.v[:safe_points]
+    
+    baseline_median = float(np.median(pre_trigger_slice))
+    baseline_std = float(np.std(pre_trigger_slice))
+    
+    return baseline_median, baseline_std
+
 
 # ============================================================================
 # SET-LEVEL WORKFLOW (One-Pass Logic)

@@ -1,5 +1,5 @@
 from RaTag.core.datatypes import Run
-from .timing_workflow import map_run_timing, map_multiiso_timing, report_timing_plots
+from .timing_workflow import map_run_timing, map_multiiso_timing, map_timing_plots
 
 def pipeline_timing_estimation(run: Run, config: dict) -> Run:
     """

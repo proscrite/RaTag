@@ -18,25 +18,30 @@ def disk_cache(target_attr: str):
     def decorator(func: Callable[..., SetPmt]):
         @wraps(func)
         def wrapper(set_pmt: SetPmt, *args, force: bool = False, **kwargs) -> SetPmt:
-            #  1. Is the decorator being overridden with force=True? If so, skip all checks and recompute.
+
+            # 1. Hydration: Attempt to load the most complete cache first. This allows the later workflows to run even if the earlier ones are rerun with force=True, as long as the target_attr is present in the cache.
+
+            cached_set = file_ops.load_cache(set_pmt)
+            if cached_set:
+                set_pmt = cached_set
+
+            #  2. Is the decorator being overridden with force=True? If so, skip all checks and recompute.
             if force:
                 print(f"  ⚡ Force enabled: Recomputing {target_attr}")
             else:
                 
-                # 2. MEMORY CHECK: Is it already done?
+                # 3. MEMORY CHECK: Is it already done?
                 if getattr(set_pmt, target_attr, None) is not None:
-                    return set_pmt
                     
-                # 3. DISK CHECK: Did a previous run already compute this?
-                cached_set = file_ops.load_cache(set_pmt)
-                if cached_set and getattr(cached_set, target_attr, None) is not None:
-                    print(f"  📂 {set_pmt.source_dir.name}: Loaded '{target_attr}' from cache")
-                    return cached_set
+                    # 4. DISK CHECK: Did a previous run already compute this?
+                    if cached_set and getattr(cached_set, target_attr, None) is not None:
+                        print(f"  📂 {set_pmt.source_dir.name}: Loaded '{target_attr}' from cache")
+                    return set_pmt
                 
-            # 4. COMPUTE: Execute the pure workflow function
+            # 5. COMPUTE: Execute the pure workflow function
             enriched_set = func(set_pmt, *args, **kwargs)
             
-            # 5. DISK SAVE: Update the JSON cache immediately
+            # 6. DISK SAVE: Update the JSON cache immediately
             file_ops.save_cache(enriched_set)
             print(f"  ✓ {set_pmt.source_dir.name}: Computed '{target_attr}' and cached")
             
@@ -90,16 +95,9 @@ def persist_results(signal_type: str):
         def wrapper(*args, **kwargs):
             # 1. Run the compute logic
             updated_set, payload = func(*args, **kwargs)
-            
-            # 2. Extract Data Dir (standardized)
-            data_dir = get_output_root(updated_set.source_dir.parent)
-            data_dir.mkdir(parents=True, exist_ok=True)
-            data_file = data_dir / f"{updated_set.source_dir.name}_{signal_type}.npz"
-            
-            # 3. Flattened persistence
-            
-            np.savez_compressed(data_file, **payload)
-            print(f"    💾 Saved to {data_file.relative_to(data_dir.parent)}")
+
+            # 2. Delegate to file_ops helper to save the dense payload (e.g., timings, areas)
+            file_ops.save_npz_payload(updated_set, signal_type, payload)
             return updated_set 
         return wrapper
     return decorator
@@ -117,7 +115,7 @@ def persist_plots(subfolder: str, expected_suffixes: list[str]):
             name = obj.run_id if is_run else obj.source_dir.name
             root = get_output_root(obj) if is_run else get_output_root(obj.source_dir.parent)
             out_dir = root / "plots" / subfolder
-            
+            out_dir.mkdir(parents=True, exist_ok=True)
             # 2. Check Cache
             target_files = [out_dir / Path(s).parent / f"{name}_{Path(s).name}.png" for s in expected_suffixes]
             if not force and all(f.exists() for f in target_files):
@@ -144,5 +142,24 @@ def persist_plots(subfolder: str, expected_suffixes: list[str]):
                     plt.close(fig) 
                     
             return updated_obj
+        return wrapper
+    return decorator
+
+def persist_fit(suffix: str):
+    """Decorator to automatically extract and save lmfit JSON results."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(set_pmt: SetPmt, *args, **kwargs):
+            # 1. Run the compute logic (Expects SetPmt, ModelResult)
+            updated_set, model_result = func(set_pmt, *args, **kwargs)
+            
+            # 2. Save JSON if fit was successful
+            if model_result is not None:
+                out_dir = get_output_root(updated_set.source_dir.parent) / "fits"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                out_path = out_dir / f"{updated_set.source_dir.name}_{suffix}.json"
+                file_ops.save_fit_result(model_result, out_path)
+                
+            return updated_set 
         return wrapper
     return decorator

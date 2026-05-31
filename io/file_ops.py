@@ -8,11 +8,12 @@ from typing import Dict, Iterator, List, Tuple, Optional, Union
 from dataclasses import asdict, replace, fields
 from functools import lru_cache
 from itertools import islice
+from lmfit.model import ModelResult
 PathLike = Union[str, Path]
 
 from RaTag.core.dataIO import load_wfm
 from RaTag.core.paths import get_output_root
-from RaTag.core.datatypes import PMTWaveform, Waveform, SetPmt
+from RaTag.core.datatypes import PMTWaveform, Waveform, SetPmt, S2Areas
 
 # --- Lazy loader ---
 def iter_waveforms(set_pmt: SetPmt, max_files: int = None) -> Iterator[PMTWaveform]:
@@ -20,6 +21,8 @@ def iter_waveforms(set_pmt: SetPmt, max_files: int = None) -> Iterator[PMTWavefo
     
     if max_files is not None:
             waveforms = islice(set_pmt.filenames, max_files)
+    else:
+        waveforms = set_pmt.filenames
 
     for fn in waveforms:
         yield load_wfm(Path(set_pmt.source_dir) / Path(fn))
@@ -34,6 +37,21 @@ def extract_single_frame(wf: Waveform, frame_idx: int) -> Waveform:
                     source=wf.source, file_seq=wf.file_seq, frame_idx=frame_idx, 
                     ff=False, nframes=1)
 
+
+def load_random_waveform(set_pmt: SetPmt) -> Tuple[PMTWaveform, Optional[int]]:
+    """
+    Safely selects and loads a random waveform from a set for validation.
+    Handles FastFrame geometry internally.
+    """
+    if not set_pmt.filenames:
+        raise ValueError(f"No files available in set {set_pmt.source_dir.name}.")
+        
+    fn = np.random.choice(set_pmt.filenames)
+    wf = load_wfm(set_pmt.source_dir / fn)
+    
+    frame = np.random.randint(0, set_pmt.nframes) if set_pmt.ff else None
+    
+    return wf, frame
 
 def iter_frames(set_pmt, max_files: int = None) -> Iterator[Waveform]:
     """
@@ -169,6 +187,10 @@ def detect_fastframe_properties(set_dir: Path, filenames: List[str]) -> Tuple[bo
     
     return ff, nframes
 
+# ============================================================================
+# JSON CACHE MANAGEMENT (for computed attributes )
+# ===========================================================================
+
 
 def _get_cache_path(set_pmt: SetPmt) -> Path:
     """Helper to centralize where the JSON lives."""
@@ -219,6 +241,44 @@ def load_cache(set_pmt: SetPmt) -> Optional[SetPmt]:
     return replace(set_pmt, **update_kwargs)
 
 
+# ============================================================================
+#  .npz load/save for dense payloads (e.g. areas, timings)
+# ============================================================================
+def save_npz_payload(set_pmt: SetPmt, signal_type: str, payload: dict) -> Path:
+    """Generic helper to save dense .npz payloads."""
+    out_dir = get_output_root(set_pmt.source_dir.parent) / signal_type
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    data_file = out_dir / f"{set_pmt.source_dir.name}_{signal_type}.npz"
+    np.savez_compressed(data_file, **payload)
+    return data_file
+
+
+def load_npz_payload(set_pmt: SetPmt, signal_type: str) -> dict:
+    """Generic helper to cleanly load dense .npz payloads (e.g., 'timing', 's2_areas')."""
+    data_file = get_output_root(set_pmt.source_dir.parent) / f"{signal_type}" / f"{set_pmt.source_dir.name}_{signal_type}.npz"
+    return dict(np.load(data_file)) if data_file.exists() else {}
+
+
+def load_s2areas_from_path(file_path: Union[Path, str]) -> S2Areas:
+    """Constructs an S2Areas transient payload from an explicit file path."""
+    payload = dict(np.load(file_path))
+    return S2Areas(
+        uids=payload.get("uids", np.array([])),
+        areas=payload.get("s2_areas", np.array([]))
+    )
+
+def load_s2areas(set_pmt: SetPmt) -> S2Areas:
+    """Constructs an S2Areas transient payload from a SetPmt's disk state."""
+    payload = load_npz_payload(set_pmt, 's2_areas')
+    return S2Areas(
+        uids=payload.get("uids", np.array([])),
+        areas=payload.get("s2_areas", np.array([]))
+    )
+# ============================================================================
+#  Plot saving helper (for consistent naming and RAM management)
+# ============================================================================
+
 def save_figure(fig, filename: PathLike, dpi: int = 150) -> None:
     """
     Save matplotlib figure to disk.
@@ -236,3 +296,49 @@ def save_figure(fig, filename: PathLike, dpi: int = 150) -> None:
     plt.close(fig)
     print(f"  → Saved: {filename}")
 
+# ============================================================================
+#  Load/save fitting results (e.g., from lmfit)
+# ============================================================================
+
+
+def save_fit_result(result: ModelResult, output_path: Union[str, Path]) -> Path:
+    """
+    Saves an lmfit ModelResult to a human-readable JSON file.
+    
+    Args:
+        result: The output from an lmfit Model.fit()
+        output_path: Destination path (e.g., 'processed/run_25/fits/alpha_1.json')
+        
+    Returns:
+        Path object to the saved file.
+    """
+    output_path = Path(output_path)
+    
+    # Ensure the target directory exists
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # result.dumps() serializes the model, parameters, bounds, and fit statistics
+    json_data = result.dumps()
+    
+    with open(output_path, 'w') as f:
+        f.write(json_data)
+        
+    return output_path
+
+def load_fit_result(input_path: Union[str, Path], **kwargs): # -> Optional[ModelResult]
+    """
+    Loads an lmfit ModelResult from a JSON file for downstream plotting or analysis.
+    Warns and returns None if the file is missing or corrupted.
+    """
+    from lmfit.model import load_modelresult
+    input_path = Path(input_path)
+    
+    if not input_path.exists():
+        print(f"  ⚠ Warning: Fit result file not found: {input_path.name}")
+        return None
+        
+    try:
+        return load_modelresult(str(input_path), **kwargs)
+    except Exception as e:
+        print(f"  ⚠ Warning: Failed to load fit result from {input_path.name}: {e}")
+        return None
