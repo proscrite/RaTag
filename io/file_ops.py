@@ -13,7 +13,7 @@ PathLike = Union[str, Path]
 
 from RaTag.core.dataIO import load_wfm
 from RaTag.core.paths import get_output_root
-from RaTag.core.datatypes import PMTWaveform, Waveform, SetPmt, S2Areas
+from RaTag.core.datatypes import PMTWaveform, Waveform, SetPmt, Run, S2Areas
 
 # --- Lazy loader ---
 def iter_waveforms(set_pmt: SetPmt, max_files: int = None) -> Iterator[PMTWaveform]:
@@ -53,7 +53,21 @@ def load_random_waveform(set_pmt: SetPmt) -> Tuple[PMTWaveform, Optional[int]]:
     
     return wf, frame
 
-def iter_frames(set_pmt, max_files: int = None) -> Iterator[Waveform]:
+def load_waveform_by_uid(set_pmt: SetPmt, uid: int) -> Tuple[PMTWaveform, Optional[int]]:
+    """Resolves a UID to its physical file and frame, and loads the PMTWaveform."""
+    from RaTag.core.uid_utils import decode_uid, parse_file_seq_from_name
+    
+    file_seq, frame_idx = decode_uid(uid)
+    
+    # Find the corresponding filename in the set
+    target_fn = next((fn for fn in set_pmt.filenames if parse_file_seq_from_name(fn) == file_seq), None)
+    if not target_fn:
+        raise ValueError(f"File sequence {file_seq} not found in set {set_pmt.source_dir.name}")
+        
+    wf = load_wfm(set_pmt.source_dir / target_fn)
+    return wf, frame_idx if set_pmt.ff else None
+
+def iter_frames(set_pmt: SetPmt, max_files: int = None) -> Iterator[Waveform]:
     """
     Iterate over individual frames from a set, handling both FastFrame and single-frame.
     
@@ -250,6 +264,15 @@ def save_npz_payload(set_pmt: SetPmt, signal_type: str, payload: dict) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     
     data_file = out_dir / f"{set_pmt.source_dir.name}_{signal_type}.npz"
+    np.savez_compressed(data_file, **payload)
+    return data_file
+
+def save_run_npz_payload(run: Run, signal_type: str, payload: dict) -> Path:
+    """Generic helper to save dense .npz payloads at the Run level."""
+    out_dir = get_output_root(run.root_directory) / signal_type
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    data_file = out_dir / f"{run.run_id}_{signal_type}.npz"
     np.savez_compressed(data_file, **payload)
     return data_file
 
