@@ -92,15 +92,40 @@ def persist_results(signal_type: str):
     """Decorator to automatically save results to npz and metadata."""
     def decorator(func):
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(set_pmt: SetPmt, *args, force: bool = False, **kwargs):
+
+            payload = file_ops.load_npz_payload(set_pmt, signal_type)
+            if payload is not None and not force:
+                print(f"  📂 {set_pmt.source_dir.name}: Loaded '{signal_type}' payload from disk")
+                return set_pmt  # Return original SetPmt since the payload is already saved
+
+            if force:
+                print(f"  ⚡ Force enabled: Recomputing and saving {signal_type}")
+
             # 1. Run the compute logic
-            updated_set, payload = func(*args, **kwargs)
+            updated_set, payload = func(set_pmt, *args, **kwargs)
 
             # 2. Delegate to file_ops helper to save the dense payload (e.g., timings, areas)
             file_ops.save_npz_payload(updated_set, signal_type, payload)
             return updated_set 
         return wrapper
     return decorator
+
+
+def persist_run_results(signal_type: str):
+    """Decorator to automatically save results at the Run level."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(run: Run, *args, **kwargs):
+            # 1. Run the compute logic
+            updated_run, payload = func(run, *args, **kwargs)
+
+            # 2. Delegate to file_ops helper to save the dense payload (e.g., timings, areas)
+            file_ops.save_run_npz_payload(updated_run, signal_type, payload)
+            return updated_run 
+        return wrapper
+    return decorator
+
 
 def persist_plots(subfolder: str, expected_suffixes: list[str]):
     """

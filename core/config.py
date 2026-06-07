@@ -57,20 +57,36 @@ class FitConfig:
     n_sigma: float = 2.5       # Sigmas above background for signal region
     upper_limit: float = 5.0   # Upper limit for signal fitting (mV·µs)
 
+@dataclass(frozen=True)
+class TimingConfig:
+    """Configuration parameters for S1 and S2 timing extraction.
+    Includes: 
+     - Thresholds for S1 and S2 detection (in mV, multiplied by baseline noise sigma)
+     - Time windows for S1 search and S2 search (relative to trigger)
+     - Moving average window sizes for noise reduction
+     - Baseline threshold for S2 detection
+     - Margin for S2 search start based on drift time
+    """
+    s1_t_max: float = -2.5          # (µs) Max time for S1 search (relative to trigger)
+    s2_margin: float = 0.9          # (µs) Multiplier for drift time to set S2 search start
+    n_pedestal: int = 200           # number of pre-trigger samples for pedestal subtraction
+    window_ma: int = 10             # moving average window length for S1 detection (samples)
+    bs_threshold: float = 0.02      # (mV) Baseline threshold for S2 detection
+    s1_threshold: float = 1.0       # (mV) Threshold for S1 detection, multiplied by baseline noise sigma         # moving average window length for S2 detection (samples)
+    s2_threshold: float = 0.8      # (mV) Threshold for S2 detection, multiplied by baseline noise sigma
 
 @dataclass(frozen=True)
 class XRayConfig:
     """Configuration for X-ray event classification and integration."""
     bs_threshold: float = 0.5          # (mV)  -- baseline threshold for signal detection
-    max_area_s1: float = 1e5          # (mV·µs) -- max allowed area before S1 (reject if exceeded)
-    max_area_s2: float = 1e5          # (mV·µs) -- max allowed area in S2 window (reject if exceeded)
+    max_area_s1: float = 100          # (mV·µs) -- max allowed area before S1 (reject if exceeded)
+    max_area_s2: float = 100          # (mV·µs) -- max allowed area in S2 window (reject if exceeded)
     min_xray_area: float = 0.2        # (mV·µs) -- min required X-ray area (reject if below)
     min_s2_sep: float = 1.0           # (µs)   -- min required separation before S2 window
     min_s1_sep: float = 0.5           # (µs)   -- min required separation after S1
     n_pedestal: int = 200             # number of pre-trigger samples for pedestal subtraction
     ma_window: int = 10               # moving average window length (samples)
     dt: float = 2e-4                  # integration timestep (µs)
-    integrator: Callable[[PMTWaveform, float], np.ndarray] = field(default_factory=_default_integrator)
 
 
 # -------------------------------

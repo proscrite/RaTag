@@ -5,7 +5,7 @@ from typing import Union, Iterator, Optional
 import re
 import json
 import itertools
-from dataclasses import replace
+from dataclasses import replace, asdict, fields
 
 import lmfit
 from lmfit.model import ModelResult
@@ -14,6 +14,7 @@ from .units import V_to_mV, s_to_us
 from .datatypes import SiliconWaveform, Waveform, SetPmt, Run, S2Areas, PMTWaveform, XRayResults, FrameProxy
 from .wfm2read_fast import wfm2read # type: ignore
 PathLike = Union[str, Path]
+from RaTag.core.uid_utils import parse_file_seq_from_name
 from RaTag.core.paths import get_processed_run_dir, get_output_root
 
 # -------------------------------------
@@ -25,13 +26,15 @@ def _load_wfm_V_s(path: PathLike) -> PMTWaveform:
     wfm = wfm2read(str(path))
     t, v = wfm[1], wfm[0]
     v = -v  # Invert signal polarity
+
+    file_seq = parse_file_seq_from_name(str(path))
     if len(v.shape) > 1:  # FastFrame format
         ff = True
         nframes = v.shape[0]
     else:
         ff = False
         nframes = 1
-    return PMTWaveform(t, v, source=str(path), ff=ff, nframes=nframes)
+    return PMTWaveform(t, v, source=str(path), ff=ff, nframes=nframes, file_seq=file_seq)
 
 def load_wfm(path: PathLike) -> PMTWaveform:
     """Load waveform from a .wfm file storing (t, -v)."""
@@ -41,7 +44,7 @@ def load_wfm(path: PathLike) -> PMTWaveform:
     v_mV = V_to_mV(v_V)
     t_us = s_to_us(t_s)
 
-    return PMTWaveform(t=t_us, v=v_mV, source=wf.source, ff=wf.ff, nframes=wf.nframes)
+    return PMTWaveform(t=t_us, v=v_mV, source=wf.source, ff=wf.ff, nframes=wf.nframes, file_seq=wf.file_seq)
 
 
 def load_alpha(path: PathLike) -> SiliconWaveform:
@@ -51,7 +54,7 @@ def load_alpha(path: PathLike) -> SiliconWaveform:
 
     t_us = s_to_us(t_s)
 
-    return SiliconWaveform(t=t_us, v=v_V, source=wf.source, ff=wf.ff, nframes=wf.nframes)
+    return SiliconWaveform(t=t_us, v=v_V, source=wf.source, ff=wf.ff, nframes=wf.nframes, file_seq=wf.file_seq)
 
 # --- Lazy loader ---
 def iter_waveforms(set_pmt: SetPmt) -> Iterator[PMTWaveform]:
