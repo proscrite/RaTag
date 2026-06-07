@@ -4,12 +4,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 import joblib
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
+
+GLOBAL_OUT_PATH = "/Users/pabloherrero/sabat/RaTagging/artifacts/timing_BO/"
 
 def load_training_data(json_pattern: str = "timing_config_*.json"):
-    """
-    Scrapes the directory for BO output files and builds the X and Y arrays.
-    """
+    """Scrapes the directory for BO output files and builds the arrays."""
     files = glob.glob(json_pattern)
     if not files:
         raise FileNotFoundError(f"No files matching {json_pattern} found.")
@@ -23,12 +23,10 @@ def load_training_data(json_pattern: str = "timing_config_*.json"):
             
         el_field = data.get("el_field")
         if el_field is None:
-            print(f"Skipping {f}: No 'el_field' found.")
             continue
             
         X_list.append([el_field])
         
-        # Ensure parameters are appended in the exact order of param_names
         p = data["parameters"]
         Y_list.append([
             p["N_s1"], 
@@ -38,39 +36,38 @@ def load_training_data(json_pattern: str = "timing_config_*.json"):
             p["t_drift_margin"]
         ])
         
-    # Sort by E_EL to make plotting and reading easier
     X = np.array(X_list)
     Y = np.array(Y_list)
     
+    # Sort by E_EL
     sort_idx = np.argsort(X[:, 0])
     return X[sort_idx], Y[sort_idx], param_names
 
-def fit_contextual_model(X: np.ndarray, Y: np.ndarray) -> GaussianProcessRegressor:
-    """
-    Fits a Multi-Output Gaussian Process Regressor.
-    """
-    # The Kernel: 
-    # C(1.0) scales the amplitude.
-    # RBF models the smooth, non-linear physical scaling.
-    # WhiteKernel accounts for the slight randomness/noise in the BO's convergence.
-    kernel = C(1.0, (1e-3, 1e3)) * RBF(length_scale=500.0, length_scale_bounds=(100.0, 5000.0)) \
-             + WhiteKernel(noise_level=0.1, noise_level_bounds=(1e-3, 1.0))
-             
-    gpr = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=20, normalize_y=True)
-    gpr.fit(X, Y)
+def fit_contextual_models(X: np.ndarray, Y: np.ndarray, param_names: list) -> dict:
+    """Fits an independent Gaussian Process for each parameter."""
+    models = {}
     
-    print(f"Model fitted. Learned Kernel: {gpr.kernel_}")
-    return gpr
+    # We remove WhiteKernel and give the RBF wider bounds to handle the V/cm scale
+    kernel = C(1.0, (1e-2, 1e2)) * RBF(length_scale=1000.0, length_scale_bounds=(100.0, 10000.0))
+    
+    for i, name in enumerate(param_names):
+        # alpha=0.05 provides stable matrix regularization (assuming ~5% noise variance)
+        gpr = GaussianProcessRegressor(
+            kernel=kernel, 
+            alpha=0.05, 
+            n_restarts_optimizer=15, 
+            normalize_y=True
+        )
+        # Fit this specific parameter (Y[:, i])
+        gpr.fit(X, Y[:, i])
+        models[name] = gpr
+        print(f"Model for {name} fitted. Kernel: {gpr.kernel_}")
+        
+    return models
 
-def plot_response_surfaces(gpr: GaussianProcessRegressor, X: np.ndarray, Y: np.ndarray, param_names: list):
-    """
-    Generates a 5-panel plot showing the interpolation and uncertainty for each parameter.
-    """
-    # Create a dense axis for smooth plotting (spanning from slightly below min E_EL to slightly above max)
+def plot_response_surfaces(models: dict, X: np.ndarray, Y: np.ndarray, param_names: list):
+    """Generates the validation plot for all independent models."""
     X_dense = np.linspace(X.min() - 200, X.max() + 200, 500).reshape(-1, 1)
-    
-    # Predict the parameters and their uncertainties (standard deviations)
-    Y_pred, sigma = gpr.predict(X_dense, return_std=True)
     
     fig, axes = plt.subplots(3, 2, figsize=(12, 12))
     fig.suptitle("Contextual Parameter Scaling vs. EL Field", fontsize=16)
@@ -78,20 +75,17 @@ def plot_response_surfaces(gpr: GaussianProcessRegressor, X: np.ndarray, Y: np.n
     
     for i, name in enumerate(param_names):
         ax = axes[i]
+        gpr = models[name]
         
-        # Plot training data points
-        ax.scatter(X, Y[:, i], c='red', zorder=10, label="BO Optimal Points")
+        # Predict purely for this parameter
+        y_pred, sigma = gpr.predict(X_dense, return_std=True)
         
-        # Plot GPR mean prediction
-        ax.plot(X_dense, Y_pred[:, i], 'b-', label="GPR Prediction")
-        
-        # Plot 95% Confidence Interval (±1.96 sigma)
-        # Note: scikit-learn's multi-output GPR returns a single sigma for all outputs unless explicitly wrapped,
-        # but typically this is acceptable for normalized Y. We apply it to the scaled space.
+        ax.scatter(X, Y[:, i], c='red', zorder=10, label="BO Points")
+        ax.plot(X_dense, y_pred, 'b-', label="GPR Mean")
         ax.fill_between(
             X_dense.ravel(), 
-            Y_pred[:, i] - 1.96 * sigma, 
-            Y_pred[:, i] + 1.96 * sigma, 
+            y_pred - 1.96 * sigma, 
+            y_pred + 1.96 * sigma, 
             alpha=0.2, color='blue', label="95% CI"
         )
         
@@ -101,30 +95,29 @@ def plot_response_surfaces(gpr: GaussianProcessRegressor, X: np.ndarray, Y: np.n
         ax.legend()
         ax.grid(True, linestyle='--', alpha=0.6)
         
-    # Remove the empty 6th subplot
     fig.delaxes(axes[5])
-    
     plt.tight_layout()
-    plt.savefig("/Users/pabloherrero/sabat/RaTagging/artifacts/timing_BO/contextual_scaling_model.png")
+    plt.savefig(GLOBAL_OUT_PATH + "contextual_scaling_model.png")
     plt.close()
     print("Response surface plot saved to 'contextual_scaling_model.png'.")
 
 def main():
+    
     try:
-        print("Loading BO configurations...")
-        X, Y, param_names = load_training_data(json_pattern="/Users/pabloherrero/sabat/RaTagging/artifacts/timing_BO/timing_config_*.json")
+        X, Y, param_names = load_training_data(json_pattern=GLOBAL_OUT_PATH + "timing_config_*.json")
         print(f"Loaded {len(X)} configurations.")
         
-        print("\nFitting Gaussian Process Regressor...")
-        gpr = fit_contextual_model(X, Y)
+        print("\nFitting Independent Gaussian Process Regressors...")
+        models = fit_contextual_models(X, Y, param_names)
         
         print("\nGenerating response surfaces...")
-        plot_response_surfaces(gpr, X, Y, param_names)
+        plot_response_surfaces(models, X, Y, param_names)
         
-        model_file = "/Users/pabloherrero/sabat/RaTagging/artifacts/timing_BO/timing_context_model.joblib"
-        joblib.dump({"model": gpr, "param_names": param_names}, model_file)
-        print(f"\nModel saved successfully to {model_file}")
-        print("You can now use this model to predict parameters for new runs.")
+        
+        model_file = GLOBAL_OUT_PATH + "timing_context_model.joblib"
+        
+        joblib.dump({"models": models, "param_names": param_names}, model_file)
+        print(f"\nModels saved successfully to {model_file}")
         
     except Exception as e:
         print(f"Error: {e}")

@@ -2,16 +2,18 @@ import argparse
 import json
 
 import numpy as np
+from dataclasses import replace
 import matplotlib.pyplot as plt
 from skopt import gp_minimize
 from skopt.space import Real, Integer
 
 # --- RaTag Imports ---
 from RaTag.io.bootstrap import bootstrap_from_config
-from RaTag.el_tpc.baseline_workflow import map_run_baseline
-from RaTag.el_tpc.drift_workflow import map_drift_physics
 from RaTag.io.file_ops import iter_waveforms
-from RaTag.el_tpc.waveform_features import find_s1, find_s2, compute_timing_statistics
+from RaTag.core.config import TimingConfig
+from RaTag.el_tpc.baseline_workflow import map_baseline
+from RaTag.el_tpc.drift_workflow import map_drift_physics
+from RaTag.el_tpc.timing_workflow import find_s1, find_s2, compute_timing_statistics
 
 def evaluate_timing_resolution(params: list, run, max_files: int = 10) -> float:
     """
@@ -28,25 +30,26 @@ def evaluate_timing_resolution(params: list, run, max_files: int = 10) -> float:
         if noise_sigma == 0.0:
             noise_sigma = 0.05 # Fallback protection
             
-        threshold_s1 = noise_sigma * N_s1
-        threshold_s2 = noise_sigma * N_s2
-        t_drift_time = (set_pmt.time_drift or 0.0) * t_drift_margin
         
+        t_drift = (set_pmt.time_drift or 0.0) * t_drift_margin
+        base_config = TimingConfig(
+            s1_threshold=noise_sigma * N_s1,
+            s2_threshold=noise_sigma * N_s2,
+            window_ma=int(window_size),
+            bs_threshold=threshold_bs,
+            s1_t_max=-2.5,
+            s2_margin=t_drift_margin
+        )
+
         out_s1, out_s2_start, out_s2_end = [], [], []
         s1_anchor = -5.0
         
         for wf in iter_waveforms(set_pmt, max_files=max_files):
-            t_s1 = find_s1(wf, threshold=threshold_s1, t_max=-2.5)
+            t_s1 = find_s1(wf, config=base_config)
             if not np.all(np.isnan(t_s1)):
                 s1_anchor = np.nanmean(t_s1)
-                
-            t_s2_st, t_s2_ed = find_s2(
-                wf, 
-                threshold_s2=threshold_s2, 
-                t_min=s1_anchor + t_drift_time, 
-                window_size=int(window_size), 
-                threshold_bs=threshold_bs
-            )
+            t_min_s2 = s1_anchor + t_drift * base_config.s2_margin
+            t_s2_st, t_s2_ed = find_s2(wf, config=base_config, t_min_s2=t_min_s2)
             
             out_s1.append(t_s1)
             out_s2_start.append(t_s2_st)
@@ -96,25 +99,29 @@ def generate_validation_plots(best_params: list, run, run_id: str, max_files: in
     fig, ax = plt.subplots(len(test_sets), figsize=(12, 4 * len(test_sets)))
     fig.suptitle(f"Timing Parameter Validation - Run {run_id}", fontsize=16)
     
+    
     for i, set_pmt in enumerate(test_sets):
         noise_sigma = getattr(set_pmt, 'baseline_std', 0.05)
-        t_drift_time = (set_pmt.time_drift or 0.0) * t_drift_margin
+        t_drift = (set_pmt.time_drift or 0.0) * t_drift_margin
         
+        base_config = TimingConfig(
+                s1_threshold=noise_sigma * N_s1,
+                s2_threshold=noise_sigma * N_s2,
+                window_ma=int(window_size),
+                bs_threshold=threshold_bs,
+                s1_t_max=-2.5,
+                s2_margin=t_drift_margin
+            )
         out_s1, out_s2_start, out_s2_end = [], [], []
         s1_anchor = -5.0
         
         for wf in iter_waveforms(set_pmt, max_files=max_files):
-            t_s1 = find_s1(wf, threshold=noise_sigma * N_s1, t_max=-2.5)
+            t_s1 = find_s1(wf, config=base_config)
             if not np.all(np.isnan(t_s1)):
                 s1_anchor = np.nanmean(t_s1)
                 
-            t_s2_st, t_s2_ed = find_s2(
-                wf, 
-                threshold_s2=noise_sigma * N_s2, 
-                t_min=s1_anchor + t_drift_time, 
-                window_size=int(window_size), 
-                threshold_bs=threshold_bs
-            )
+            t_min_s2=s1_anchor + t_drift * base_config.s2_margin
+            t_s2_st, t_s2_ed = find_s2(wf, config=base_config, t_min_s2=t_min_s2)
             
             out_s1.append(t_s1)
             out_s2_start.append(t_s2_st)
@@ -147,7 +154,7 @@ def main(run_id: str, config_path: str, max_files: int):
     
     # Apply standard pipeline mapping up to baseline calculation
     run = map_drift_physics(run)
-    run = map_run_baseline(run, max_frames=480, n_points=200)
+    run = map_baseline(run, max_frames=480, n_points=200)
     print(f"Run {run_id} baseline properties calculated. Set 0 baseline std: {getattr(run.sets[0], 'baseline_std', 'N/A')}")
     
     # 2. Define the Search Space
