@@ -101,7 +101,7 @@ def resolve_set_recoils(set_pmt: SetPmt,
 # 3. RUN-LEVEL ORCHESTRATOR
 # ============================================================================
 
-def map_run_recoils(run: Run, 
+def map_recoil_integration(run: Run, 
                     max_frames: Optional[int] = None, 
                     config: IntegrationConfig = IntegrationConfig(),
                     force: bool = False) -> Run:
@@ -160,7 +160,7 @@ def resolve_set_s2_fit(set_pmt: SetPmt,
         print(f"  ✗ Fit failed for {set_pmt.source_dir.name}: {e}")
         return replace(set_pmt, area_s2_fit_success=False), None
 
-def map_run_s2_fits(run: Run, 
+def map_recoil_fits(run: Run, 
                     config: FitConfig = FitConfig(), 
                     force: bool = False) -> Run:
     """Entry point: Maps the statistical fitting workflow across all sets."""
@@ -181,9 +181,7 @@ def map_run_s2_fits(run: Run,
 # ============================================================================
 @persist_plots(subfolder="s2_areas", expected_suffixes=["histograms", "s2_vs_field"])
 def map_recoil_plots(run: Run, force: bool = False) -> tuple[Run, dict]:
-    print("\n" + "="*60)
-    print(f"GENERATING RECOIL S2 AREAS QA PLOTS: {run.run_id}")
-    print("="*60)
+    print("\n" + "="*60 + f"\nGENERATING RECOIL S2 AREAS QA PLOTS: {run.run_id}\n" + "="*60)
     
     figs = {}
     
@@ -192,7 +190,7 @@ def map_recoil_plots(run: Run, force: bool = False) -> tuple[Run, dict]:
     
     # 2. Iterate sequentially with Context Manager
     for set_pmt, ax in grid_cells:
-        with catch_plot_errors(ax, set_pmt.source_dir.name):
+        with catch_plot_errors(ax, set_pmt.source_dir.name): # This simply adds an error message to the plot instead of crashing
             s2_areas = load_s2areas(set_pmt)
             
             fit_model = None

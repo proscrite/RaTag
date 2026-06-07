@@ -202,7 +202,7 @@ def resolve_set_timing(set_pmt: SetPmt,
 # PUBLIC APIs (The "map" functions called by the pipelines)
 # ============================================================================
 
-def map_run_timing(run: Run, max_frames: int = 500, 
+def map_time_windows(run: Run, max_frames: int = 500, 
                    config: TimingConfig = TimingConfig(), force: bool = False) -> Run:
     
     """Entry point: Maps timing workflow over all sets in the Run."""

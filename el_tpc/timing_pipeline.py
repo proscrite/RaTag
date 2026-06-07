@@ -1,5 +1,5 @@
 from RaTag.core.datatypes import Run
-from .timing_workflow import map_run_timing, map_multiiso_timing, map_timing_plots
+from .timing_workflow import map_time_windows, map_multiiso_timing, map_timing_plots
 
 def pipeline_timing_estimation(run: Run, config: dict) -> Run:
     """
@@ -10,7 +10,7 @@ def pipeline_timing_estimation(run: Run, config: dict) -> Run:
     """
     
     # 1. Mainstream S1/S2 Estimation
-    run = map_run_timing(run, **config.get('preparation', {}))
+    run = map_time_windows(run, **config.get('preparation', {}))
     
     # 2. Plotting and Validation
     run = map_timing_plots(run)

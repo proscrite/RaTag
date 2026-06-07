@@ -1,6 +1,6 @@
 import numpy as np
 from dataclasses import replace
-from RaTag.core.datatypes import Run, SetPmt
+from RaTag.core.datatypes import Run, SetPmt, Waveform
 from RaTag.core.functional import map_over
 from RaTag.core.decorators import disk_cache, limit_frames
 from RaTag.io.file_ops import iter_waveforms
@@ -56,7 +56,7 @@ def resolve_set_baseline(set_pmt: SetPmt, max_files: int, n_points: int = 200, f
 # PUBLIC API (The "map" functions called by pipeline.py)
 # ============================================================================
 
-def map_run_baseline(run: Run, max_frames: int = 480, n_points: int = 200, force: bool = False) -> Run:
+def map_baseline(run: Run, max_frames: int = 480, n_points: int = 200, force: bool = False) -> Run:
     """
     Entry point: Maps the baseline calculation workflow over all sets in the Run.
     """

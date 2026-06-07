@@ -33,7 +33,6 @@ def _find_dynamic_lower_bound(cbins: np.ndarray, counts: np.ndarray, search_max:
     minima_indices, _ = find_peaks(-n_smooth)
     
     if len(minima_indices) > 0:
-        print(f"  Dynamic valley found at {c_search[minima_indices[0]]:.2f} with count {n_search[minima_indices[0]]}")
         return c_search[minima_indices[0]]
         
     return 0.5 # Safe fallback if no distinct valley exists
