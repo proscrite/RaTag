@@ -249,9 +249,12 @@ def load_cache(set_pmt: SetPmt) -> Optional[SetPmt]:
         
     valid_keys = {f.name for f in fields(SetPmt)}
     
-    # Pure 1:1 mapping. No type coercion, no bloat.
+    # Pure 1:1 mapping.
     update_kwargs = {k: v for k, v in data.items() if k in valid_keys}
-            
+    
+    if 'source_dir' in update_kwargs and isinstance(update_kwargs['source_dir'], str):
+        update_kwargs['source_dir'] = Path(update_kwargs['source_dir'])
+    
     return replace(set_pmt, **update_kwargs)
 
 

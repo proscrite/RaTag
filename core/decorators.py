@@ -39,7 +39,7 @@ def disk_cache(target_attr: str):
                     return set_pmt
                 
             # 5. COMPUTE: Execute the pure workflow function
-            enriched_set = func(set_pmt, *args, **kwargs)
+            enriched_set = func(set_pmt, *args, force=force, **kwargs)
             
             # 6. DISK SAVE: Update the JSON cache immediately
             file_ops.save_cache(enriched_set)
