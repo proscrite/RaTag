@@ -14,7 +14,6 @@ from RaTag.core.datatypes import PMTWaveform, SetPmt, RejectionLog, S2Areas, Run
 from RaTag.core.dataIO import load_wfm, iter_waveforms
 from RaTag.core.units import s_to_us, V_to_mV
 from RaTag.core.paths import get_output_root
-from RaTag.io.file_ops import load_npz_payload, load_fit_result
 # --------------------------------
 # Basic waveform plotter
 # --------------------------------
@@ -975,9 +974,9 @@ def plot_grouped_histograms(df: pd.DataFrame,
 # -- Combined timing histograms
 # --------------------------------
 
-def plot_timing_histograms(ax: plt.Axes, set_name: str, payload: dict, bins: int = 100) -> None:
-    """Pure plotter. Accepts the payload dict directly. Zero I/O."""
-    if not payload:
+def plot_timing_histograms(ax: plt.Axes, set_name: str, arrays: dict, bins: int = 100) -> None:
+    """Pure plotter. Accepts the arrays dict directly. Zero I/O."""
+    if not arrays:
         ax.text(0.5, 0.5, "No Timing Data", ha='center', va='center')
         ax.set_title(set_name)
         return
@@ -989,7 +988,7 @@ def plot_timing_histograms(ax: plt.Axes, set_name: str, payload: dict, bins: int
     ]
 
     for key, color, label in signals_config:
-        arr = payload.get(key, np.array([]))
+        arr = arrays.get(key, np.array([]))
         arr_clean = arr[~np.isnan(arr)]
         if len(arr_clean) > 0:
             ax.hist(arr_clean, bins=bins, alpha=0.7, color=color, label=label)
@@ -1116,6 +1115,70 @@ def plot_run_s2_vs_field(run: Run) -> plt.Figure:
     # Call your existing function
     fig, _ = plot_s2_vs_drift(df, run.run_id)
     return fig
+# In RaTag/plotting.py
+
+def plot_xray_candidate(ax: plt.Axes, 
+                        wf: PMTWaveform, 
+                        frame: Optional[int], 
+                        t_s1: float,
+                        s2_start: float,
+                        is_accepted: bool) -> None:
+    """100% Pure plotter for an X-ray candidate waveform."""
+    title_prefix = "✓ Accepted" if is_accepted else "✗ Rejected"
+    color = "green" if is_accepted else "red"
+    
+    # Use standard plotter
+    _, v_max = plot_waveform(wf, frame=frame, ax=ax, title=title_prefix, color=color)
+    
+    ax.axvline(t_s1, color='blue', linestyle='--', label='S1')
+    ax.axvline(s2_start, color='purple', linestyle='--', label='S2 Start')
+    ax.fill_betweenx([0, v_max], t_s1, s2_start, color='orange', alpha=0.1, label='Search Perimeter')
+    
+    ax.legend(fontsize=8, loc='upper right')
+
+
+def plot_xray_validation(accepted_wfs: list,
+                         rejected_wfs: list,
+                         t_s1: float,
+                         s2_start: float,
+                         title: str = "X-ray Classification Validation"):
+    """
+    Pure plotting function for the 4x2 validation dashboard.
+    Expects lists of (wf, frame) tuples and explicit set-level timing constants.
+    """
+    n_frames = max(len(accepted_wfs), len(rejected_wfs))
+    
+    if n_frames == 0:
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.axis('off')
+        return fig
+    
+    fig, axes = plt.subplots(n_frames, 2, figsize=(14, 3.5 * n_frames))
+    if n_frames == 1:
+        axes = axes.reshape(1, -1) 
+    
+    fig.suptitle(title, fontsize=14, y=0.995)
+    
+    for i in range(n_frames):
+        # Left column (Accepted)
+        ax_left = axes[i, 0]
+        if i < len(accepted_wfs):
+            wf, frame = accepted_wfs[i]
+            plot_xray_candidate(ax_left, wf, frame, t_s1, s2_start, is_accepted=True)
+        else:
+            ax_left.axis('off')
+            
+        # Right column (Rejected)
+        ax_right = axes[i, 1]
+        if i < len(rejected_wfs):
+            wf, frame = rejected_wfs[i]
+            plot_xray_candidate(ax_right, wf, frame, t_s1, s2_start, is_accepted=False)
+        else:
+            ax_right.axis('off')
+    
+    plt.tight_layout()
+    return fig
+
 # --------------------------------
 # -- Deprecated functions
 # --------------------------------
@@ -1208,66 +1271,3 @@ def plot_winS2_wf(wf: PMTWaveform, t_s1: float, time_drift: float, width_s2: flo
     ax.fill_betweenx(ax.get_ylim(), s2_start, s2_end, color='m', alpha=0.3, label="S2 window")
     ax.legend()
 
-
-def plot_xray_validation(set_pmt: SetPmt,
-                        accepted_sample: list,
-                        rejected_sample: list,
-                        title: str = "X-ray Classification Validation"):
-    """
-    Plot validation figure showing accepted vs rejected X-ray candidates.
-    
-    Creates 2-column layout: left column shows accepted examples,
-    right column shows rejected examples.
-    
-    Args:
-        set_pmt: SetPmt to load waveforms from
-        accepted_sample: List of (file_seq, frame_idx) tuples for accepted frames
-        rejected_sample: List of (file_seq, frame_idx) tuples for rejected frames
-        title: Figure title
-        
-    Returns:
-        Matplotlib figure
-    """
-    from RaTag.core.uid_utils import parse_file_seq_from_name
-    
-    # Build mapping from file_seq to file_index
-    file_seq_to_index = {parse_file_seq_from_name(fn): idx 
-                         for idx, fn in enumerate(set_pmt.filenames)}
-    
-    n_frames = len(accepted_sample)  # Both samples have same length
-    
-    if n_frames == 0:
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.text(0.5, 0.5, "No frames to plot", ha='center', va='center')
-        ax.axis('off')
-        return fig
-    
-    # Create 2-column layout
-    fig, axes = plt.subplots(n_frames, 2, figsize=(14, 3.5 * n_frames))
-    if n_frames == 1:
-        axes = axes.reshape(1, -1)  # Ensure 2D array
-    
-    fig.suptitle(title, fontsize=14, y=0.995)
-    
-    # Plot both columns in single loop
-    for i in range(n_frames):
-        # Left column: accepted (green)
-        file_seq, frame_idx = accepted_sample[i]
-        file_index = file_seq_to_index[file_seq]  # Convert file_seq to file_index
-        ax_left = axes[i, 0]
-        plot_set_windows(set_pmt, file_index=file_index, frame=frame_idx, 
-                        ax=ax_left, color='green')
-        ax_left.set_title(f"✓ Accepted (File {file_seq}, Frame {frame_idx})", 
-                         fontsize=10, color='darkgreen')
-        
-        # Right column: rejected (red)
-        file_seq, frame_idx = rejected_sample[i]
-        file_index = file_seq_to_index[file_seq]  # Convert file_seq to file_index
-        ax_right = axes[i, 1]
-        plot_set_windows(set_pmt, file_index=file_index, frame=frame_idx, 
-                        ax=ax_right, color='red')
-        ax_right.set_title(f"✗ Rejected (File {file_seq}, Frame {frame_idx})", 
-                          fontsize=10, color='darkred')
-    
-    plt.tight_layout()
-    return fig
