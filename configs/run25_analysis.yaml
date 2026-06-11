@@ -7,8 +7,8 @@ description: "Single isotope Ra224 analysis, 1.35 kV/cm EL field"
 
 # Data location
 data:
-  raw_data_path: "E:/Pablos_Mighty_measurements/RUN25_Ra224_EL1100"
-  output_base: "E:/Pablos_Mighty_measurements/RUN25_Ra224_EL1100"  # Optional, defaults to raw_data_path
+  raw_data_path: "E:/Pablos_Mighty_measurements/raw_data/RUN25_Ra224_EL1100"
+  output_base: "E:/Pablos_Mighty_measurements/processed/RUN25_Ra224_EL1100"  # Optional, defaults to raw_data_path
 
 # Run parameters
 experiment:
@@ -60,6 +60,8 @@ pipeline:
       n_pedestal: 100         # Samples for pedestal calculation
       ma_window: 9            # Moving average window size
       bs_threshold: 0.03      # mV - Baseline subtraction threshold
+      n_sigma_start: 1.0       # Sigmas before S2 start for integration start
+      n_sigma_end: 0.5         # Sigmas after S2 end for integration end
       dt: 0.0002              # µs - Time step for integration (0.2 ns for 5 GS/s)
     fit_config:
       bin_cuts: [0, 5]       # mV·µs - Histogram range
