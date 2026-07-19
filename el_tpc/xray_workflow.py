@@ -8,7 +8,7 @@ from dataclasses import replace
 from RaTag.core.datatypes import Run, SetPmt, S2Areas
 from RaTag.core.config import XRayConfig, FitConfig
 from RaTag.core.paths import get_output_root
-from RaTag.core.decorators import disk_cache, persist_results, require_attributes, limit_frames, persist_run_results, persist_plots
+from RaTag.core.decorators import *
 from RaTag.core.functional import map_over
 from RaTag.core.uid_utils import sample_validation_waveforms
 from RaTag.io import file_ops
@@ -137,62 +137,63 @@ def calculate_xray_areas(set_pmt: SetPmt,
 # ============================================================================
 # 2. SET-LEVEL ETL (Cached Solver) and RUN-LEVEL AGGREGATOR
 # ============================================================================
-
+@allow_force
+@load_cached_npz(signal_type='xray_areas')
 @require_attributes('t_s1') 
-@persist_results(signal_type='xray_areas')
+@write_npz_arrays(signal_type='xray_areas')
 @limit_frames
 def resolve_set_xrays(set_pmt: SetPmt, 
                       max_files: Optional[int] = None, 
                       config: XRayConfig = XRayConfig()) -> tuple[SetPmt, dict]:
     """
-    Executes X-ray classification and formats the payload for storage.
+    Executes X-ray classification and formats the arrays for storage.
     """
     areas, uids, stats = calculate_xray_areas(set_pmt, max_files=max_files, config=config, )
     
     # Dense dictionary naturally saved to {set_name}_xray_areas.npz
-    payload = {
+    arrays = {
         "s2_areas": areas,
         "uids": uids,
         "stats": np.array([json.dumps(stats)])  # Store stats as a JSON string in a 1-element array for npz compatibility
     }
     
-    return set_pmt, payload
+    return set_pmt, arrays
 
 @persist_run_results(signal_type='xray_areas')
 def aggregate_run_xrays(run: Run) -> tuple[Run, dict]:
-    """Pure reduction function. Extracts all set payloads and combines them."""
+    """Pure reduction function. Extracts all set arrays and combines them."""
     print("  Aggregating run-level X-ray areas...")
     
     all_areas, all_uids, all_stats = [], [], []
     for set_pmt in run.sets:
-        payload = file_ops.load_npz_payload(set_pmt, 'xray_areas')
-        if payload and 's2_areas' in payload:
-            all_areas.append(payload['s2_areas'])
-            all_uids.append(payload['uids'])
-            print(f"      Loaded {len(payload['uids'])} X-ray events from set {set_pmt.source_dir.name}")
+        arrays = file_ops.load_npz_arrays(set_pmt, 'xray_areas')
+        if arrays and 's2_areas' in arrays:
+            all_areas.append(arrays['s2_areas'])
+            all_uids.append(arrays['uids'])
+            print(f"      Loaded {len(arrays['uids'])} X-ray events from set {set_pmt.source_dir.name}")
         
-        if 'stats' in payload:
-            all_stats.append(payload['stats'][0])  # Extract the JSON string from the array
+        if 'stats' in arrays:
+            all_stats.append(arrays['stats'][0])  # Extract the JSON string from the array
 
     _aggregate_run_stats(run, all_stats)  # Also aggregate the stats into a run-level JSON file
 
-    combined_payload = {
+    combined_arrays = {
         "s2_areas": np.concatenate(all_areas) if all_areas else np.array([]),
         "uids": np.concatenate(all_uids) if all_uids else np.array([])
     }
     
-    return run, combined_payload
+    return run, combined_arrays
 
 
 # ============================================================================
 # 3. RUN-LEVEL ORCHESTRATOR
 # ============================================================================
 
-def map_xrays_events(run: Run, 
+def map_xray_events(run: Run, 
                   max_frames: Optional[int] = None, 
                   config: XRayConfig = XRayConfig(),
                   force: bool = False) -> Run:
-    """Entry point: Extracts per-set X-Rays, then reduces them to a run payload."""
+    """Entry point: Extracts per-set X-Rays, then reduces them to a run array."""
     
     print("\n" + "="*60 + f"\nIDENTIFYING X-RAY EVENTS: {run.run_id}\n" + "="*60)
 
@@ -258,7 +259,9 @@ def _load_xray_plot_data(run: Run) -> tuple[Optional[S2Areas], Optional[Any], Op
     
     return s2_combined, fit_model, fit_mean
 
-@persist_plots(subfolder="xray_areas", expected_suffixes=["histogram", "validation"])
+@allow_force
+@load_cached_plots(subfolder="xray_areas", expected_suffixes=["histogram", "validation"])
+@write_plots(subfolder="xray_areas")
 def make_xray_plots(run: Run, force: bool = False) -> tuple[Run, dict]:
     """Generates the combined X-ray area histogram with fit overlay and a validation dashboard of sample waveforms."""
     

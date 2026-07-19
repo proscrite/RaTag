@@ -10,10 +10,11 @@ def pipeline_timing_estimation(run: Run, config: dict) -> Run:
     """
     
     # 1. Mainstream S1/S2 Estimation
-    run = map_time_windows(run, **config.get('preparation', {}))
+    
+    run = map_time_windows(run, max_frames=))
     
     # 2. Plotting and Validation
-    run = map_timing_plots(run)
+    run, _ = map_timing_plots(run)
 
     # 3. Conditional Multi-Isotope Branching
     # Explicit logic is safer than hidden magic

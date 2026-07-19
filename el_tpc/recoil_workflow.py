@@ -63,6 +63,8 @@ def calculate_s2_areas(set_pmt: SetPmt,
         out_uids.append(wf.uids)
         out_areas.append(wf_areas)
 
+    print(f"  🔹 Processed {len(out_areas)} waveforms for S2 area integration.")
+
     if not out_areas:
         raise ValueError("No waveforms processed.")
 
@@ -73,15 +75,18 @@ def calculate_s2_areas(set_pmt: SetPmt,
 # 2. SET-LEVEL ETL (Cached Solver)
 # ============================================================================
 
-@disk_cache(target_attr='n_areas_recoil')
+@allow_force
+@load_cached_metadata(target_attr='n_areas_recoil')
+@load_cached_npz(signal_type='s2_areas')
 @require_attributes('t_s2_start', 't_s2_end')
-@persist_results(signal_type='s2_areas')
+@write_metadata(target_attr='n_areas_recoil')
+@write_npz_arrays(signal_type='s2_areas')
 @limit_frames
 def resolve_set_recoils(set_pmt: SetPmt, 
                         max_files: Optional[int] = None, 
                         config: IntegrationConfig = IntegrationConfig()) -> tuple[SetPmt, dict]:
     """
-    Executes S2 integration and formats the payload for storage.
+    Executes S2 integration and formats the arrays for storage.
     """
     areas, uids = calculate_s2_areas(set_pmt, max_files=max_files, config=config)
     
@@ -89,12 +94,12 @@ def resolve_set_recoils(set_pmt: SetPmt,
     updated_set = replace(set_pmt, n_areas_recoil=len(areas))
     
     # This dense dictionary gets naturally saved to {set_name}_s2_areas.npz
-    payload = {
+    arrays = {
         "s2_areas": areas,
         "uids": uids
     }
     
-    return updated_set, payload
+    return updated_set, arrays
 
 
 # ============================================================================
@@ -119,15 +124,15 @@ def map_recoil_integration(run: Run,
 
 
 
-
-
 # ============================================================================
 #  4. Fitting workflow functions
 # ============================================================================
 
-@disk_cache(target_attr='area_s2_fit_success')
+@allow_force
+@load_cached_fit(suffix='s2_areas_hist_fit')
 @require_attributes('n_areas_recoil')
-@persist_fit(suffix='s2_areas_hist_fit')
+@write_metadata(target_attr='area_s2_fit_success')
+@write_fit(suffix='s2_areas_hist_fit')
 def resolve_set_s2_fit(set_pmt: SetPmt, 
                        config: FitConfig = FitConfig()) -> SetPmt:
     """
@@ -139,11 +144,8 @@ def resolve_set_s2_fit(set_pmt: SetPmt,
         return replace(set_pmt, area_s2_fit_success=False), None
     
     try:
-        # 2. Execute the Fit
         result = fit_s2_crystalball(s2_areas.areas, bin_cuts=config.bin_cuts,
                                        nbins=config.nbins )
-                            
-    # 3. State Update
         metadata_updates = {
             'area_s2_mean': result['peak_position'],
             'area_s2_ci95': result['ci95'],
@@ -175,20 +177,18 @@ def map_recoil_fits(run: Run,
     return replace(run, sets=updated_sets)
 
 
-
 # ============================================================================
 # QA & VALIDATION WORKFLOWS
 # ============================================================================
-@persist_plots(subfolder="s2_areas", expected_suffixes=["histograms", "s2_vs_field"])
-def map_recoil_plots(run: Run, force: bool = False) -> tuple[Run, dict]:
+@allow_force
+@load_cached_plots(subfolder="s2_areas", expected_suffixes=["histograms", "s2_vs_field"])
+@write_plots(subfolder="s2_areas")
+def map_recoil_plots(run: Run, force: bool = False) -> Run:
     print("\n" + "="*60 + f"\nGENERATING RECOIL S2 AREAS QA PLOTS: {run.run_id}\n" + "="*60)
     
     figs = {}
-    
-    # 1. Build Grid
     fig_hist, grid_cells = build_fig_grid(run, f"S2 Area Fits - {run.run_id}")
     
-    # 2. Iterate sequentially with Context Manager
     for set_pmt, ax in grid_cells:
         with catch_plot_errors(ax, set_pmt.source_dir.name): # This simply adds an error message to the plot instead of crashing
             s2_areas = load_s2areas(set_pmt)
@@ -198,7 +198,6 @@ def map_recoil_plots(run: Run, force: bool = False) -> tuple[Run, dict]:
                 fit_path = get_output_root(set_pmt.source_dir.parent) / "fits" / f"{set_pmt.source_dir.name}_s2_areas_hist_fit.json"
                 fit_model = load_fit_result(fit_path, funcdefs={'v_crystalball_right': v_crystalball_right})
 
-            # B. Pure Plotting
             plot_s2areas_summary(ax, set_pmt.source_dir.name, s2_areas, fit_model, set_pmt.area_s2_mean)
 
     figs["histograms"] = fig_hist
