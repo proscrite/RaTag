@@ -46,11 +46,11 @@ import argparse
 import yaml
 from pathlib import Path
 from datetime import datetime
-from dataclasses import replace
 
-from typing import Optional
 
 from RaTag.core.datatypes import Run
+from RaTag.io.file_ops import load_yaml
+from RaTag.core.constructors import build_run_from_config
 from RaTag.core.config import IntegrationConfig, FitConfig, XRayConfig, AlphaCalibrationConfig
 from RaTag.workflows.run_construction import initialize_run
 from RaTag.workflows.spectrum_calibration import load_computed_ranges
@@ -61,30 +61,6 @@ from RaTag.pipelines.alpha_calibration import alpha_calibration, alpha_calibrati
 from RaTag.core.paths import get_output_root
 from RaTag.pipelines.unified_xray_and_recoil import unified_pipeline
 from RaTag.pipelines.recombination_analysis import recombination_pipeline
-
-def load_config(config_path: Path) -> dict:
-    """Load YAML configuration file."""
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
-
-
-def create_run_from_config(config: dict) -> Run:
-    """Create Run object from configuration."""
-    exp = config['experiment']
-    
-    return Run(
-        run_id=config['run_id'],
-        root_directory=Path(config['data']['raw_data_path']),
-        el_field=exp['el_field'],
-        target_isotope=exp['target_isotope'],
-        pressure=exp['pressure'],
-        temperature=exp['temperature'],
-        sampling_rate=exp['sampling_rate'],
-        el_gap=exp['el_gap'],
-        drift_gap=exp['drift_gap'],
-        recoil_energy=exp.get('recoil_energy', 96.8),
-        sets=[]
-    )
 
 
 def determine_isotope_ranges(run: Run, config: dict, use_yaml_override: bool) -> tuple[dict, bool]:
@@ -207,7 +183,7 @@ def main():
     
     # Load configuration
     print(f"Loading configuration from {args.config}")
-    config = load_config(args.config)
+    config = load_yaml(args.config)
     
     # Check if multi-isotope mode
     is_multiiso = config.get('multi_isotope', {}).get('enabled', False)
