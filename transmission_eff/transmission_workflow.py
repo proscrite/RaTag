@@ -11,7 +11,7 @@ from scipy.interpolate import RegularGridInterpolator
 
 from .datatypes import TransmissionRun, TransmissionPoint
 from .etl_keithly import process_single_measurement, calculate_transmission_efficiency, calculate_electric_fields
-from .plotting import plot_summary_curve, plot_multiple_transmission_curves, plot_sigmoid_fit
+from .transmission_plotters import plot_summary_curve, plot_multiple_transmission_curves, plot_sigmoid_fit
 from RaTag.core.fitting import fit_sigmoid 
 
 # ---------------------------------------------------------
