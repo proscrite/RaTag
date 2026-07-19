@@ -305,6 +305,31 @@ def v_crystalball_right(x, N, beta, m, x0, sigma):
     # Use Gaussian for z < beta, tail for z >= beta
     return N * np.where(z < absb, gauss, tail)
 
+
+def v_crystalball_left(x, N, beta, m, x0, sigma):
+    """
+    Crystal Ball function with a SAFE LEFT tail for Alpha energy loss.
+    """
+    absb = np.abs(beta)
+    z = (x - x0) / sigma
+    
+    # Gaussian core
+    gauss = np.exp(-0.5 * z**2)
+    
+    # Protect against division by zero
+    if absb == 0: absb = 1e-12
+        
+    A_tail = (m / absb)**m * np.exp(-0.5 * absb**2)
+    B = m / absb - absb
+    
+    # LEFT tail denominator: (B - z). 
+    # Use np.maximum to strictly prevent negative bases with fractional exponents
+    denom_safe = np.maximum(B - z, 1e-12)
+    tail = A_tail / (denom_safe)**m
+    
+    # Use Gaussian for z > -absb, tail for z <= -absb
+    return N * np.where(z > -absb, gauss, tail)
+
 def _compute_x0_uncertainty(result: lmfit.model.ModelResult) -> float:
     """Compute a robust uncertainty for the fitted peak position.
 

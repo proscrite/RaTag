@@ -35,6 +35,7 @@ from pathlib import Path
 
 from RaTag.core.datatypes import Run
 from RaTag.core.config import FitConfig
+from RaTag.core.constructors import build_run_from_config
 from RaTag.workflows.run_construction import initialize_run
 from RaTag.pipelines.recoil_only import recoil_pipeline_replot
 
@@ -43,28 +44,6 @@ def load_config(config_path: Path) -> dict:
     """Load YAML configuration file."""
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
-
-
-def create_run_from_config(config: dict) -> Run:
-    """Create Run object from configuration."""
-    exp = config['experiment']
-    
-    return Run(
-        run_id=config['run_id'],
-        root_directory=Path(config['data']['raw_data_path']),
-        el_field=exp['el_field'],
-        target_isotope=exp['target_isotope'],
-        pressure=exp['pressure'],
-        temperature=exp['temperature'],
-        sampling_rate=exp['sampling_rate'],
-        el_gap=exp['el_gap'],
-        drift_gap=exp['drift_gap'],
-        width_s2=exp['width_s2'],
-        W_value=exp['W_value'],
-        E_gamma_xray=exp['E_gamma_xray'],
-        sets=[]
-    )
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -95,7 +74,7 @@ def main():
     config = load_config(args.config)
     
     # Create Run object
-    run = create_run_from_config(config)
+    run = build_run_from_config(config)
     print(f"\nInitializing run: {run.run_id}")
     run = initialize_run(run, max_files=None)
     print(f"Found {len(run.sets)} sets")

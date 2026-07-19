@@ -1,16 +1,17 @@
 import matplotlib.pyplot as plt # type: ignore
 import time
+from matplotlib.colors import LogNorm
+from matplotlib.colors import LogNorm
 import numpy as np 
 import math
-
-# import ipywidgets as widgets # type: ignore
-# from IPython.display import display
+from dataclasses import replace
 from contextlib import contextmanager
 from typing import Optional, Tuple, Callable, Any
 from pathlib import Path
 import pandas as pd
 
-from RaTag.core.datatypes import PMTWaveform, SetPmt, RejectionLog, S2Areas, Run
+from RaTag.io.file_ops import load_npz_arrays
+from RaTag.core.datatypes import PMTWaveform, SetPmt, S2Areas, Run
 from RaTag.core.dataIO import load_wfm, iter_waveforms
 from RaTag.core.units import s_to_us, V_to_mV
 from RaTag.core.paths import get_output_root
@@ -48,6 +49,46 @@ def plot_waveform(wf: PMTWaveform, frame: Optional[int] = None, ax=None, title: 
     ax.set_xticks(np.arange(min(t), max(t), step=(max(t)-min(t))/10)) # type: ignore
     ax.grid(True) 
     return ax, V.max()
+
+def plot_frames(set_pmt: SetPmt, n_frames: int = 8, start_frame: int = 0, **kwargs):
+    """
+    Plots a sequence of individual frames as subplots.
+    Usage in Jupyter: plot_frames(set, n_frames=4, start_frame=12)
+    """
+    from RaTag.io.file_ops import iter_frames
+    
+    fig, axes = plt.subplots(n_frames, 1, figsize=(10, 4*n_frames), layout="constrained")
+    if n_frames == 1: axes = [axes]
+    
+    # We leverage our new efficient generator!
+    frame_gen = iter_frames(set_pmt, max_frames=n_frames, start_frame=start_frame)
+    
+    for i in range(n_frames):
+        try:
+            wf_frame = next(frame_gen)
+            plot_waveform(wf_frame, ax=axes[i], **kwargs)
+        except StopIteration:
+            axes[i].axis('off')
+            axes[i].text(0.5, 0.5, "No more frames available", ha='center', fontsize=12)
+            
+    return fig, axes
+
+
+def plot_random_frames(set_pmt: SetPmt, n_frames: int = 8, **kwargs):
+    """
+    Plots a random selection of frames from across the entire set.
+    Ensures true randomness by picking random files and random frames within them.
+    """
+    from RaTag.io.file_ops import load_random_waveform
+    
+    fig, axes = plt.subplots(n_frames, 1, figsize=(10, 4*n_frames), layout="constrained")
+    if n_frames == 1: axes = [axes]
+    
+    for i in range(n_frames):
+        wf, frame_idx = load_random_waveform(set_pmt)
+        plot_waveform(wf, frame=frame_idx, ax=axes[i], **kwargs)
+            
+    return fig, axes
 
 # ------------------------------------------------
 # Advanced waveform plotters (with S1/S2 window)
@@ -263,144 +304,6 @@ def plot_timing_vs_drift_field(drift_fields: np.ndarray,
     fig.tight_layout()
     
     return fig, ax
-
-# --------------------------------
-# Interactive plotters
-# --------------------------------
-
-
-def make_interactive(plot_fn):
-    """Decorator that adds interactive scrolling to a waveform plotting function.
-    
-    The wrapped function must take a waveform as its first argument and return
-    a matplotlib axes object.
-    """
-    def wrapper(set_pmt: SetPmt, *args, fix_axes=True, **kwargs):
-        files = list(set_pmt.filenames)
-        xlim = None
-
-        def _plot(idx):
-            fig, ax = plt.subplots()
-            wf = load_wfm(set_pmt.source_dir / files[idx])
-            plot_fn(set_pmt, wf, *args, **kwargs, ax=ax)
-
-            if fix_axes:
-                nonlocal xlim
-                if xlim is None:
-                    xlim = ax.get_xlim()
-                else:
-                    ax.set_xlim(xlim)
-            ax.relim()
-            ax.autoscale(axis="y")
-            plt.gcf().canvas.draw()
-
-        slider = widgets.IntSlider(
-            min=0, 
-            max=len(files)-1,
-            step=1,
-            value=0,
-            description='Waveform:'
-        )
-        out = widgets.interactive_output(_plot, {"idx": slider})
-        display(slider, out)
-        
-    return wrapper
-
-# Now we can decorate plot_winS2_wf to make it interactive
-@make_interactive
-def scroll_winS2(set_pmt: SetPmt, wf: PMTWaveform, width_s2: float, ts2_tol: float = 0, ax=None):
-    """Interactive version of plot_winS2_wf."""
-
-    t_s1 = set_pmt.t_s1
-    time_drift = set_pmt.time_drift
-
-    if t_s1 is None:
-        raise ValueError("t_s1 must be provided either as argument or in set metadata")
-    if time_drift is None:
-        raise ValueError("time_drift must be provided either as argument or in set")
-    
-    return plot_winS2_wf(wf, t_s1, time_drift, width_s2, ts2_tol, ax)
-
-
-def plot_run_winS2(run: Run, ts2_tol: float = 0, scroll: bool = False):
-    """Plot S1/S2 windows for one waveform from each set in a run."""
-    if not scroll:
-        n_sets = len(run.sets)
-        fig, axes = plt.subplots(n_sets, 1, figsize=(10, 4*n_sets))
-        if n_sets == 1:
-            axes = [axes]
-    else:
-        fig, axes = None, []
-
-    def _plot_adapter(set_pmt: SetPmt, wf: PMTWaveform, width_s2: float, ts2_tol: float, ax=None):
-        t_s1 = set_pmt.t_s1
-        time_drift = set_pmt.time_drift
-        return plot_winS2_wf(wf, t_s1, time_drift, width_s2, ts2_tol, ax)
-
-    decorated_fn = make_interactive(_plot_adapter) if scroll else _plot_adapter
-
-    for idx, set_pmt in enumerate(run.sets):
-        try:
-            if scroll:
-                # do NOT pass wf — the decorator will supply it
-                decorated_fn(set_pmt, width_s2=run.width_s2, ts2_tol=ts2_tol)
-            else:
-                wf = load_wfm(set_pmt.source_dir / set_pmt.filenames[0])
-                decorated_fn(set_pmt, wf, run.width_s2, ts2_tol, ax=axes[idx])
-
-                axes[idx].set_title(f"Set {set_pmt.source_dir.name}")
-        except Exception as e:
-            if not scroll:
-                axes[idx].text(0.5, 0.5, f"Error: {str(e)}", ha='center', va='center')
-
-    if not scroll:
-        plt.tight_layout()
-    return fig, axes
-
-
-#### Manual iteration version
-def iter_plot_waveforms(set_pmt: SetPmt, logs: list[RejectionLog], width_s2: float):
-    for idx, wf in enumerate(iter_waveforms(set_pmt)):
-        plot_cut_results(wf, set_pmt, logs, width_s2)
-        yield
-
-# Use: next(gen)  # plot first
-#      next(gen)  # plot next
-#      ...
-
-### Interactive version with slider
-
-def scroll_waveforms(set_pmt: SetPmt, logs: list[RejectionLog], width_s2: float):
-    files = list(set_pmt.filenames)
-    def _plot(idx):
-        fig, ax = plt.subplots()
-        wf = load_wfm(set_pmt.source_dir / files[idx])
-        plot_cut_results(wf, set_pmt, logs, ax=ax,
-                         width_s2 = width_s2);
-        # ax = plt.gca()
-        ax.set_xlim(-1.7e-5, 5e-5)
-        ax.relim()
-        ax.autoscale(axis="y")     # auto y-scale
-        plt.gcf().canvas.draw()
-
-    slider =  widgets.IntSlider(min=0, max=len(set_pmt.filenames)-1, step=1, value=0)
-    out = widgets.interactive_output(_plot, {"idx": slider})
-    display(slider, out)
-
-### Auto slide version
-
-def slideshow(set_pmt: SetPmt, logs: list[RejectionLog], width_s2: float, delay=2.0, ax:plt.Axes = None):
-    """Auto-advance through waveforms with a fixed delay (in seconds)."""
-    if ax is None:
-        ax = plt.gca()
-    for idx, wf in enumerate(set_pmt.iter_waveforms()):
-        ax.clear()
-        print(f"Waveform {idx+1}/{len(set_pmt.filenames)}")
-        plot_cut_results(wf, set_pmt, logs=logs, 
-                         width_s2=width_s2, ax=ax)
-        plt.draw()
-        time.sleep(delay)
-        plt.pause(0.01)  # allow GUI to update
 
 
 # --------------------------------
@@ -1019,7 +922,7 @@ def catch_plot_errors(ax: plt.Axes, title: str):
 def build_fig_grid(run: Run, title: str = None) -> tuple[plt.Figure, list[tuple[SetPmt, plt.Axes]]]:
     """Creates a Matplotlib grid and returns the Figure + paired iterable cells."""
     rows, cols = _get_grid_dims(len(run.sets))
-    fig, axes = plt.subplots(rows, cols, figsize=(cols * 6, rows * 4))
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 6, rows * 4), layout="constrained")
     axes = np.atleast_2d(axes)
     
     if title: fig.suptitle(title, fontsize=16)
@@ -1032,8 +935,7 @@ def build_fig_grid(run: Run, title: str = None) -> tuple[plt.Figure, list[tuple[
     for idx in range(len(run.sets), rows * cols):
         r, c = divmod(idx, cols)
         axes[r, c].axis('off')
-        
-    fig.tight_layout(rect=[0, 0, 1, 0.96] if title else [0, 0, 1, 1])
+
     return fig, grid_cells
 
 def plot_run_timing_vs_field(run: Run) -> plt.Figure:
@@ -1071,29 +973,26 @@ def plot_run_timing_vs_field(run: Run) -> plt.Figure:
 
 def plot_s2areas_summary(ax: plt.Axes, 
                     set_name: str, 
-                    s2_areas: Optional[S2Areas] = None, 
-                    fit_model: Optional[Any] = None, 
-                    fit_mean: Optional[float] = None) -> None:
+                    s2_areas: S2Areas,
+                    bin_cuts: tuple = (0, 15),
+                    fit_model: Optional[Any] = None,
+                    lower_bound: Optional[float] = None,
+                    color: str = 'orange') -> None:
     """Plot S2 area histogram with optional fit overlay. Handles missing data gracefully."""
     
-    if s2_areas is None or len(s2_areas.areas) == 0:
-        ax.text(0.5, 0.5, "No S2 Area Data", ha='center', va='center')
-        ax.set_title(set_name)
-        return
-
-    hist_range = (0, 10)
-    filtered_s2 = s2_areas.filter_by_range(*hist_range)
+    # 1. Plot raw data
+    ax.hist(s2_areas.areas, bins=100, range=bin_cuts, alpha=0.5, color=color, label='Data')
     
-    # 1. Plot raw data (Guaranteed to execute if data exists)
-    ax.hist(filtered_s2.areas, bins=100, range=hist_range, alpha=0.5, color='orange', label='Data')
-    
-    # 2. Overlay fit (Safely skips if the fit model wasn't provided)
-    if fit_model is not None and fit_mean is not None:
-        x_smooth = np.linspace(hist_range[0], hist_range[1], 500)
+    # 2. Overlay fit
+    if fit_model is not None:
+        x_smooth = np.linspace(bin_cuts[0], bin_cuts[1], 500)
         y_fit = fit_model.eval(x=x_smooth)
+        fit_mean = fit_model.params['sig_x0'].value
         ax.plot(x_smooth, y_fit, 'g-', lw=2, label=f"Fit (μ={fit_mean:.2f})")
         ax.axvline(fit_mean, color='green', linestyle=':', alpha=0.7)
-
+        ax.set(ylim=(0, np.max(fit_model.best_fit)*1.75))
+    if lower_bound is not None:
+        ax.axvline(lower_bound, color='red', linestyle='--', alpha=0.7, label=f"Lower Fit Bound: {lower_bound:.2f}")
     # 3. Formatting
     ax.set(title=set_name, xlabel='S2 Area (mV·µs)', ylabel='Counts')
     ax.legend(fontsize=8)
@@ -1112,10 +1011,8 @@ def plot_run_s2_vs_field(run: Run) -> plt.Figure:
         's2_ci95': s.area_s2_ci95
     } for s in valid_sets])
     
-    # Call your existing function
     fig, _ = plot_s2_vs_drift(df, run.run_id)
     return fig
-# In RaTag/plotting.py
 
 def plot_xray_candidate(ax: plt.Axes, 
                         wf: PMTWaveform, 
@@ -1202,34 +1099,6 @@ def plot_waveform_with_cuts(wf: PMTWaveform, set_pmt: SetPmt,
     plt.axvline(s2_window[1], color="r", label="S2 end")
     plt.legend()
 
-def plot_cut_results(wf: PMTWaveform, set_pmt: SetPmt, logs: list[RejectionLog],
-                     width_s2: float, ax=None):
-    if ax is None:
-        fig, ax = plt.subplots()
-
-    # t, V = wf.t, wf.v
-    wf_index = getattr(wf, "index", None)
-    ax.set(title=f"Waveform {wf_index}",
-           xlabel="Time (s)", ylabel="Signal (V)")
-    # ax.plot(t, V, color="0.6")
-    wf.plot()
-    for log in logs:
-        ok, tsel, Vsel = log.cut_fn(wf)
-        color = "g" if ok else "r"
-        ax.plot(tsel, Vsel, color, label=f"{log.cut_name} {'PASS' if ok else 'FAIL'}")
-
-    # markers for S1 / S2
-    t_s1 = set_pmt.t_s1
-    t_drift = set_pmt.time_drift
-    if t_s1 and t_drift:
-        s2_start = t_s1 + t_drift
-        s2_end = s2_start + width_s2
-        ax.axvline(t_s1, color="k", ls="--", label="S1")
-        ax.axvline(s2_start, color="m", ls="--", label="S2 start")
-        ax.axvline(s2_end, color="r", ls="--", label="S2 end")
-
-    ax.legend()
-    return ax
 
 def plot_winS2_wf(wf: PMTWaveform, t_s1: float, time_drift: float, width_s2: float, ts2_tol: float = 0, ax=None):
     """Plot waveform with S1 and S2 window markers.
@@ -1271,3 +1140,314 @@ def plot_winS2_wf(wf: PMTWaveform, t_s1: float, time_drift: float, width_s2: flo
     ax.fill_betweenx(ax.get_ylim(), s2_start, s2_end, color='m', alpha=0.3, label="S2 window")
     ax.legend()
 
+
+# --------------------------------------------------------------------
+# -- Other diagnostic plots: S1 histograms, 2D histograms...
+# --------------------------------------------------------------------
+def plot_s1_vs_s2_2d(path, ax=None):
+    """Plots a 2D histogram of S1 vs S2 areas to visualize the geometric correlation."""
+    arrays = np.load(path)
+    s1_areas = arrays['s1_areas']
+    s2_areas = arrays['s2_areas']
+    
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
+    else:
+        fig = ax.get_figure()
+
+    # We use LogNorm() so the rare tail events aren't visually crushed by the main peak
+    h = ax.hist2d(s1_areas, s2_areas, 
+                  bins=[100, 100], 
+                  range=[[0, 0.15], [0, 100]], # Adjust S2 upper limit if needed
+                  cmap='viridis', 
+                  norm=LogNorm())
+    
+    # Add the colorbar attached to this specific axis
+    cbar = fig.colorbar(h[3], ax=ax)
+    cbar.set_label('Counts (Log Scale)', rotation=270, labelpad=15)
+    
+    set_name = path.stem.replace('_s2_areas_noS1_cuts', '')
+    ax.set(xlabel='S1 Area [mV·μs]', 
+           ylabel='S2 Area [mV·μs]', 
+           title=f'S1 vs S2 - {set_name}')
+    ax.grid(alpha=0.2)
+    
+
+def plot_s1_area_distribution(path, ax=None):
+    s1_areas = np.load(path)['s1_areas']
+    
+    # Dynamically find the cut
+    from RaTag.el_tpc.fit_s2_area import optimize_s1_cut
+    optimal_cut, model_data = optimize_s1_cut(s1_areas)
+    
+    if ax is None:
+        ax = plt.gca()
+        
+    # CRITICAL: density=True so the GMM curves scale correctly to the histogram
+    ax.hist(s1_areas, bins=100, range=(0, 0.15), density=True, alpha=0.5, color='tab:blue')
+    
+    # Overlay the GMM curves if the fit was successful
+    if model_data is not None:
+        gmm = model_data['gmm']
+        weights = gmm.weights_
+        covs = gmm.covariances_.flatten()
+        means = gmm.means_.flatten()
+        x = model_data['x_smooth']
+        
+        def gaussian(x_val, mu, sig2, w):
+            return w * (1.0 / np.sqrt(2 * np.pi * sig2)) * np.exp(-0.5 * ((x_val - mu)**2 / sig2))
+            
+        curve_web = gaussian(x, means[model_data['web_idx']], covs[model_data['web_idx']], weights[model_data['web_idx']])
+        curve_hole = gaussian(x, means[model_data['hole_idx']], covs[model_data['hole_idx']], weights[model_data['hole_idx']])
+        
+        ax.plot(x, curve_web, 'b-', lw=1.5, label='Modeled "Web"')
+        ax.plot(x, curve_hole, 'orange', lw=1.5, label='Modeled "Hole"')
+        ax.plot(x, curve_web + curve_hole, 'k--', lw=1)
+
+    ax.axvline(x=optimal_cut, color='r', linestyle='--', label=f'Bayesian Cut = {optimal_cut:.3f}')
+    
+    # Extract set name from filename for the title
+    set_name = path.stem.replace('_s2_areas', '')
+    ax.set(xlabel='S1 Area [mV·μs]', ylabel='Density', title=f'S1 areas - {set_name}')
+    ax.legend(fontsize=8)
+
+def plot_s2_area_distribution(path, ax=None):
+    arrays = np.load(path)
+    s1_areas = arrays['s1_areas']
+    s2_areas = arrays['s2_areas']
+    
+    # Dynamically find the cut to slice the S2 data
+    from RaTag.el_tpc.fit_s2_area import optimize_s1_cut
+    optimal_cut, _ = optimize_s1_cut(s1_areas)
+    
+    mask = s1_areas <= optimal_cut
+    s2_areas_web = s2_areas[mask]
+    s2_areas_tail = s2_areas[~mask]
+    uids_web = arrays['uids'][mask]
+    uids_tail = arrays['uids'][~mask]
+    
+
+
+    if ax is None:
+        ax = plt.gca()
+        
+    ax.hist(s2_areas_web, bins=100, range=(0, 52), alpha=0.5, density=True, label=f'S2 (Web) N={len(s2_areas_web)}')
+    ax.hist(s2_areas_tail, bins=100, range=(0, 52), alpha=0.5, density=True, label=f'S2 (Hole) N={len(s2_areas_tail)}')
+    
+    set_name = path.stem.replace('_s2_areas', '')
+    ax.set(xlabel='Peak Area [mV·μs]', ylabel='Normalized Density', title=f'S2 areas - {set_name}')
+    ax.legend(fontsize=8)
+    s2_areas_web = S2Areas(areas=s2_areas_web, uids=uids_web)
+    s2_areas_tail = S2Areas(areas=s2_areas_tail, uids=uids_tail)
+    return s2_areas_web, s2_areas_tail
+
+def plot_set_s1_vs_drift_time(set_pmt, ax=None):
+    """Loads and merges data for a single set, and plots on the given axis."""
+    # 1. Load both sets of arrays
+    timing_arrays = load_npz_arrays(set_pmt, 'timing')
+    area_arrays = load_npz_arrays(set_pmt, 's2_areas')
+    
+    if not timing_arrays or not area_arrays:
+        return False
+        
+    uids_t = timing_arrays.get('uids', np.array([]))
+    t_s1 = timing_arrays.get('t_s1', np.array([]))
+    t_s2_start = timing_arrays.get('t_s2_start', np.array([]))
+    
+    uids_a = area_arrays.get('uids', np.array([]))
+    s1_areas = area_arrays.get('s1_areas', np.array([]))
+    
+    if len(uids_t) == 0 or len(uids_a) == 0 or len(t_s1) == 0:
+        return False
+
+    # 2. Safely merge by UID to guarantee perfect alignment
+    df_time = pd.DataFrame({'uid': uids_t, 't_s1': t_s1, 't_s2_start': t_s2_start}).drop_duplicates(subset=['uid'])
+    df_area = pd.DataFrame({'uid': uids_a, 's1_area': s1_areas}).drop_duplicates(subset=['uid'])
+    
+    df_merged = pd.merge(df_time, df_area, on='uid', how='inner')
+    if df_merged.empty:
+        return False
+        
+    # 3. Calculate physical drift time
+    drift_times = df_merged['t_s2_start'] - df_merged['t_s1']
+    
+    # Filter out unphysical negative drift times
+    valid_mask = drift_times > 0.0
+    dt_flat = drift_times[valid_mask].values
+    s1_flat = df_merged['s1_area'][valid_mask].values
+    
+    if len(dt_flat) == 0:
+        return False
+
+    # 4. Plotting
+    if ax is None:
+        ax = plt.gca()
+
+    # Dynamically frame the X-axis for this specific set
+    max_drift = max(dt_flat.max() * 1.05, 1.0) 
+    
+    h = ax.hist2d(
+        x=dt_flat, 
+        y=s1_flat, 
+        bins=[100, 100],
+        range=[[0, max_drift], [0, 0.15]],
+        cmap='viridis', 
+        norm=LogNorm()
+    )
+    
+    # Add a mini colorbar to each subplot
+    cbar = plt.colorbar(h[3], ax=ax)
+    cbar.ax.tick_params(labelsize=8)
+    
+    ax.set_title(set_pmt.source_dir.name, fontsize=10)
+    ax.set_xlabel("Drift Time [µs]", fontsize=8)
+    ax.set_ylabel("S1 Area [mV·μs]", fontsize=8)
+    ax.tick_params(axis='both', which='major', labelsize=8)
+    ax.grid(alpha=0.2)
+    
+    return True
+# --------------------------------------------
+# -- S1/S2 searching diagnostic plots
+# --------------------------------------------
+
+def plot_full_coincidence_diagnostic(wf, config, frame_idx=0, ax=None):
+    """
+    Step-by-step diagnostic of the exact coincidence math.
+    Updated for the 'First-Peak' (Chronological) S1 finding logic and Late S2 cuts.
+    """
+    from RaTag.waveform.preprocessing import subtract_pedestal, moving_average, threshold_clip
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(14, 8))
+        
+    # --- 1. Preprocessing ---
+    wf_single = replace(wf, v=wf.v[[frame_idx]] if wf.ff else wf.v, nframes=1)
+    wf_sub = subtract_pedestal(wf_single, config.n_pedestal)
+    
+    t = wf_single.t
+    v_raw = wf_single.v[0] if wf_single.ff else wf_single.v
+    v_sub = wf_sub.v[0] if wf_single.ff else wf_sub.v
+    dt = t[1] - t[0]
+    
+    # --- 2. EXACT find_s1 Logic (First-Peak) ---
+    s1_mask = (t >= config.s1_t_min) & (t <= config.s1_t_max)
+    t_s1_sliced = t[s1_mask]
+    v_s1_sliced = v_sub[s1_mask]
+    
+    # Chronological First-Peak Logic
+    over_thresh = v_s1_sliced > config.s1_v_min
+    if np.any(over_thresh):
+        peak_idx = np.argmax(over_thresh)
+        anchor_type = "First Crossing"
+    else:
+        # If nothing crosses the threshold, argmax defaults to 0.
+        # We plot the global max instead to visually show the tallest (failing) peak.
+        peak_idx = np.argmax(v_s1_sliced)
+        anchor_type = "Global Max (Failing)"
+        
+    s1_time = t_s1_sliced[peak_idx]
+    s1_height = v_s1_sliced[peak_idx]
+    
+    s1_int_mask = (t >= s1_time - 0.05) & (t <= s1_time + 0.05)
+    s1_area = np.sum(v_sub * s1_int_mask) * dt
+    
+    pass_s1_height = (s1_height >= config.s1_v_min) and (s1_height <= config.s1_v_max)
+    pass_s1_area = (s1_area >= 0.0) and (s1_area <= config.s1_max_area)
+    
+    # If we didn't cross the threshold, force a fail even if the area is technically valid
+    s1_valid = pass_s1_height and pass_s1_area and np.any(over_thresh)
+    
+    # --- 3. EXACT find_s2 Logic ---
+    t_min_s2 = -2.5
+    wf_smooth = moving_average(wf_single, window=config.s2_window_ma)
+    wf_clip = threshold_clip(wf_smooth, threshold=config.bs_threshold)
+    v_clip = wf_clip.v[0] if wf_clip.ff else wf_clip.v
+    
+    s2_mask = t > t_min_s2
+    t_s2_sliced = t[s2_mask]
+    v_s2_sliced = v_clip[s2_mask]
+    
+    s2_peak_idx = np.argmax(v_s2_sliced)
+    s2_time = t_s2_sliced[s2_peak_idx]
+    s2_height = v_s2_sliced[s2_peak_idx]
+    
+    pass_s2_height = s2_height > config.s2_threshold
+    
+    # Find S2 Boundaries
+    dyn_thresh = max(s2_height * config.s2_fraction, config.s2_threshold)
+    below_thresh = v_s2_sliced <= dyn_thresh
+    
+    left_mask = np.arange(len(v_s2_sliced)) <= s2_peak_idx
+    valid_below_left = below_thresh & left_mask
+    start_idx = len(v_s2_sliced) - 1 - np.argmax(np.fliplr([valid_below_left])[0]) if np.any(valid_below_left) else 0
+    s2_start = t_s2_sliced[min(start_idx + 1, len(v_s2_sliced) - 1)]
+    
+    right_mask = np.arange(len(v_s2_sliced)) >= s2_peak_idx
+    valid_below_right = below_thresh & right_mask
+    end_idx = np.argmax(valid_below_right) if np.any(valid_below_right) else len(v_s2_sliced) - 1
+    s2_end = t_s2_sliced[max(end_idx - 1, 0)]
+    
+    s2_width = s2_end - s2_start
+    s2_int_mask = (t >= s2_time - 1.5) & (t <= s2_time + 1.5)
+    s2_area = np.sum(v_sub * s2_int_mask) * dt
+    
+    # Check for your new s2_start_max cut (Defaults to 0.5 if not in config)
+    s2_start_max = getattr(config, 's2_start_max', 0.5) 
+    pass_s2_start_late = s2_start <= s2_start_max
+    
+    pass_s2_width = s2_width >= config.s2_min_width
+    pass_s2_area_min = s2_area >= config.s2_min_area
+    pass_s2_area_max = s2_area <= config.s2_max_area
+    s2_valid = pass_s2_height and pass_s2_width and pass_s2_area_min and pass_s2_area_max and (s2_peak_idx > 0) and pass_s2_start_late
+    
+    # --- 4. Plotting ---
+    ax.plot(t, v_raw, color='gray', alpha=0.3, label='Raw Waveform')
+    ax.plot(t, v_sub, color='blue', lw=1.2, label='Pedestal Subtracted')
+    ax.plot(t, v_clip, color='purple', lw=1.0, alpha=0.5, label='S2 Smoothed/Clipped')
+    ax.axhline(0, color='black', lw=0.8, linestyle='-')
+    
+    # Visual Threshold line for First-Peak finding
+    ax.axhline(config.s1_v_min, color='orange', lw=1.5, linestyle=':', label=f'S1 Threshold ({config.s1_v_min} mV)')
+    
+    # S1 Visuals
+    ax.axvspan(config.s1_t_min, config.s1_t_max, color='yellow', alpha=0.1, label='S1 Search Window')
+    ax.axvspan(s1_time - 0.05, s1_time + 0.05, color='green', alpha=0.2, label='S1 Integration')
+    marker_color = 'r*' if s1_valid else 'kx'
+    ax.plot(s1_time, s1_height, marker_color, markersize=10, label=f'S1 Anchor ({anchor_type})')
+    
+    # S2 Visuals
+    ax.axvspan(s2_start, s2_end, color='red', alpha=0.1, label='Found S2 Boundaries')
+    if not pass_s2_start_late:
+        ax.axvline(s2_start_max, color='red', linestyle='--', label=f's2_start_max Cut ({s2_start_max} µs)')
+    
+    # --- 5. Diagnostic Text Box ---
+    s1_status = "PASS" if s1_valid else "FAIL"
+    s2_status = "PASS" if s2_valid else "FAIL"
+    coinc_status = "ACCEPTED" if (s1_valid and s2_valid) else "REJECTED"
+    
+    text_str = (
+        f"Frame {frame_idx} Diagnostics | Final Status: {coinc_status}\n"
+        f"----------------------------------------------------\n"
+        f"S1 CUTS (Status: {s1_status})\n"
+        f" Anchor: {anchor_type} @ {s1_time:.3f} µs\n"
+        f" Height: {s1_height:.2f} mV\t[{config.s1_v_min} - {config.s1_v_max}]\t-> {'PASS' if pass_s1_height else 'FAIL'}\n"
+        f" Area:   {s1_area:.4f} mV*µs\t[0.0 - {config.s1_max_area}]\t-> {'PASS' if pass_s1_area else 'FAIL'}\n"
+        f"----------------------------------------------------\n"
+        f"S2 CUTS (Status: {s2_status})\n"
+        f" Height: {s2_height:.2f} mV\t[> {config.s2_threshold}]\t\t-> {'PASS' if pass_s2_height else 'FAIL'}\n"
+        f" Width:  {s2_width:.2f} µs\t[> {config.s2_min_width}]\t\t-> {'PASS' if pass_s2_width else 'FAIL'}\n"
+        f" Area:   {s2_area:.1f} mV*µs\t[{config.s2_min_area} - {config.s2_max_area}]\t-> {'PASS' if (pass_s2_area_min and pass_s2_area_max) else 'FAIL'}\n"
+        f" Start:  {s2_start:.2f} µs\t[<= {s2_start_max}]\t\t-> {'PASS' if pass_s2_start_late else 'FAIL (Late S2)'}\n"
+        f" Index0 Trap Avoided: \t\t\t-> {'PASS' if s2_peak_idx > 0 else 'FAIL (Tail Slice)'}"
+    )
+    
+    props = dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='black')
+    ax.text(0.02, 0.95, text_str, transform=ax.transAxes, fontsize=10,
+            verticalalignment='top', bbox=props, family='monospace')
+            
+    ax.set_ylim(-5.0, min(max(s1_height, s2_height) * 1.2, 50.0))
+    ax.set_xlabel('Time (µs)')
+    ax.set_ylabel('Signal (mV)')
+    ax.legend(loc='upper right', fontsize=8)
+    
+    if ax is None:
+        plt.show()
