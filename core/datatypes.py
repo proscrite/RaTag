@@ -4,6 +4,7 @@ from pathlib import Path
 from functools import lru_cache
 
 from typing import Callable, Optional, Dict, Any, List, TYPE_CHECKING
+
 import numpy as np
 
 import matplotlib.pyplot as plt     # type: ignore[import]
@@ -99,7 +100,9 @@ class SetPmt:
     source_dir: Path
     filenames: list[str]     # lazy list of filenames (not waveforms!)
     multiiso: bool = False   # Multi-isotope set
+    target_isotope: Optional[str] = None  # e.g., "Th228"
 
+    
     # --- FastFrame properties ---
     ff: bool = False                 # Whether this set uses FastFrame files
     nframes: int = 1                 # Frames per file (1 for single-frame, typically 49 for FastFrame)
@@ -129,12 +132,15 @@ class SetPmt:
     t_s2_end: Optional[float] = None
     t_s2_end_std: Optional[float] = None
 
+    filtered_drift_time: Optional[bool] = None
+
     # --- Integration & Fit Metadata ---
     n_areas_recoil: Optional[int] = None
     area_s2_mean: Optional[float] = None
     area_s2_sigma: Optional[float] = None
     area_s2_ci95: Optional[float] = None
     area_s2_fit_success: Optional[bool] = None
+    s2_background_bound: Optional[float] = None
 
     # --- Standalone Analysis Metadata ---
     # xray_metadata: Optional[XRayMetadata] = None
@@ -143,6 +149,14 @@ class SetPmt:
         """Return number of files."""
         return len(self.filenames)
     
+    @property
+    def name(self) -> str:
+        """Dynamically append isotope name if this is a spawned subset."""
+        base = self.source_dir.name
+        if self.multiiso and self.target_isotope:
+            return f"{base}_{self.target_isotope}"
+        return base
+
     @property
     def n_waveforms(self) -> int:
         """Total number of waveforms (frames) in the set."""
@@ -165,6 +179,68 @@ class SetPmt:
         return self.__str__()
 
 
+@dataclass
+class SetAlpha:
+    """Data class for alpha detector sets."""
+    source_dir: Path
+    filenames: list[str]
+    
+    multiiso: bool = False   # Multi-isotope set
+    target_isotope: Optional[str] = None  # e.g., "Th228"
+
+    # --- FastFrame properties ---
+    ff: bool = False                 # Whether this set uses FastFrame files
+    nframes: int = 1                 # Frames per file (1 for single-frame, typically 49 for FastFrame)
+
+    # --- Physics context (not mandatory, for logging) ---
+    gate: Optional[int] = None
+    anode: Optional[int] = None
+    sampling_rate: Optional[float] = None
+    
+    # Alpha-specific artifacts
+    n_alpha_energies: Optional[int] = None
+
+    calib_a: Optional[float] = None             # Linear calibration slope (keV/LSB)
+    calib_b: Optional[float] = None
+    calib_c: Optional[float] = None          # For quadratic calibration
+    calib_order: Optional[int] = None           # 1 for linear, 2 for quadratic, etc.
+
+    mean_energy_resolution: Optional[float] = None
+    isotope_ranges_V: Optional[Dict] = None     # SCA scale e.g. {"Th228": (V_min, V_max), "Ra224": (V_min, V_max), ...}
+    isotope_ranges_E: Optional[Dict] = None     # Energy scale e.g. {"Th228": (E_min, E_max), "Ra224": (E_min, E_max), ...}
+    
+    @property
+    def name(self) -> str:
+        """Dynamically append isotope name if this is a spawned subset."""
+        base = self.source_dir.name
+        if self.multiiso and self.target_isotope:
+            return f"{base}_{self.target_isotope}"
+        return base
+
+    @property
+    def n_waveforms(self) -> int:
+        """Total number of waveforms (frames) in the set."""
+        return len(self.filenames) * self.nframes
+    
+    @property   
+    def n_files(self) -> int:
+        """Number of files (alias for len())."""
+        return len(self.filenames)
+
+    def __len__(self):
+        """Return number of files."""
+        return self.n_files
+    
+    def __str__(self) -> str:
+        ff_str = f"FastFrame({self.nframes} frames/file)" if self.ff else "single-frame"
+        
+        overrides = {
+            'filenames': f"<{self.n_files} files, {self.n_waveforms} waveforms, {ff_str}>"
+        }
+        return format_dataclass_state(self, overrides=overrides)
+    def __repr__(self) -> str:
+        return self.__str__()
+
 # -------------------------------
 # Dataclasses for runs
 # -------------------------------
@@ -173,21 +249,28 @@ class SetPmt:
 class Run:
     root_directory: Path
     run_id: str
-    el_field: float
-    target_isotope: Optional[str] = "Th228"
+    el_field: float   # V/cm                    # Essential for basic organization, so we make it mandatory at the Run level
+
+    multiiso: bool = False                      # Whether this run contains multi-isotope sets (detected during bootstrapping)
+    target_isotope: Optional[str] = "Th228"     # Optional (can be None for Multiiso), but useful for organization and logging (e.g., "Th228", "Ra224", "Rn220")
+
+    # -- Experimental conditions (for logging) --
     pressure: float = 2.0 # bar
     temperature: float = 293.0 # K
     sampling_rate: float = 1e9 
     el_gap: float = 0.8 # cm
     drift_gap: float = 1.4 # cm
+
+    # -- Populated in bootstrapping --
     sets: List[SetPmt] = field(default_factory=list)
+    alpha_sets: List[SetAlpha] = field(default_factory=list)
 
     # Orchestrate cut params here
     gas_density: Optional[float] = None  # cm^-3, to be filled in
     width_s2: float = 1.1 # in µs
     t_s1: float = 0.0  # can be refined by batch analysis
 
-    # Recombination constants
+    # Recombination constants (to be deprecated)
     recoil_energy: float = 96.8         # keV (Th228 recoil)
     W_value: float = 22.0               # eV per e-ion pair (gas Xe @ 2 bar)
     E_gamma_xray: float = 12.3e3        # eV X-ray energy (for Th228 decay)
@@ -197,9 +280,14 @@ class Run:
     alpha_calibration: Optional[dict] = None  # Contains: fit_results, calibration_linear, calibration_quad, spectrum, spectrum_calibrated
     isotope_ranges: Optional[dict] = None     # Contains: {isotope: (E_min, E_max)}
 
+    def __len__(self):
+        """Return number of PMT sets."""
+        return len(self.sets)
+    
     def __str__(self):
         overrides = {
-            'sets': f"<{len(self.sets)} SetPmt objects>"
+            'sets': f"<{len(self.sets)} SetPmt objects>",
+            'alpha_sets': f"<{len(self.alpha_sets)} SetAlpha objects>"
         }
         return format_dataclass_state(self, overrides=overrides)
     def __repr__(self):
@@ -210,7 +298,7 @@ class Run:
 # -------------------------------
 @dataclass(frozen=True)
 class S2Areas:
-    """Transient payload representing dense, per-frame integration data."""
+    """Transient arrays representing dense, per-frame integration data."""
     uids: np.ndarray
     areas: np.ndarray
 
@@ -228,23 +316,6 @@ class S2Areas:
         return float(np.mean(self.areas)) if len(self.areas) > 0 else 0.0
 
 
-# -------------------------------
-# X-ray event identification
-# -------------------------------
-
-@dataclass
-class XRayEvent:
-    wf_id: str
-    accepted: bool
-    reason: str
-    area: float = None
-
-@dataclass
-class XRayResults:
-    set_id: Path
-    events: list[XRayEvent]
-    params: dict[str, Any]
-
 
 @dataclass
 class CalibrationResults:
@@ -254,104 +325,6 @@ class CalibrationResults:
     N_e_exp: float
     g_S2: float
     # per_set: dict[str, dict[str, float]]  # e.g. {set_id: {"A_ion": ..., "N_e_meas": ..., "r": ..., "E_d": ...}}
-
-
-
-# -------------------------------
-# Deprecated: Cut results
-# -------------------------------
-
-@dataclass(frozen=True)
-class RejectionLog:
-    cut_name: str
-    cut_fn: Callable[[Any], tuple[bool, np.ndarray, np.ndarray]]  # wf -> (bool, t_pass, V_pass)
-    passed: list[int]
-    rejected: list[int]
-    reason: str = ""
-
-# -------------------------------
-# Deprecating: Frame proxy for energy mapping
-# -------------------------------
-
-@dataclass
-class FrameProxy:
-    file_path: Path 
-    file_seq: int
-    frame_idx: int
-    chunk_dir: Optional[str] = None
-    fmt: str = '8b'   # format of maps
-    scale: float = 0.1
-
-    # small cache of loaded waveform per-file handled by module-level loader
-    def uid(self) -> int:
-        return int(self.file_seq) * 64 + int(self.frame_idx)
-
-    @property
-    def energy(self) -> float:
-        """Get energy from energy_map (cached by energy_map module)."""
-        from RaTag.alphas.energy_map_reader import get_energy_for_frame
-        if self.chunk_dir is None:
-            raise RuntimeError("chunk_dir not provided to FrameProxy")
-        e = get_energy_for_frame(self.chunk_dir, self.file_seq, self.frame_idx, fmt=self.fmt, scale=self.scale)
-        return e
-
-    @staticmethod
-    def _check_channel(file_path: str, which: str = 'pmt'):
-        if which == 'pmt':
-            # return 'Ch1' in file_path
-            return 'Wfm' in file_path or 'Ch1' in file_path
-        elif which == 'alpha':
-            return 'Ch4' in file_path
-        else:
-            raise TypeError('Waveform type error')
-        
-    @staticmethod
-    def _swap_ch_filepath(file_path: str)->Path:
-        if 'Ch1' in file_path:
-            return Path(file_path.replace('Ch1', 'Ch4'))
-        elif 'Ch4' in file_path:
-            return Path(file_path.replace('Ch4', 'Ch1'))
-
-    # LRU loader for waveform arrays (per file path)
-    @staticmethod
-    @lru_cache(maxsize=1)
-    def _load_file_waveforms_cached(file_path: str, which: str = 'pmt'):
-        """
-        Should return numpy array shape (n_frames, n_samples) for channel4 or whatever.
-        """
-        from RaTag.core.dataIO import load_alpha, load_wfm
-        if which == 'alpha':
-            wf_alpha = load_alpha(file_path)
-            return wf_alpha
-        elif which == 'pmt':
-            wf_pmt = load_wfm(file_path)
-            return wf_pmt
-
-    def load_alpha_frame(self) -> Waveform:
-        """Return waveform array for this frame (1D)."""
-        from RaTag.core.dataIO import extract_single_frame
-
-        if FrameProxy._check_channel(str(self.file_path), which='alpha'):
-            load_path = self.file_path
-        else:
-            load_path = FrameProxy._swap_ch_filepath(str(self.file_path))
-        
-        wf_alpha = FrameProxy._load_file_waveforms_cached(load_path, which='alpha')
-        frame = extract_single_frame(wf_alpha, self.frame_idx)        # guard in case file has fewer frames done internally
-        return frame
-
-    def load_pmt_frame(self) -> Waveform:
-        """Return waveform array for this frame (1D)."""
-        from RaTag.core.dataIO import extract_single_frame
-        if FrameProxy._check_channel(str(self.file_path), which='pmt'):
-            load_path = self.file_path
-        else:
-            load_path = FrameProxy._swap_ch_filepath(str(self.file_path))
-
-        wf_pmt = FrameProxy._load_file_waveforms_cached(load_path, which='pmt')
-        frame = extract_single_frame(wf_pmt, self.frame_idx)        # guard in case file has fewer frames done internally
-        return frame
-
 
 # -------------------------------
 # --- Run & set print formatting --#

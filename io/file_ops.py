@@ -4,29 +4,42 @@ import json
 import re
 import numpy as np
 from pathlib import Path
-from typing import Dict, Iterator, List, Tuple, Optional, Union
+from typing import Iterator, List, Tuple, Optional, TypeVar, Union
 from dataclasses import asdict, replace, fields
-from functools import lru_cache
 from itertools import islice
 from lmfit.model import ModelResult
 PathLike = Union[str, Path]
 
-from RaTag.core.dataIO import load_wfm
+from RaTag.core.decorators import track_iterator_progress
+from RaTag.core.dataIO import load_wfm, load_alpha
 from RaTag.core.paths import get_output_root
-from RaTag.core.datatypes import PMTWaveform, Waveform, SetPmt, Run, S2Areas
+from RaTag.core.datatypes import PMTWaveform, SetAlpha, Waveform, SiliconWaveform, SetPmt, SetAlpha, Run, S2Areas
+SetT = TypeVar("SetT", SetPmt, SetAlpha)
 
 # --- Lazy loader ---
-def iter_waveforms(set_pmt: SetPmt, max_files: int = None) -> Iterator[PMTWaveform]:
+@track_iterator_progress
+def iter_waveforms(set_pmt: SetPmt, max_files: Optional[int] = None,
+                   show_progress: bool = True ) -> Iterator[PMTWaveform]:
     """Yield PMTWaveform objects lazily, one by one."""
     
     if max_files is not None:
-            waveforms = islice(set_pmt.filenames, max_files)
+        waveforms = islice(set_pmt.filenames, max_files)
     else:
         waveforms = set_pmt.filenames
 
     for fn in waveforms:
         yield load_wfm(Path(set_pmt.source_dir) / Path(fn))
 
+@track_iterator_progress
+def iter_alpha_waveforms(set_alpha: SetAlpha, max_files: Optional[int] = None,
+                         show_progress: bool = True) -> Iterator[SiliconWaveform]:
+    """Yields parsed SiliconWaveforms for the alpha detector channel."""
+    if max_files:
+        files_to_process = set_alpha.filenames[:max_files] 
+    else:
+        files_to_process = set_alpha.filenames
+    for fn in files_to_process:
+        yield load_alpha(set_alpha.source_dir / fn)
 
 # --- Extract single waveform from FastFrame ---
 def extract_single_frame(wf: Waveform, frame_idx: int) -> Waveform:
@@ -67,34 +80,44 @@ def load_waveform_by_uid(set_pmt: SetPmt, uid: int) -> Tuple[PMTWaveform, Option
     wf = load_wfm(set_pmt.source_dir / target_fn)
     return wf, frame_idx if set_pmt.ff else None
 
-def iter_frames(set_pmt: SetPmt, max_files: int = None) -> Iterator[Waveform]:
+def iter_frames(set_pmt: SetPmt, max_frames: Optional[int] = None, start_frame: int = 0) -> Iterator[Waveform]:
     """
-    Iterate over individual frames from a set, handling both FastFrame and single-frame.
-    
-    This is the canonical way to iterate over frames in the codebase.
-    All analysis functions should use this to ensure consistency.
+    Lazily yields individual frames from a set.
+    Handles FastFrame by extracting and yielding each frame sequentially as a standalone object.
     
     Args:
         set_pmt: SetPmt to iterate over
-        max_files: Optional limit on number of files to process
-        
-    Yields:
-        Individual PMTWaveform objects (with ff=False)
+        max_frames: Maximum number of frames to yield
+        start_frame: Number of absolute frames to skip before yielding
     """
-    waveforms = iter_waveforms(set_pmt)
+    frames_yielded = 0
+    frames_skipped = 0
     
-    if max_files is not None:
-        waveforms = islice(waveforms, max_files)
-    
-    for file_seq, wf in enumerate(waveforms):
-        wf.file_seq = file_seq  # annotate with file sequence for UID calculation
+    for file_seq, fn in enumerate(set_pmt.filenames):
+        wf = load_wfm(set_pmt.source_dir / fn)
+        wf.file_seq = file_seq 
+        
         if wf.ff and wf.nframes > 1:
-            # FastFrame: yield each frame individually
             for frame_idx in range(wf.nframes):
+                if frames_skipped < start_frame:
+                    frames_skipped += 1
+                    continue
+                    
+                if max_frames is not None and frames_yielded >= max_frames:
+                    return
+                    
                 yield extract_single_frame(wf, frame_idx)
+                frames_yielded += 1
         else:
-            # Single frame: yield as-is
+            if frames_skipped < start_frame:
+                frames_skipped += 1
+                continue
+                
+            if max_frames is not None and frames_yielded >= max_frames:
+                return
+                
             yield wf
+            frames_yielded += 1
 
 def load_yaml(config_path: Path) -> dict:
     """Loads a YAML configuration file."""
@@ -185,11 +208,11 @@ def find_set_files(set_dir: Path, nfiles: Optional[int] = None) -> List[str]:
     print(f"  Found {len(filenames)} .wfm files in {set_dir.name}")
     return filenames
 
-def detect_multiiso_set(filenames: List[str]) -> bool:
+def detect_multiiso_set(filenames: List[str], pattern: str = '_Ch3.wfm') -> bool:
     """
-    Detects if the set is a multi-isotope set based on presence of Ch1 files.
+    Detects if the set is a multi-isotope set based on presence of Ch3 files.
     """
-    return any(f.endswith("_Ch1.wfm") for f in filenames)
+    return any(f.endswith(pattern) for f in filenames)
 
 def detect_fastframe_properties(set_dir: Path, filenames: List[str]) -> Tuple[bool, int]:
     """
@@ -206,26 +229,32 @@ def detect_fastframe_properties(set_dir: Path, filenames: List[str]) -> Tuple[bo
 # ===========================================================================
 
 
-def _get_cache_path(set_pmt: SetPmt) -> Path:
+def _get_cache_path(set_obj: Union[SetPmt, SetAlpha]) -> Path:
     """Helper to centralize where the JSON lives."""
-    metadata_dir = get_output_root(set_pmt.source_dir.parent) / "set_summaries"
+    metadata_dir = get_output_root(set_obj.source_dir.parent) / "set_summaries"
     metadata_dir.mkdir(parents=True, exist_ok=True)
-    return metadata_dir / f"{set_pmt.source_dir.name}_metadata.json"
+
+    # Route to different files based on the class of the object
+    if isinstance(set_obj, SetAlpha):
+        suffix = "_alphas_metadata.json"
+    else:
+        suffix = "_metadata.json"
+    return metadata_dir / f"{set_obj.source_dir.name}{suffix}"
 
 
-def save_cache(set_pmt: SetPmt) -> None:
+def save_cache(set_obj: Union[SetPmt, SetAlpha]) -> None:
     """
-    STRICT OVERWRITE: Saves the current computed state to JSON.
+    Saves the current computed state to JSON.
     Relies on the object being fully hydrated beforehand to prevent data loss.
     """
-    cache_path = _get_cache_path(set_pmt)
+    cache_path = _get_cache_path(set_obj)
     
     # Structural fields that belong to the raw scan, not the compute cache
-    exclude = {"source_dir", "filenames", "multiiso", "ff", "nframes"}
+    exclude = {"source_dir", "filenames", "multiiso"}
     
     # Filter out None values and excluded fields; round only numeric values
     patch_data = {}
-    for k, v in asdict(set_pmt).items():
+    for k, v in asdict(set_obj).items():
         if k in exclude or v is None:
             continue
         # Only round floats/ints; preserve strings and other types as-is
@@ -237,9 +266,9 @@ def save_cache(set_pmt: SetPmt) -> None:
     with open(cache_path, 'w') as f:
         json.dump(patch_data, f, indent=2)
 
-def load_cache(set_pmt: SetPmt) -> Optional[SetPmt]:
+def load_cache(set_obj: Union[SetPmt, SetAlpha]) -> Optional[Union[SetPmt, SetAlpha]]:
     """Loads computed fields from JSON cache if available and valid."""
-    cache_path = _get_cache_path(set_pmt)
+    cache_path = _get_cache_path(set_obj)
     
     if not cache_path.exists():
         return None
@@ -247,56 +276,79 @@ def load_cache(set_pmt: SetPmt) -> Optional[SetPmt]:
     with open(cache_path, 'r') as f:
         data = json.load(f)
         
-    valid_keys = {f.name for f in fields(SetPmt)}
+    valid_keys = {f.name for f in fields(set_obj)}
     
-    # Pure 1:1 mapping. No type coercion, no bloat.
     update_kwargs = {k: v for k, v in data.items() if k in valid_keys}
             
-    return replace(set_pmt, **update_kwargs)
+    return replace(set_obj, **update_kwargs)
 
 
 # ============================================================================
-#  .npz load/save for dense payloads (e.g. areas, timings)
+#  .npz load/save for dense arrays (e.g. areas, timings)
 # ============================================================================
-def save_npz_payload(set_pmt: SetPmt, signal_type: str, payload: dict) -> Path:
-    """Generic helper to save dense .npz payloads."""
-    out_dir = get_output_root(set_pmt.source_dir.parent) / signal_type
-    out_dir.mkdir(parents=True, exist_ok=True)
+def _get_npz_path(set_obj, signal_type: str) -> Path:
+    """Centralized path routing for all NPZ files."""
+    root = get_output_root(set_obj.source_dir.parent)
     
-    data_file = out_dir / f"{set_pmt.source_dir.name}_{signal_type}.npz"
-    np.savez_compressed(data_file, **payload)
+    # Routing for multi-isotope spawned sets (e.g., 'isotope_areas/Th228/')
+    target_isotope = getattr(set_obj, 'target_isotope', None)
+    if target_isotope:
+        return root / "isotope_areas" / target_isotope / f"{set_obj.name}_{signal_type}.npz"
+        
+    return root / signal_type / f"{set_obj.name}_{signal_type}.npz"
+
+def check_npz_exists(set_obj: Union[SetPmt, SetAlpha], signal_type: str) -> bool:
+    """Returns True if the specified NPZ file exists."""
+    return _get_npz_path(set_obj, signal_type).exists()
+
+def save_npz_arrays(set_obj: Union[SetPmt, SetAlpha], signal_type: str, arrays: dict) -> Path:
+    """Generic helper to save dense .npz arrays."""
+    data_file = _get_npz_path(set_obj, signal_type)
+    data_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    np.savez_compressed(data_file, **arrays)
     return data_file
 
-def save_run_npz_payload(run: Run, signal_type: str, payload: dict) -> Path:
-    """Generic helper to save dense .npz payloads at the Run level."""
+def save_run_npz_arrays(run: Run, signal_type: str, arrays: dict) -> Path:
+    """Generic helper to save dense .npz arrays at the Run level."""
     out_dir = get_output_root(run.root_directory) / signal_type
     out_dir.mkdir(parents=True, exist_ok=True)
     
     data_file = out_dir / f"{run.run_id}_{signal_type}.npz"
-    np.savez_compressed(data_file, **payload)
+    np.savez_compressed(data_file, **arrays)
     return data_file
 
 
-def load_npz_payload(set_pmt: SetPmt, signal_type: str) -> dict:
-    """Generic helper to cleanly load dense .npz payloads (e.g., 'timing', 's2_areas')."""
-    data_file = get_output_root(set_pmt.source_dir.parent) / f"{signal_type}" / f"{set_pmt.source_dir.name}_{signal_type}.npz"
+def load_npz_arrays(set_obj: Union[SetPmt, SetAlpha], signal_type: str) -> dict:
+    """Generic helper to cleanly load dense .npz arrays (e.g., 'timing', 's2_areas')."""
+    data_file = _get_npz_path(set_obj, signal_type)
+    print(f"  Loading {signal_type} arrays from: {data_file}")
     return dict(np.load(data_file)) if data_file.exists() else {}
 
 
 def load_s2areas_from_path(file_path: Union[Path, str]) -> S2Areas:
-    """Constructs an S2Areas transient payload from an explicit file path."""
-    payload = dict(np.load(file_path))
+    """Constructs an S2Areas transient arrays from an explicit file path."""
+    arrays = dict(np.load(file_path))
     return S2Areas(
-        uids=payload.get("uids", np.array([])),
-        areas=payload.get("s2_areas", np.array([]))
+        uids=arrays.get("uids", np.array([])),
+        areas=arrays.get("s2_areas", np.array([]))
     )
 
 def load_s2areas(set_pmt: SetPmt) -> S2Areas:
-    """Constructs an S2Areas transient payload from a SetPmt's disk state."""
-    payload = load_npz_payload(set_pmt, 's2_areas')
+    """Constructs an S2Areas transient arrays from a SetPmt's disk state."""
+    arrays = load_npz_arrays(set_pmt, 's2_areas')
     return S2Areas(
-        uids=payload.get("uids", np.array([])),
-        areas=payload.get("s2_areas", np.array([]))
+        uids=arrays.get("uids", np.array([])),
+        areas=arrays.get("s2_areas", np.array([]))
+    )
+
+
+def load_s1areas(set_pmt: SetPmt) -> S2Areas:
+    """Constructs an S2Areas transient arrays from a SetPmt's disk state."""
+    arrays = load_npz_arrays(set_pmt, 's2_areas')
+    return S2Areas(
+        uids=arrays.get("uids", np.array([])),
+        areas=arrays.get("s1_areas", np.array([]))
     )
 # ============================================================================
 #  Plot saving helper (for consistent naming and RAM management)

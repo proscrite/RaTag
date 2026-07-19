@@ -1,6 +1,6 @@
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Optional
 from .datatypes import PMTWaveform
 
 # -------------------------------
@@ -14,7 +14,7 @@ PEAK_TIME_WINDOW = (100, 200)
 # -------------------------------
 # Gas / transport parameters
 # -------------------------------
-# Fit parameters for drift velocity model (Xe @ 2 bar, say)
+# Fit parameters for drift velocity model
 DRIFT_VELOCITY_PARAMS = {
     "p0": 0.92809704,
     "p1": 17.17333489,
@@ -33,6 +33,8 @@ def _default_integrator():
 
 @dataclass(frozen=True)
 class IntegrationConfig:
+    force: bool = False
+    max_frames: Optional[int] = None  # Maximum number of frames to process (None = all)
     bs_threshold: float = 0.8          # (mV)  -- min baseline voltage to consider
     max_area_s2: float = 1e5          # (mV·µs) -- max area for S2 window
     min_s2_sep: float = 1.0           # (µs)   -- min separation before S2
@@ -44,40 +46,52 @@ class IntegrationConfig:
     pre_time: float = 0.5             # µs - Time before S1 for integration window
     post_time: float = 0.5            # µs - Time after S1 for integration
     dt: float = 2e-4                  # (µs) integration timestep: 0.2 ns = 0.0002 µs for 5 GS/s
-    integrator: Callable[[PMTWaveform, float], np.ndarray] = field(default_factory=_default_integrator)
 
 
 @dataclass(frozen=True)
 class FitConfig:
-    bin_cuts: tuple[float, float] = (0, 4)
+    force: bool = False
+    bin_cuts: tuple[float, float] = (0, 50)
     nbins: int = 100
-    exclude_index: int = 1  # Deprecated - kept for backward compatibility
     bg_threshold: float = 0.3  # Background fraction threshold for two-stage fitting
-    bg_cutoff: float = 1.0     # Upper limit for background fitting (mV·µs)
+    bg_cutoff: float = 2.0     # Upper limit for background fitting (mV·µs)
     n_sigma: float = 2.5       # Sigmas above background for signal region
-    upper_limit: float = 5.0   # Upper limit for signal fitting (mV·µs)
+    smooth: int = 4            # Smoothing window for histogram counts (bins)
 
 @dataclass(frozen=True)
 class TimingConfig:
-    """Configuration parameters for S1 and S2 timing extraction.
-    Includes: 
-     - Thresholds for S1 and S2 detection (in mV, multiplied by baseline noise sigma)
-     - Time windows for S1 search and S2 search (relative to trigger)
-     - Moving average window sizes for noise reduction
-     - Baseline threshold for S2 detection
-     - Margin for S2 search start based on drift time
     """
-    s1_t_max: float = -2.5          # (µs) Max time for S1 search (relative to trigger)
-    s2_margin: float = 0.9          # (µs) Multiplier for drift time to set S2 search start
-    n_pedestal: int = 200           # number of pre-trigger samples for pedestal subtraction
-    window_ma: int = 10             # moving average window length for S1 detection (samples)
-    bs_threshold: float = 0.02      # (mV) Baseline threshold for S2 detection
-    s1_threshold: float = 1.0       # (mV) Threshold for S1 detection, multiplied by baseline noise sigma         # moving average window length for S2 detection (samples)
-    s2_threshold: float = 0.8      # (mV) Threshold for S2 detection, multiplied by baseline noise sigma
+    Configuration parameters for THGEM S1 and S2 timing extraction.
+    """
+    force: bool = False
+    # S1 Search Parameters
+    max_frames: int = None        # Maximum number of frames to consider for S1 search (None = all)
+    s1_t_min: float = -4.0           # (µs) Start of empirical S1 search window
+    s1_t_max: float = -2.5           # (µs) End of empirical S1 search window
+    s1_v_min: float = 3.0            # (mV) Minimum height for valid S1
+    s1_v_max: float = 15.0           # (mV) Maximum height for valid S1
+    s1_max_area: float = 0.15        # (mV*µs) Max integrated area to reject alpha tails
+    
+    # S2 Search Parameters
+    max_frames_s2: int = None        # Maximum number of frames to consider for S2 search (None = all)
+    s2_margin: float = 0.9           # (µs) Multiplier for drift time to set S2 window
+    s2_threshold: float = 0.5        # (mV) Absolute minimum baseline floor for S2 edges
+    s2_fraction: float = 0.05        # Fractional threshold for S2 boundaries (e.g., 5% of peak)
+    s2_min_area: float = 0.5         # (mV*µs) Minimum S2 area to consider valid
+    s2_max_area: float = 50          # (mV*µs) Maximum S2 area to consider valid
+    s2_min_width: float = 0.2        # (µs) Minimum S2 width to consider valid
+    s2_start_max: float = 0.5        # (µs) Maximum S2 start time
+
+    # Preprocessing Parameters
+    n_pedestal: int = 200            # Samples for pedestal subtraction
+    bs_threshold: float = 0.02       # (mV) Initial noise clipping threshold
+    s1_window_ma: int = 10           # Samples (~2 ns) strictly for defeating digitizer quantization
+    s2_window_ma: int = 1200          # Samples (~20 ns) for macroscopic S2 envelope tracking
 
 @dataclass(frozen=True)
 class XRayConfig:
     """Configuration for X-ray event classification and integration."""
+    force: bool = False
     bs_threshold: float = 0.5          # (mV)  -- baseline threshold for signal detection
     max_area_s1: float = 100          # (mV·µs) -- max allowed area before S1 (reject if exceeded)
     max_area_s2: float = 100          # (mV·µs) -- max allowed area in S2 window (reject if exceeded)
@@ -96,18 +110,18 @@ class XRayConfig:
 
 # Main peaks for preliminary fitting (5 peaks in SCA scale)
 ALPHA_PEAK_DEFINITIONS = [
-    {'name': 'Th228', 'position': 4.5, 'window': (4.0, 4.6), 'sigma_init': 0.15, 'ref_energy': 5.42315},
-    {'name': 'Ra224', 'position': 4.8, 'window': (4.62, 5.1), 'sigma_init': 0.15, 'ref_energy': 5.68537},
-    {'name': 'Rn220', 'position': 5.4, 'window': (5.0, 5.5), 'sigma_init': 0.15, 'ref_energy': 6.40484},
-    {'name': 'Po216', 'position': 5.9, 'window': (5.5, 6.1), 'sigma_init': 0.15, 'ref_energy': 6.90628},
-    {'name': 'Po212', 'position': 7.5, 'window': (6.3, 8.0), 'sigma_init': 0.15, 'ref_energy': 8.785},
+    {'name': 'Th228', 'position': 4.3, 'window': (3.5, 4.4), 'sigma_init': 0.05, 'ref_energy': 5.42315},
+    {'name': 'Ra224', 'position': 4.6, 'window': (4.4, 4.7), 'sigma_init': 0.05, 'ref_energy': 5.68537},
+    {'name': 'Bi212', 'position': 4.9, 'window': (4.7, 4.95), 'sigma_init': 0.05, 'ref_energy': 6.207},
+    {'name': 'Rn220', 'position': 5.1, 'window': (4.95, 5.2), 'sigma_init': 0.05, 'ref_energy': 6.40484},
+    {'name': 'Po216', 'position': 5.9, 'window': (5.2, 5.6), 'sigma_init': 0.05, 'ref_energy': 6.90628},
+    {'name': 'Po212', 'position': 7.2, 'window': (6.7, 8.0), 'sigma_init': 0.07, 'ref_energy': 8.785},
 ]
 
 # Satellite peaks for hierarchical fitting (4 additional peaks)
 ALPHA_SATELLITE_DEFINITIONS = [
     {'name': 'Th228_sat', 'ref_energy': 5.34036, 'branching_ratio': 0.385},
     {'name': 'Ra224_sat', 'ref_energy': 5.44860, 'branching_ratio': 0.054},
-    {'name': 'Bi212', 'ref_energy': 6.207},  # Independent main peak
     {'name': 'Bi212_sat', 'ref_energy': 6.090, 'branching_ratio': 0.389},
 ]
 
@@ -115,11 +129,12 @@ ALPHA_SATELLITE_DEFINITIONS = [
 @dataclass(frozen=True)
 class AlphaCalibrationConfig:
     """Configuration for alpha spectrum calibration pipeline."""
-    files_per_chunk: int = 10          # Waveform files per energy map chunk (10-100 typical)
-    fmt: str = "8b"                    # Binary format: "8b" (accurate) or "6b" (compact)
-    scale: float = 0.1                 # For "6b" format: keV per LSB
-    pattern: str = "*Ch4.wfm"          # Glob pattern for alpha channel files
+    force: bool = False
+    max_frames: Optional[int] = None   # Number of frames to process (None = all)
+    savgol_window: int = 501           # Savitzky-Golay window size (must be odd)
+    pattern: str = "*Ch4.wfm"          # (Deprecated, now in bootstrap) Glob pattern for alpha channel files
     nbins: int = 120                   # Number of histogram bins for energy spectra
     n_sigma: float = 2.0               # Number of sigmas for isotope range definition
     use_quadratic: bool = True         # Use quadratic (vs linear) energy calibration
+    energy_range: tuple[float, float] = (3.5, 8.2)  # Energy range for fitting (V)
 

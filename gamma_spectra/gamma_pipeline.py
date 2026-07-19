@@ -1,5 +1,5 @@
 from pathlib import Path
-from gamma_spectra.gamma_plotters import generate_debug_spectra, generate_decay_diagnostics, plot_accumulation_activities, plot_rate_counts
+from RaTag.gamma_spectra.gamma_plotters import generate_debug_spectra, generate_decay_diagnostics, plot_accumulation_activities, plot_rate_counts
 import yaml
 
 from .gamma_workflow import (
