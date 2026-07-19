@@ -6,11 +6,11 @@ from RaTag.core.datatypes import SetPmt
 
 def parse_file_seq_from_name(fname: str) -> int:
     base = Path(fname).name
-    m = re.search(r'P2_(\d+)Wfm', base)
+    m = re.search(r'_(\d+)Wfm', base)
     if m:
         return int(m.group(1))
     # fallback but conservative
-    m2 = re.search(r'_(\d+)Wfm', base)
+    m2 = re.search(r'_(\d+)', base)
     if m2:
         return int(m2.group(1))
     # Last-resort - raise to avoid silent mis-parses

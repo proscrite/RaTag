@@ -2,8 +2,8 @@ import numpy as np
 from dataclasses import replace
 from RaTag.core.datatypes import Run, SetPmt, Waveform
 from RaTag.core.functional import map_over
-from RaTag.core.decorators import disk_cache, limit_frames
-from RaTag.io.file_ops import iter_waveforms
+from RaTag.core.decorators import *
+from RaTag.io.file_ops import iter_waveforms, load_cache
 
 
 def compute_waveform_baseline(wf: Waveform, n_points: int = 200) -> tuple[float, float]:
@@ -26,8 +26,10 @@ def compute_waveform_baseline(wf: Waveform, n_points: int = 200) -> tuple[float,
 # ============================================================================
 # SET-LEVEL WORKFLOW (One-Pass Logic)
 # ============================================================================
-@disk_cache(target_attr='baseline_std')
+@allow_force
+@load_cached_metadata(target_attr='baseline_std')
 @limit_frames
+@write_metadata(target_attr='baseline_std')
 def resolve_set_baseline(set_pmt: SetPmt, max_files: int, n_points: int = 200, force: bool = False) -> SetPmt:
     """
     Resolves the baseline median and standard deviation for a single set 

@@ -142,7 +142,7 @@ def s2_pulse_width(z_drift: float, rE: float, drift_params: dict,
 
     Args:
         z_drift: drift length [mm]
-        rE: reduced electric field [V/cm/bar]
+        rE: reduced electric field [V/cm/cm³]
         drift_params: dict with drift velocity params
         diff_params: dict with diffusion params {'a':..., 'b':...}
 

@@ -1,4 +1,5 @@
 from dataclasses import replace
+from re import A
 from typing import cast
 from RaTag.core.datatypes import Run, SetPmt
 
@@ -6,7 +7,7 @@ from RaTag.core.datatypes import Run, SetPmt
 from dataclasses import replace
 from RaTag.core import units
 from RaTag.core.functional import map_over
-from RaTag.core.decorators import disk_cache, require_attributes
+from RaTag.core.decorators import *
 from RaTag.el_tpc import physics
 
 @require_attributes('pressure', 'temperature')
@@ -14,8 +15,10 @@ def with_gas_density(run: Run) -> Run:
     gd = physics.gas_density_cm3(run.pressure, run.temperature)
     return replace(run, gas_density=gd)
 
-@disk_cache(target_attr='drift_field')
+@allow_force
+@load_cached_metadata(target_attr='drift_field')
 @require_attributes('gate', 'anode')
+@write_metadata(target_attr='drift_field')
 def set_fields(set_pmt: SetPmt, el_gap_cm: float, drift_gap_cm: float, force: bool = False) -> SetPmt:
     """
     Calculates the actual and reduced fields. 
@@ -31,8 +34,10 @@ def set_fields(set_pmt: SetPmt, el_gap_cm: float, drift_gap_cm: float, force: bo
                    drift_field = drift_field,
                    EL_field = el_field)
 
-@disk_cache(target_attr='red_EL_field')
+@allow_force
+@load_cached_metadata(target_attr='red_EL_field')
 @require_attributes('drift_field', 'EL_field')
+@write_metadata(target_attr='red_EL_field')
 def set_reduced_fields(set_pmt: SetPmt, gas_density_cm3: float, force: bool = False) -> SetPmt:
     """
         Calculates reduced fields from actual fields and gas density.
@@ -50,8 +55,10 @@ def set_reduced_fields(set_pmt: SetPmt, gas_density_cm3: float, force: bool = Fa
                    red_drift_field=red_drift_Td,
                    red_EL_field=red_el_Td)
 
-@disk_cache(target_attr='time_drift')
+@allow_force
+@load_cached_metadata(target_attr='time_drift')
 @require_attributes('red_drift_field')
+@write_metadata(target_attr='time_drift')
 def set_transport(set_pmt: SetPmt, drift_gap_cm: float, force: bool = False) -> SetPmt:
     """
         Calculates drift velocities and times. 
@@ -89,7 +96,6 @@ def map_drift_physics(run: Run, force: bool = False) -> Run:
     
     run_with_density = with_gas_density(run)
     bound_func = lambda s: resolve_set_drift(s, run_with_density, force=force)
-    
     # map_over safely handles the loop and the try/except blocks
     enriched_sets = map_over(run_with_density.sets, bound_func, catch_errors=True)
     
