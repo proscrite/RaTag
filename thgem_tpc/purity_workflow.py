@@ -15,9 +15,9 @@ from RaTag.thgem_tpc.timing_workflow import find_s2
 
 
 @allow_force
-@load_cached_metadata(target_attr='n_areas_purity')
+@load_cached_metadata(target_attr='n_areas_recoil')
 @load_cached_npz(signal_type='purity_metrics')
-@write_metadata(target_attr='n_areas_purity')
+@write_metadata(target_attr='n_areas_recoil')
 @write_npz_arrays(signal_type='purity_metrics')
 @limit_frames
 def resolve_set_purity(set_pmt: SetPmt, max_files: int = None,
@@ -95,7 +95,7 @@ def resolve_set_purity(set_pmt: SetPmt, max_files: int = None,
         "timestamps": np.concatenate(all_timestamps) if all_timestamps else np.array([])
     }
     
-    stats = {'n_areas_purity': int(valid_frames)}
+    stats = {'n_areas_recoil': int(valid_frames)}
     print(f"  {set_pmt.source_dir.name}: {valid_frames}/{total_frames} purity events logged.")
     
     return replace(set_pmt, **stats), arrays
@@ -164,11 +164,11 @@ def plot_gas_purity_evolution(run):
     date_format = mdates.DateFormatter('%a, %H:%M') # e.g., "Sun, 12:20"
     
     # 1. Plot S2 Area (Electron Lifetime proxy)
-    ax1.scatter(df['Time'], df['S2_Area'], alpha=0.05, s=2, color='tab:blue')
+    ax1.scatter(df['Time'], df['S2_Area'], alpha=0.5, s=2, color='tab:blue')
     
     # Overlay a rolling median to show the trend clearly through the noise
-    rolling_area = df['S2_Area'].rolling(window=500, center=True).median()
-    ax1.plot(df['Time'], rolling_area, color='red', lw=2, label='500-Event Median')
+    rolling_area = df['S2_Area'].rolling(window=50, center=True).median()
+    ax1.plot(df['Time'], rolling_area, color='red', lw=1, label='500-Event Median')
     
     ax1.set_title(f"Gas Purification Evolution - Run {run.run_id}", fontsize=14, fontweight='bold')
     ax1.set_ylabel("S2 Area [mV·μs]", fontsize=12)
@@ -176,9 +176,9 @@ def plot_gas_purity_evolution(run):
     ax1.legend()
     
     # 2. Plot S2 Width (Longitudinal Diffusion proxy)
-    ax2.scatter(df['Time'], df['S2_Width'], alpha=0.05, s=2, color='tab:green')
+    ax2.scatter(df['Time'], df['S2_Width'], alpha=0.5, s=2, color='tab:green')
     
-    rolling_width = df['S2_Width'].rolling(window=500, center=True).median()
+    rolling_width = df['S2_Width'].rolling(window=50, center=True).median()
     ax2.plot(df['Time'], rolling_width, color='darkgreen', lw=2, label='500-Event Median')
     
     ax2.set_ylabel("S2 Width [µs]", fontsize=12)
@@ -188,4 +188,4 @@ def plot_gas_purity_evolution(run):
     ax2.grid(alpha=0.3)
     ax2.legend()
     
-    plt.show()
+    return df
