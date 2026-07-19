@@ -7,8 +7,8 @@ Tests for low-level S1/S2 detection in individual waveforms.
 import pytest
 import numpy as np
 
-from core.datatypes import PMTWaveform
-from waveform.s1s2_detection import detect_s1_in_frame, detect_s2_in_frame
+from RaTag.core.datatypes import PMTWaveform
+from RaTag.waveform.s1s2_detection import detect_s1_in_frame, detect_s2_in_frame
 
 
 @pytest.fixture

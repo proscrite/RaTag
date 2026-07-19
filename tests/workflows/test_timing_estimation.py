@@ -9,11 +9,11 @@ from pathlib import Path
 import numpy as np
 from dataclasses import replace
 
-from workflows.timing_estimation import (
+from RaTag.workflows.timing_estimation import (
     compute_s1,
     compute_s2,
-    workflow_s1_set,
-    workflow_s2_set,
+    workflow_s1_timing,
+    workflow_s2_timing,
     save_timing_results,
     validate_timing_windows,
     summarize_timing_vs_field
@@ -38,12 +38,12 @@ class TestS1Computation:
         updated_set, s1_times = compute_s1(sample_set, max_frames=100)
         
         # Metadata should be populated
-        assert "t_s1" in updated_set.metadata
-        assert "t_s1_std" in updated_set.metadata
+        assert updated_set.t_s1 is not None
+        assert updated_set.t_s1_std is not None
         
         # Values should be reasonable
-        assert updated_set.metadata["t_s1"] < 0  # Before trigger
-        assert updated_set.metadata["t_s1_std"] > 0
+        assert updated_set.t_s1 < 0  # Before trigger
+        assert updated_set.t_s1_std > 0
     
     
     def test_compute_s1_with_different_thresholds(self, sample_set):
@@ -76,8 +76,8 @@ class TestS1Computation:
         s1_times = []
         for i, set_pmt in enumerate(all_sets, 1):
             set_pmt, _ = compute_s1(set_pmt, max_frames=100)
-            t_s1 = set_pmt.metadata["t_s1"]
-            t_s1_std = set_pmt.metadata["t_s1_std"]
+            t_s1 = set_pmt.t_s1
+            t_s1_std = set_pmt.t_s1_std
             
             print(f"\nSet {i}: t_s1 = {t_s1:.2f} ± {t_s1_std:.2f} µs")
             s1_times.append(t_s1)
@@ -142,8 +142,8 @@ class TestS2Computation:
             # S2
             set_pmt, s2_data = compute_s2(set_pmt, max_frames=200)
             
-            t_s1 = set_pmt.metadata["t_s1"]
-            t_s2 = set_pmt.metadata["t_s2_start"]
+            t_s1 = set_pmt.t_s1
+            t_s2 = set_pmt.t_s2_start
             t_drift = set_pmt.time_drift
             
             print(f"\nSet {i}: {set_pmt.source_dir.name}")
@@ -184,8 +184,8 @@ class TestS2Computation:
             # S2
             set_pmt, s2_data = compute_s2(set_pmt, max_frames=200)
             
-            duration = set_pmt.metadata["s2_duration"]
-            duration_std = set_pmt.metadata["s2_duration_std"]
+            duration = set_pmt.s2_duration
+            duration_std = set_pmt.s2_duration_std
             
             print(f"\nSet {i}: duration = {duration:.2f} ± {duration_std:.2f} µs")
             durations.append(duration)
@@ -217,7 +217,7 @@ class TestS2Expected:
             # Run S1 first
             set_pmt, _ = compute_s1(set_pmt, max_frames=100)
             
-            t_s1 = set_pmt.metadata["t_s1"]
+            t_s1 = set_pmt.t_s1
             expected_s2 = t_s1 + set_pmt.time_drift
             
             print(f"  t_s1: {t_s1:.2f} µs")
@@ -228,7 +228,7 @@ class TestS2Expected:
             set_pmt, s2_data = compute_s2(set_pmt, max_frames=200)
             
             if len(s2_data['t_s2_start']) > 0:
-                actual_s2 = set_pmt.metadata["t_s2_start"]
+                actual_s2 = set_pmt.t_s2_start
                 print(f"  Actual S2 start: {actual_s2:.2f} µs")
                 print(f"  Difference: {actual_s2 - expected_s2:.2f} µs")
                 
@@ -247,18 +247,18 @@ class TestS2Expected:
 class TestWorkflows:
     """Test complete set-level workflows (with side effects)."""
     
-    def test_workflow_s1_set_creates_files(self, sample_set, tmp_path):
+    def test_workflow_s1_timing_creates_files(self, sample_set, tmp_path):
         """Test that S1 workflow creates all expected files."""
         plots_dir = tmp_path / "plots"
         data_dir = tmp_path / "data"
         
-        updated_set = workflow_s1_set(sample_set,
+        updated_set = workflow_s1_timing(sample_set,
                                       max_frames=100,
                                       plots_dir=plots_dir,
                                       data_dir=data_dir)
         
         # Metadata should exist
-        assert "t_s1" in updated_set.metadata
+        assert updated_set.t_s1 is not None
         
         # Data file should exist
         data_file = data_dir / f"{sample_set.source_dir.name}_s1.npz"
@@ -270,13 +270,13 @@ class TestWorkflows:
         assert plot_file.stat().st_size > 0
     
     
-    def test_workflow_s2_set_creates_files(self, sample_set, tmp_path):
+    def test_workflow_s2_timing_creates_files(self, sample_set, tmp_path):
         """Test that S2 workflow creates all expected files."""
         # First run S1
         plots_dir = tmp_path / "plots"
         data_dir = tmp_path / "data"
         
-        sample_set = workflow_s1_set(sample_set, 
+        sample_set = workflow_s1_timing(sample_set, 
                                     max_frames=100, 
                                     plots_dir=plots_dir,
                                     data_dir=data_dir)
@@ -284,13 +284,13 @@ class TestWorkflows:
         # No need to manually set time_drift - it's already computed!
         
         # Run S2 - uses computed time_drift
-        updated_set = workflow_s2_set(sample_set,
+        updated_set = workflow_s2_timing(sample_set,
                                       max_frames=200,
                                       plots_dir=plots_dir,
                                       data_dir=data_dir)
         
         # Metadata should exist
-        assert "t_s2_start" in updated_set.metadata
+        assert updated_set.t_s2_start is not None
         
         # Data file should exist
         data_file = data_dir / f"{sample_set.source_dir.name}_s2.npz"
@@ -312,7 +312,7 @@ class TestWorkflows:
         data_dir = run8_directory / "processed_data"
         
         # This will create files you can inspect!
-        updated_set = workflow_s1_set(sample_set,
+        updated_set = workflow_s1_timing(sample_set,
                                       max_frames=100,
                                       plots_dir=plots_dir,
                                       data_dir=data_dir)
@@ -330,7 +330,7 @@ class TestWorkflows:
         
         # First run S1 (needed for S2)
         s1_plots_dir = run8_directory / "plots" / "s1_timing"
-        sample_set = workflow_s1_set(sample_set,
+        sample_set = workflow_s1_timing(sample_set,
                                     max_frames=100,
                                     plots_dir=s1_plots_dir,
                                     data_dir=data_dir)
@@ -338,7 +338,7 @@ class TestWorkflows:
         # No need to manually set time_drift - it's already computed!
         
         # Run S2 workflow - uses computed time_drift
-        updated_set = workflow_s2_set(sample_set,
+        updated_set = workflow_s2_timing(sample_set,
                                       max_frames=200,
                                       plots_dir=plots_dir,
                                       data_dir=data_dir)
@@ -373,13 +373,13 @@ class TestWorkflows:
             print(f"\nProcessing set {i}/3: {set_name}")
             
             # S1 workflow
-            set_pmt = workflow_s1_set(set_pmt,
+            set_pmt = workflow_s1_timing(set_pmt,
                                      max_frames=100,
                                      plots_dir=plots_dir / "s1_timing",
                                      data_dir=data_dir)
             
             # S2 workflow
-            set_pmt = workflow_s2_set(set_pmt,
+            set_pmt = workflow_s2_timing(set_pmt,
                                      max_frames=200,
                                      plots_dir=plots_dir / "s2_timing",
                                      data_dir=data_dir)
@@ -445,7 +445,18 @@ class TestValidationWorkflow:
         """Test that validation requires S1/S2 timing to be estimated first."""
         
         # Create a run with sets that have NO timing (empty metadata)
-        sets_no_timing = [replace(s, metadata={}) for s in test_run.sets]
+        sets_no_timing = [
+            replace(
+                s,
+                t_s1=None,
+                t_s1_std=None,
+                t_s2_start=None,
+                t_s2_start_std=None,
+                t_s2_end=None,
+                t_s2_end_std=None,
+            )
+            for s in test_run.sets
+        ]
         run_no_timing = replace(test_run, sets=sets_no_timing)
         
         # Validation should skip all sets
@@ -461,8 +472,8 @@ class TestValidationWorkflow:
         
         # First compute S1 and S2 for one set
         sample_set = all_sets[0]
-        sample_set = workflow_s1_set(sample_set, max_frames=100)
-        sample_set = workflow_s2_set(sample_set, max_frames=200)
+        sample_set = workflow_s1_timing(sample_set, max_frames=100)
+        sample_set = workflow_s2_timing(sample_set, max_frames=200)
         
         # Create run with completed timing
         test_run = replace(test_run, sets=[sample_set])
@@ -483,8 +494,8 @@ class TestValidationWorkflow:
         # Compute timing for all sets
         processed_sets = []
         for set_pmt in all_sets:
-            set_pmt = workflow_s1_set(set_pmt, max_frames=100)
-            set_pmt = workflow_s2_set(set_pmt, max_frames=200)
+            set_pmt = workflow_s1_timing(set_pmt, max_frames=100)
+            set_pmt = workflow_s2_timing(set_pmt, max_frames=200)
             processed_sets.append(set_pmt)
         
         # Create run with timing
@@ -509,8 +520,8 @@ class TestValidationWorkflow:
         
         # Setup: compute timing for one set
         sample_set = all_sets[0]
-        sample_set = workflow_s1_set(sample_set, max_frames=100)
-        sample_set = workflow_s2_set(sample_set, max_frames=200)
+        sample_set = workflow_s1_timing(sample_set, max_frames=100)
+        sample_set = workflow_s2_timing(sample_set, max_frames=200)
         
         test_run = replace(test_run, sets=[sample_set])
 
@@ -519,7 +530,10 @@ class TestValidationWorkflow:
         
         # Run should be unchanged (same object, not a copy)
         assert result is test_run, "Validation should return the same Run object"
-        assert result.sets[0].metadata == sample_set.metadata, "Set metadata should be unchanged"
+        assert result.sets[0].t_s1 == sample_set.t_s1
+        assert result.sets[0].t_s1_std == sample_set.t_s1_std
+        assert result.sets[0].t_s2_start == sample_set.t_s2_start
+        assert result.sets[0].t_s2_end == sample_set.t_s2_end
 
 
 class TestSummaryPlots:
@@ -527,14 +541,14 @@ class TestSummaryPlots:
     
     def test_summarize_timing_vs_field(self, all_sets, test_run):
         """Test timing vs field summary plot creation."""
-        from core.datatypes import Run
+        from RaTag.core.datatypes import Run
         
         # Compute timing for all sets
         processed_sets = []
         for set_pmt in all_sets:
             print(f"\n  Processing {set_pmt.source_dir.name}...")
-            set_pmt = workflow_s1_set(set_pmt, max_frames=100)
-            set_pmt = workflow_s2_set(set_pmt, max_frames=200)
+            set_pmt = workflow_s1_timing(set_pmt, max_frames=100)
+            set_pmt = workflow_s2_timing(set_pmt, max_frames=200)
             processed_sets.append(set_pmt)
         
         print(f"\n✓ Processed {len(processed_sets)} sets")
@@ -557,13 +571,13 @@ class TestSummaryPlots:
 
     def test_summary_shows_field_dependence(self, all_sets, test_run):
         """Test that summary plot shows expected field dependence."""
-        from core.datatypes import Run
+        from RaTag.core.datatypes import Run
         
         # Compute timing for all sets
         processed_sets = []
         for set_pmt in all_sets:
-            set_pmt = workflow_s1_set(set_pmt, max_frames=100)
-            set_pmt = workflow_s2_set(set_pmt, max_frames=200)
+            set_pmt = workflow_s1_timing(set_pmt, max_frames=100)
+            set_pmt = workflow_s2_timing(set_pmt, max_frames=200)
             processed_sets.append(set_pmt)
         test_run = replace(test_run, sets=processed_sets)
         
@@ -572,7 +586,7 @@ class TestSummaryPlots:
         
         # Verify data makes physical sense
         drift_fields = [s.drift_field for s in processed_sets]
-        t_s2_starts = [s.metadata["t_s2_start"] for s in processed_sets]
+        t_s2_starts = [s.t_s2_start for s in processed_sets]
         
         # Should have data
         assert len(drift_fields) >= 3, f"Should have at least 3 sets with data, got {len(drift_fields)}"
@@ -583,6 +597,6 @@ class TestSummaryPlots:
         
         print(f"\n✓ Physical ordering verified:")
         for s in processed_sets:
-            print(f"  {s.drift_field:.1f} V/cm → S2 at {s.metadata['t_s2_start']:.2f} µs")
+            print(f"  {s.drift_field:.1f} V/cm → S2 at {s.t_s2_start:.2f} µs")
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

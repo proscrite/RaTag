@@ -10,7 +10,7 @@ import pytest
 import json
 from pathlib import Path
 
-from pipelines.run_preparation import prepare_run
+from RaTag.pipelines.run_preparation import prepare_run
 
 
 class TestPipelineOrchestration:
@@ -36,12 +36,12 @@ class TestPipelineOrchestration:
         
         # All sets should have both S1 and S2 results
         for set_pmt in result.sets:
-            assert "t_s1" in set_pmt.metadata, f"Missing S1 for {set_pmt.source_dir.name}"
-            assert "t_s2_start" in set_pmt.metadata, f"Missing S2 for {set_pmt.source_dir.name}"
+            assert set_pmt.t_s1 is not None, f"Missing S1 for {set_pmt.source_dir.name}"
+            assert set_pmt.t_s2_start is not None, f"Missing S2 for {set_pmt.source_dir.name}"
             
             # Get values
-            t_s1 = set_pmt.metadata["t_s1"]
-            t_s2 = set_pmt.metadata["t_s2_start"]
+            t_s1 = set_pmt.t_s1
+            t_s2 = set_pmt.t_s2_start
             
             # Both should be computed (not None)
             assert t_s1 is not None, f"t_s1 is None for {set_pmt.source_dir.name}"
@@ -188,8 +188,8 @@ class TestPipelineCaching:
         
         # S1/S2 metadata should match
         for set1, set2 in zip(result1.sets, result2.sets):
-            assert set1.metadata["t_s1"] == set2.metadata["t_s1"]
-            assert set1.metadata["t_s2_start"] == set2.metadata["t_s2_start"]
+            assert set1.t_s1 == set2.t_s1
+            assert set1.t_s2_start == set2.t_s2_start
 
 
 class TestPipelineRobustness:
@@ -205,7 +205,7 @@ class TestPipelineRobustness:
         
         # All sets should have at least some results
         for set_pmt in result.sets:
-            assert "t_s1" in set_pmt.metadata
+            assert set_pmt.t_s1 is not None
             # t_s1 might be None if too few files, that's ok
     
     
@@ -220,8 +220,8 @@ class TestPipelineRobustness:
         
         # Results should be similar (within reason)
         for set_small, set_large in zip(result_small.sets, result_large.sets):
-            t_s1_small = set_small.metadata.get("t_s1")
-            t_s1_large = set_large.metadata.get("t_s1")
+            t_s1_small = set_small.t_s1
+            t_s1_large = set_large.t_s1
             
             # Skip if either is None (not enough events)
             if t_s1_small is None or t_s1_large is None:

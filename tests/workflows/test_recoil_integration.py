@@ -19,16 +19,16 @@ from RaTag.core.dataIO import load_s2area
 def test_workflow_s2_integration_single_set(prepared_set):
     """Test complete S2 integration workflow on single set."""
     # prepared_set should have timing metadata from previous test runs
-    if 't_s2_start' not in prepared_set.metadata:
+    if prepared_set.t_s2_start is None:
         pytest.skip("Set must have timing metadata - run preparation tests first")
     
     result = workflow_s2_integration(prepared_set, max_files=2)
     
     # Check metadata was updated with fit results
-    assert 'area_s2_mean' in result.metadata
-    assert 'area_s2_ci95' in result.metadata
-    assert 'area_s2_sigma' in result.metadata
-    assert 'area_s2_fit_success' in result.metadata
+    assert result.area_s2_mean is not None
+    assert result.area_s2_ci95 is not None
+    assert result.area_s2_sigma is not None
+    assert result.area_s2_fit_success is not None
     
     # Check files were created in default locations
     processed_dir = prepared_set.source_dir.parent / "processed_data"
@@ -47,7 +47,7 @@ def test_workflow_s2_integration_single_set(prepared_set):
 
 def test_workflow_s2_integration_caching(prepared_set):
     """Test that workflow results are cached in metadata."""
-    if 't_s2_start' not in prepared_set.metadata:
+    if prepared_set.t_s2_start is None:
         pytest.skip("Set must have timing metadata")
     
     # First run
@@ -60,8 +60,8 @@ def test_workflow_s2_integration_caching(prepared_set):
     result2 = workflow_s2_integration(prepared_set, max_files=2)
     
     # Metadata should be identical
-    assert result2.metadata['area_s2_mean'] == result1.metadata['area_s2_mean']
-    assert result2.metadata['area_s2_ci95'] == result1.metadata['area_s2_ci95']
+    assert result2.area_s2_mean == result1.area_s2_mean
+    assert result2.area_s2_ci95 == result1.area_s2_ci95
     
     # Raw areas on disk should still be accessible
     s2_areas_2 = load_s2area(prepared_set)
@@ -83,12 +83,12 @@ def test_integrate_s2_in_run(test_run):
     
     # Check that sets have updated metadata
     sets_with_results = [s for s in run_with_results.sets 
-                         if 'area_s2_mean' in s.metadata]
+                         if s.area_s2_mean is not None]
     assert len(sets_with_results) > 0
     
     # Check that at least one set has successful fit
     successful_fits = [s for s in run_with_results.sets
-                       if s.metadata.get('area_s2_fit_success', False)]
+                       if (s.area_s2_fit_success if s.area_s2_fit_success is not None else False)]
     assert len(successful_fits) > 0
     
     # Verify files were created in default location
@@ -169,14 +169,14 @@ def test_integration_error_handling(sample_set):
 
 def test_fit_failure_handling(prepared_set):
     """Test handling of fit failures."""
-    if 't_s2_start' not in prepared_set.metadata:
+    if prepared_set.t_s2_start is None:
         pytest.skip("Set must have timing metadata")
     
     # Use existing timing but expect integration to work regardless of fit
     result = workflow_s2_integration(prepared_set, max_files=2)
     
     # Metadata should be updated (even if fit failed)
-    assert 'area_s2_fit_success' in result.metadata
+    assert result.area_s2_fit_success is not None
     
     # Raw areas should still be saved on disk
     processed_dir = prepared_set.source_dir.parent / "processed_data"

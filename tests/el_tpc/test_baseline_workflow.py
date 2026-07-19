@@ -4,7 +4,7 @@ from pathlib import Path
 
 from RaTag.el_tpc.baseline_workflow import (
     resolve_set_baseline,
-    map_run_baseline,
+    map_baseline,
 )
 from RaTag.core.datatypes import SetPmt
 
@@ -45,11 +45,11 @@ def test_resolve_set_baseline_empty_set_returns_zero(tmp_path, monkeypatch):
     assert out.baseline_std == 0.0
 
 
-def test_map_run_baseline_applies_to_run(run8, monkeypatch):
+def test_map_baseline_applies_to_run(run8, monkeypatch):
     monkeypatch.setattr("RaTag.io.file_ops.load_cache", _noop_load_cache)
     monkeypatch.setattr("RaTag.io.file_ops.save_cache", _noop_save_cache)
 
-    out_run = map_run_baseline(run8, max_frames=1, n_points=50)
+    out_run = map_baseline(run8, max_frames=1, n_points=50)
 
     # At least one set should have baseline_std populated
     assert any(getattr(s, 'baseline_std', None) is not None for s in out_run.sets)
