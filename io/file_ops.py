@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterator, List, Tuple, Optional, TypeVar, Union
 from dataclasses import asdict, replace, fields
 from itertools import islice
+from datetime import datetime
 from lmfit.model import ModelResult
 PathLike = Union[str, Path]
 
@@ -197,6 +198,18 @@ def parse_filename(fname: str) -> dict:
         if m.group(2):
             out["channel"] = int(m.group(2))
     return out
+
+def parse_wfm_timestamp(filename: str) -> float:
+    """
+    Extracts the YYYYMMDD-HHmmSS timestamp from a filename 
+    and converts it to a standard UNIX float.
+    """
+    match = re.search(r'_(\d{8}-\d{6})_', filename)
+    if match:
+        dt_str = match.group(1)
+        # Parse to datetime, then to UNIX timestamp
+        return datetime.strptime(dt_str, "%Y%m%d-%H%M%S").timestamp()
+    return np.nan
 
 def find_set_files(set_dir: Path, nfiles: Optional[int] = None) -> List[str]:
     """Finds .wfm files in a set directory, optionally limiting to nfiles."""
