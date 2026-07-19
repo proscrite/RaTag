@@ -123,14 +123,14 @@ def _integrate_s2_in_set(set_pmt: SetPmt,
         S2Areas object with integrated areas
     """
     # Check preconditions
-    if 't_s2_start' not in set_pmt.metadata or 't_s2_end' not in set_pmt.metadata:
+    if set_pmt.t_s2_start is None or set_pmt.t_s2_end is None:
         raise ValueError(f"Set {set_pmt.source_dir.name} missing S2 window metadata")
     
     # Extract and ensure proper float type (metadata might store as string)
-    s2_start = float(set_pmt.metadata['t_s2_start'])
-    s2_end = float(set_pmt.metadata['t_s2_end'])
-    s2_start_std = float(set_pmt.metadata.get('t_s2_start_std', 0.0))
-    s2_end_std = float(set_pmt.metadata.get('t_s2_end_std', 0.0))
+    s2_start = float(set_pmt.t_s2_start)
+    s2_end = float(set_pmt.t_s2_end)
+    s2_start_std = float((set_pmt.t_s2_start_std if set_pmt.t_s2_start_std is not None else 0.0))
+    s2_end_std = float((set_pmt.t_s2_end_std if set_pmt.t_s2_end_std is not None else 0.0))
     
     print(f"  Integrating S2 window: [{s2_start:.2f}, {s2_end:.2f}] µs")
     
@@ -213,8 +213,7 @@ def workflow_s2_integration(set_pmt: SetPmt,
     s2 = _integrate_s2_in_set(set_pmt, max_frames=max_frames, 
                               integration_config=integration_config)
 
-    new_metadata = {**set_pmt.metadata, 'n_areas_recoil': len(s2.areas)}
-    set_pmt = replace(set_pmt, metadata=new_metadata)
+    set_pmt = replace(set_pmt, n_areas_recoil=len(s2.areas))
     # Save raw areas immediately into the processed run root (store_s2area
     # will create the `s2_areas/` subdirectory). Passing `data_dir` here
     # previously caused a double `s2_areas/s2_areas` nesting.
@@ -274,14 +273,13 @@ def _fit_and_save_s2_histogram(set_pmt: SetPmt,
     }
     
     # Add method-specific metadata if available
-    if isinstance(s2_fitted.fit_result, dict):
-        fit_metadata['area_s2_fit_method'] = s2_fitted.fit_result.get('method', 'unknown')
-        if s2_fitted.fit_result.get('method') == 'two_stage':
-            fit_metadata['area_s2_bg_center'] = s2_fitted.fit_result.get('bg_center')
-            fit_metadata['area_s2_lower_bound'] = s2_fitted.fit_result.get('lower_bound')
+    # if isinstance(s2_fitted.fit_result, dict):
+    #     fit_metadata['area_s2_fit_method'] = s2_fitted.fit_result.get('method', 'unknown')
+    #     if s2_fitted.fit_result.get('method') == 'two_stage':
+    #         fit_metadata['area_s2_bg_center'] = s2_fitted.fit_result.get('bg_center')
+    #         fit_metadata['area_s2_lower_bound'] = s2_fitted.fit_result.get('lower_bound')
     
-    new_metadata = {**set_pmt.metadata, **fit_metadata}
-    updated_set = replace(set_pmt, metadata=new_metadata)
+    updated_set = replace(set_pmt, **fit_metadata)
     
     # Save updated metadata
     from RaTag.core.dataIO import save_set_metadata
@@ -358,7 +356,7 @@ def workflow_fit_multiiso_s2(set_pmt: SetPmt,
         print(f"    ✓ Fitted {len(fit_results)} isotopes: {', '.join(fit_results.keys())}")
         
         # Save fit results to metadata
-        updated_set = replace(set_pmt, metadata={**set_pmt.metadata, **metadata_updates})
+        updated_set = replace(set_pmt, **metadata_updates)
         save_set_metadata(updated_set)
         
         # Generate plot with fit overlays
@@ -428,22 +426,20 @@ def fit_s2_in_run(run: Run,
         reloaded = load_set_metadata(set_pmt)
         if reloaded:
             set_pmt = reloaded
-        print(f"  → n_areas_recoil: {set_pmt.metadata.get('n_areas_recoil', 'N/A')}")
+        print(f"  → n_areas_recoil: {(set_pmt.n_areas_recoil if set_pmt.n_areas_recoil is not None else 'N/A')}")
 
         # Check cache: Check if fit was already attempted, and if successful, check if the JSON exists
-        fit_already_attempted = 'area_s2_fit_success' in set_pmt.metadata
-        fit_was_successful = set_pmt.metadata.get('area_s2_fit_success', False)
+        fit_already_attempted = set_pmt.area_s2_fit_success is not None
+        fit_was_successful = (set_pmt.area_s2_fit_success if set_pmt.area_s2_fit_success is not None else False)
         fit_file_check = get_output_root(set_pmt.source_dir.parent) / "fits" / f"{set_pmt.source_dir.name}_s2_areas_hist_fit.json"
         
-        if (not force_refit) and fit_already_attempted:
-            if not fit_was_successful:
-                print(f"  📂 Loaded from cache (prior fit failed)")
-                updated_sets.append(set_pmt)
-                continue
-            elif fit_file_check.exists():
-                print(f"  📂 Loaded from cache (fit exists)")
-                updated_sets.append(set_pmt)
-                continue
+        # Only skip fitting when a prior successful fit exists and the
+        # corresponding fit file is present. If a prior attempt failed,
+        # re-run the fit (unless `force_refit` is True).
+        if (not force_refit) and fit_already_attempted and fit_was_successful and fit_file_check.exists():
+            print(f"  📂 Loaded from cache (fit exists)")
+            updated_sets.append(set_pmt)
+            continue
         
         # Load S2 areas
         try:
@@ -509,18 +505,18 @@ def _collect_s2_data(run: Run) -> pd.DataFrame:
     data_rows = []
     for s in run.sets:
         # Check if integration results exist in metadata
-        if 'area_s2_mean' not in s.metadata:
+        if s.area_s2_mean is None:
             continue
         
-        if not s.metadata.get('area_s2_fit_success', False):
+        if not (s.area_s2_fit_success if s.area_s2_fit_success is not None else False):
             continue
         
         data_rows.append({
             'set_name': s.source_dir.name,
             'drift_field': s.drift_field,
-            's2_mean': s.metadata['area_s2_mean'],
-            's2_ci95': s.metadata.get('area_s2_ci95', 0.0),
-            's2_sigma': s.metadata.get('area_s2_sigma', 0.0)
+            's2_mean': s.area_s2_mean,
+            's2_ci95': (s.area_s2_ci95 if s.area_s2_ci95 is not None else 0.0),
+            's2_sigma': (s.area_s2_sigma if s.area_s2_sigma is not None else 0.0)
         })
     
     df = pd.DataFrame(data_rows)

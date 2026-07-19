@@ -7,6 +7,7 @@ from pathlib import Path
 from dataclasses import replace
 
 from RaTag.io.bootstrap import bootstrap_from_path
+from RaTag.core.dataIO import load_wfm
 
 
 @pytest.fixture(scope="session")
@@ -31,6 +32,20 @@ def sample_set(run8):
     if not run8.sets:
         pytest.skip("No sets found in RUN8")
     return run8.sets[0]
+
+
+@pytest.fixture
+def sample_waveform(sample_set):
+    if not sample_set.filenames:
+        pytest.skip("sample_set has no waveform files")
+    return load_wfm(sample_set.source_dir / sample_set.filenames[0])
+
+
+@pytest.fixture
+def sample_waveform_paths(sample_set):
+    if len(sample_set.filenames) < 2:
+        pytest.skip("Need at least two waveform files")
+    return [sample_set.source_dir / name for name in sample_set.filenames[:2]]
 
 
 @pytest.fixture

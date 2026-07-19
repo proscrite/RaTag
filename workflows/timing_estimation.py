@@ -41,7 +41,7 @@ def _extract_timing_from_frames(set_pmt: SetPmt,
     # Compute how many files to process (rounds up to complete files)
     max_files, actual_frames = compute_max_files(max_frames, set_pmt.nframes)
     
-    print(f"  Processing {max_files} files (~{actual_frames} frames)")
+    # print(f"  Processing {max_files} files (~{actual_frames} frames)")
     
     # Iterate over frames and apply detector
     results = []
@@ -85,7 +85,7 @@ def _compute_timing_statistics(times: np.ndarray,
     mode = round(cbins[np.argmax(n)], 3)
     std = round(np.std(times_clean), 3)
     
-    print(f"  → {name} = {mode} ± {std} µs (from {len(times_clean)} frames)")
+    # print(f"  → {name} = {mode} ± {std} µs (from {len(times_clean)} frames)")
     
     return {name: mode, f"{name}_std": std}
 
@@ -95,19 +95,30 @@ def _compute_timing_statistics(times: np.ndarray,
 # ============================================================================
 
 def save_timing_results(set_pmt: SetPmt,
-                        uids: np.ndarray, 
-                       timing_data: Union[np.ndarray, dict],
-                       data_dir: Path,
-                       signal_type: str) -> None:
+                        *args) -> None:
     """
     Save timing results to disk (metadata + raw data).
     
     Args:
         set_pmt: SetPmt with updated metadata
-        timing_data: Raw timing data (array for S1, dict for S2)
-        data_dir: Directory for processed data (base directory)
-        signal_type: "s1" or "s2"
+        Supports both legacy and workflow call styles:
+        - save_timing_results(set_pmt, timing_data, data_dir, signal_type)
+        - save_timing_results(set_pmt, uids, timing_data, data_dir, signal_type)
     """
+    if len(args) == 3:
+        uids = None
+        timing_data, data_dir, signal_type = args
+    elif len(args) == 4:
+        uids, timing_data, data_dir, signal_type = args
+    else:
+        raise TypeError("save_timing_results expects 3 or 4 positional arguments after set_pmt")
+
+    signal_type = str(signal_type)
+    if signal_type.startswith("t_"):
+        signal_type = signal_type[2:]
+    if signal_type not in {"s1", "s2"}:
+        raise ValueError(f"Unsupported signal_type '{signal_type}'")
+
     # Save metadata (at root level)
     save_set_metadata(set_pmt)
     
@@ -117,11 +128,16 @@ def save_timing_results(set_pmt: SetPmt,
     
     if isinstance(timing_data, np.ndarray):
         # S1: single array
-        np.savez_compressed(data_file, uids=uids.astype(np.uint32), t_s1=timing_data)
-        # np.savez(data_file, times=timing_data)
+        payload = {"times": timing_data, "t_s1": timing_data}
+        if uids is not None:
+            payload["uids"] = uids.astype(np.uint32)
+        np.savez_compressed(data_file, **payload)
     else:
         # S2: dict with multiple arrays
-        np.savez_compressed(data_file, uids=uids.astype(np.uint32), **timing_data)
+        payload = dict(timing_data)
+        if uids is not None:
+            payload["uids"] = uids.astype(np.uint32)
+        np.savez_compressed(data_file, **payload)
     
     print(f"    💾 Saved to {data_file.relative_to(data_dir.parent)}")
 
@@ -144,14 +160,15 @@ def _plot_exists(plot_path: Path) -> bool:
 
 def compute_s1(set_pmt: SetPmt,
                max_frames: int = 200,
-               threshold_s1: float = 1.0) -> tuple[SetPmt, np.ndarray, np.ndarray]:
+               threshold_s1: float = 1.0,
+               return_uids: bool = False):
     """
     Compute S1 timing for a single set (pure computation).
     
     Returns:
         (updated_set, s1_times) - Set with metadata AND raw timing array
     """
-    print(f"  Computing S1...")
+    # print(f"  Computing S1...")
     
     uids, s1_times = _extract_timing_from_frames(set_pmt,
                                            max_frames=max_frames,
@@ -167,10 +184,11 @@ def compute_s1(set_pmt: SetPmt,
                                       name="t_s1", 
                                       outlier_sigma=3.0)
     
-    new_metadata = {**set_pmt.metadata, **stats}
-    updated_set = replace(set_pmt, metadata=new_metadata)
+    updated_set = replace(set_pmt, **stats)
     
-    return updated_set, s1_times, uids
+    if return_uids:
+        return updated_set, s1_times, uids
+    return updated_set, s1_times
 
 
 # ============================================================================
@@ -182,7 +200,8 @@ def compute_s2(set_pmt: SetPmt,
                threshold_s2: float = 0.8,
                window_size: int = 9,
                threshold_bs: float = 0.02,
-               s2_duration_cuts: tuple = (3, 35)) -> tuple[SetPmt, dict, np.ndarray]:
+               s2_duration_cuts: tuple = (3, 35),
+               return_uids: bool = False):
     """
     Compute S2 timing for a single set (pure computation).
     
@@ -190,7 +209,7 @@ def compute_s2(set_pmt: SetPmt,
         (updated_set, s2_data) - Set with metadata AND raw timing dict
     """
     # Validate prerequisites
-    t_s1 = set_pmt.metadata.get("t_s1")
+    t_s1 = set_pmt.t_s1
     if t_s1 is None:
         raise ValueError("t_s1 must be estimated first")
     
@@ -219,18 +238,20 @@ def compute_s2(set_pmt: SetPmt,
         ("s2_duration", durations, s2_duration_cuts)
     ]
     
-    new_metadata = {**set_pmt.metadata}
+    update_kwargs = {}
     for name, data, cuts in timing_data:
         stats = _compute_timing_statistics(data, name, pre_cut=cuts)
-        new_metadata.update(stats)
+        update_kwargs.update(stats)
     
     s2_data = {
         't_s2_start': t_starts, 
         't_s2_end': t_ends,     
         's2_duration': durations
     }
-    updated_set = replace(set_pmt, metadata=new_metadata)
-    return updated_set, s2_data, uids
+    updated_set = replace(set_pmt, **update_kwargs)
+    if return_uids:
+        return updated_set, s2_data, uids
+    return updated_set, s2_data
 
 
 # ============================================================================
@@ -239,67 +260,77 @@ def compute_s2(set_pmt: SetPmt,
 
 def workflow_s1_timing(set_pmt: SetPmt,
                     max_frames: int = 200,
-                    threshold_s1: float = 1.0) -> SetPmt:
+                    threshold_s1: float = 1.0,
+                    plots_dir: Optional[Path] = None,
+                    data_dir: Optional[Path] = None) -> SetPmt:
     """Complete S1 workflow for a single set: compute → save → plot."""
     
     # Compute
     updated_set, s1_times, uids_s1 = compute_s1(set_pmt,
                                        max_frames=max_frames,
-                                       threshold_s1=threshold_s1)
+                                       threshold_s1=threshold_s1,
+                                       return_uids=True)
     
     # Default directories (use centralized processed run root)
-    data_dir = get_output_root(set_pmt.source_dir.parent)
+    if data_dir is None:
+        data_dir = get_output_root(set_pmt.source_dir.parent)
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    plots_dir = get_output_root(set_pmt.source_dir.parent) / "plots"  / "t_s1"
+    if plots_dir is None:
+        plots_dir = get_output_root(set_pmt.source_dir.parent) / "plots"  / "t_s1"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"  Saving S1 timing results in {data_dir}")
     # Save
-    save_timing_results(updated_set, uids_s1, s1_times, data_dir, signal_type='t_s1')
+    save_timing_results(updated_set, uids_s1, s1_times, data_dir, 's1')
     
     # Plot
     fig = plot_time_histograms(s1_times, 
                             title=f"{'S1'} - {set_pmt.source_dir.name}",
-                            mean=updated_set.metadata.get("t_s1", None),
-                            std=updated_set.metadata.get("t_s1_std", None),
+                            mean=(updated_set.t_s1 if updated_set.t_s1 is not None else None),
+                            std=(updated_set.t_s1_std if updated_set.t_s1_std is not None else None),
                             xlabel = "Time (µs)", color='blue', ax = None)
 
-    save_figure(fig, plots_dir / f"{set_pmt.source_dir.name}_t_s1.png")
+    save_figure(fig, plots_dir / f"{set_pmt.source_dir.name}_s1.png")
     plt.close(fig)
     return updated_set
 
 def workflow_s2_timing(set_pmt: SetPmt,
                     max_frames: int = 500,
                     threshold_s2: float = 0.8,
-                    s2_duration_cuts: tuple = (3, 35),) -> SetPmt:
+                    s2_duration_cuts: tuple = (3, 35),
+                    plots_dir: Optional[Path] = None,
+                    data_dir: Optional[Path] = None) -> SetPmt:
     """Complete S2 workflow for a single set: compute → save → plot."""
     # Compute
     updated_set, s2_data, uids_s2 = compute_s2(set_pmt,
                                       max_frames=max_frames,
                                       threshold_s2=threshold_s2,
-                                      s2_duration_cuts=s2_duration_cuts)
+                                      s2_duration_cuts=s2_duration_cuts,
+                                      return_uids=True)
     
     # Default directories (use centralized processed run root)
-    data_dir = get_output_root(set_pmt.source_dir.parent)
+    if data_dir is None:
+        data_dir = get_output_root(set_pmt.source_dir.parent)
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    plots_dir = get_output_root(set_pmt.source_dir.parent) / "plots"  / "t_s2"
+    if plots_dir is None:
+        plots_dir = get_output_root(set_pmt.source_dir.parent) / "plots"  / "t_s2"
     plots_dir.mkdir(parents=True, exist_ok=True)
     
     # Save
-    save_timing_results(updated_set, uids_s2, s2_data, data_dir, signal_type='t_s2')
+    save_timing_results(updated_set, uids_s2, s2_data, data_dir, 's2')
 
     # Plot
     fig, ax = plt.subplots(3, 1, figsize=(8, 12))
     for a, time_data in zip(ax, ['t_s2_start', 't_s2_end', 's2_duration']):
         plot_time_histograms(s2_data[time_data], 
                              title=f"{time_data.replace('t_', ' ').replace('_', ' ').title()} - {set_pmt.source_dir.name}",
-                             mean=updated_set.metadata.get(f"{time_data}", None),
-                             std=updated_set.metadata.get(f"{time_data}_std", None),
+                             mean=getattr(updated_set, time_data, None),
+                             std=getattr(updated_set, f"{time_data}_std", None),
                              xlabel = "Time (µs)", color='blue', ax = a)
 
-    save_figure(fig, plots_dir / f"{set_pmt.source_dir.name}_t_s2.png")
+    save_figure(fig, plots_dir / f"{set_pmt.source_dir.name}_s2.png")
     plt.close(fig)
     return updated_set
 
@@ -308,10 +339,10 @@ def workflow_s1_multiiso(set_pmt: SetPmt,
                          isotope_ranges: Dict[str, tuple]) -> pd.DataFrame:
     """Multi-isotope S1 workflow: load → map → plot."""
     return generic_multiiso_workflow(set_pmt,
-                                     data_filename="t_s1.npz",
+                                     data_filename="s1.npz",
                                      value_keys=["t_s1"],
                                      isotope_ranges=isotope_ranges,
-                                     output_suffix="t_s1_multi",
+                                     output_suffix="s1_multi",
                                      plot_columns=["t_s1"],
                                      bins=40)
 
@@ -320,10 +351,10 @@ def workflow_s2_multiiso(set_pmt: SetPmt,
                          isotope_ranges: Dict[str, tuple]) -> pd.DataFrame:
     """Multi-isotope S2 workflow: load → map → plot."""
     return generic_multiiso_workflow(set_pmt,
-                                     data_filename="t_s2.npz",
+                                     data_filename="s2.npz",
                                      value_keys=["t_s2_start", "t_s2_end"],
                                      isotope_ranges=isotope_ranges,
-                                     output_suffix="t_s2_multi",
+                                     output_suffix="s2_multi",
                                      plot_columns=["t_s2_start", "t_s2_end"],
                                      bins=40)
 
@@ -340,7 +371,7 @@ def estimate_s1_in_run(run: Run,
                                  workflow_func=workflow_s1_timing,
                                  workflow_name="S1 timing estimation",
                                  cache_key="t_s1",
-                                 data_file_suffix="t_s1.npz",
+                                 data_file_suffix="s1.npz",
                                  max_frames=max_frames,
                                  threshold_s1=threshold_s1)
 
@@ -354,7 +385,7 @@ def estimate_s2_in_run(run: Run,
                                  workflow_func=workflow_s2_timing,
                                  workflow_name="S2 timing estimation",
                                  cache_key="t_s2_start",
-                                 data_file_suffix="t_s2.npz",
+                                 data_file_suffix="s2.npz",
                                  max_frames=max_frames,
                                  threshold_s2=threshold_s2,
                                  s2_duration_cuts=s2_duration_cuts)
@@ -409,7 +440,7 @@ def validate_timing_windows(run: Run, n_waveforms: int = 5, force: bool = False)
         print(f"\nSet {i}/{len(run.sets)}: {set_pmt.source_dir.name}")
         
         # Check if timing is estimated
-        if "t_s1" not in set_pmt.metadata or "t_s2_start" not in set_pmt.metadata:
+        if set_pmt.t_s1 is None or set_pmt.t_s2_start is None:
             print("  ⚠ Skipping (missing timing estimates)")
             continue
         
@@ -457,8 +488,8 @@ def _collect_timing_data(sets: list[SetPmt],
 
     for set_pmt in sets:
         # Check if ALL required parameters are present
-        missing = [p for p in param_names 
-                  if p not in set_pmt.metadata or set_pmt.metadata[p] is None]
+        missing = [p for p in param_names
+                  if getattr(set_pmt, p, None) is None]
         
         if missing:
             print(f"  ⚠ Skipping {set_pmt.source_dir.name} (missing {missing})")
@@ -469,8 +500,8 @@ def _collect_timing_data(sets: list[SetPmt],
         
         # Collect each parameter's mean and std
         for param in param_names:
-            timing_dict[param]['mean'].append(set_pmt.metadata[param])
-            timing_dict[param]['std'].append(set_pmt.metadata.get(f"{param}_std", 0))
+            timing_dict[param]['mean'].append(getattr(set_pmt, param))
+            timing_dict[param]['std'].append(getattr(set_pmt, f"{param}_std", 0))
         
         print(f"  ✓ {set_pmt.source_dir.name}: E_drift = {set_pmt.drift_field:.1f} V/cm")
     
@@ -481,40 +512,3 @@ def _collect_timing_data(sets: list[SetPmt],
         timing_dict[param]['std'] = np.array(timing_dict[param]['std'])
     
     return drift_fields, timing_dict
-
-
-def summarize_timing_vs_field(run: Run, 
-                               plots_dir: Optional[Path] = None) -> Run:
-    """Create summary plot of timing estimates vs drift field."""
-    print("\n" + "="*60)
-    print("TIMING VS FIELD SUMMARY")
-    print("="*60)
-    
-    # Set up output directory
-    if plots_dir is None:
-        plots_dir = get_output_root(run) / "plots"  / "summary_preparation"
-    plots_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Collect data for all timing parameters
-    param_names = ['t_s1', 't_s2_start', 't_s2_end']
-    drift_fields, timing_data = _collect_timing_data(run.sets, param_names)
-    
-    if len(drift_fields) == 0:
-        print("  ⚠ No sets with complete timing data - skipping plot")
-        return run
-    
-    # Create plot
-    fig, ax = plot_timing_vs_drift_field(
-        drift_fields=drift_fields,
-        timing_data=timing_data,
-        title=f"Timing vs Drift Field - {run.run_id}"
-    )
-    
-    # Save
-    output_file = plots_dir / f"{run.run_id}_timing_vs_field.png"
-    save_figure(fig, output_file)
-
-    print(f"\n✓ Summary plot saved to {output_file}")
-    print(f"  Plotted {len(drift_fields)} sets with complete timing")
-    
-    return run  # Unchanged

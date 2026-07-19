@@ -6,13 +6,19 @@ import itertools
 from pathlib import Path
 
 from RaTag.core.dataIO import load_wfm
-from RaTag.core.datatypes import PMTWaveform
+from RaTag.core.datatypes import PMTWaveform, Waveform
 
 
-def subtract_pedestal(wf: PMTWaveform, n_points: int = 200) -> PMTWaveform:
-    pedestal = wf.v[:n_points].mean()
-    return replace(wf, v=wf.v - pedestal)
-
+def subtract_pedestal(wf: Waveform, n_points: int = 200) -> Waveform:
+    if wf.ff:  # 2D array: (nframes, nsamples)
+        # keepdims=True ensures shape is (nframes, 1) so it broadcasts correctly during subtraction
+        pedestals = wf.v[:, :n_points].mean(axis=1, keepdims=True)
+        return replace(wf, v=wf.v - pedestals)
+    
+    else:  # 1D array: (nsamples,)
+        pedestal = wf.v[:n_points].mean()
+        return replace(wf, v=wf.v - pedestal)
+    
 def moving_average(wf: PMTWaveform, window: int = 9) -> PMTWaveform:
     """Apply moving average, handling both FastFrame and single frame formats."""
     kernel = np.ones(window)/window

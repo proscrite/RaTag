@@ -45,14 +45,14 @@ def make_smoothed_vertical_cut(vmin: float, t_start: float, t_end: float, smooth
 
 
 def drift_region_cut(set_pmt: SetPmt, t_tol: float = 1e-6, threshold: float = 0.02, nmax_grass: int = 5):
-    t_s1 = set_pmt.metadata["t_s1"]
+    t_s1 = set_pmt.t_s1
     t_drift = set_pmt.time_drift
     return make_time_amplitude_cut(t_start = t_s1 + t_tol, t_end = t_s1 + t_drift - t_tol, threshold=threshold, nmax_grass=nmax_grass)
 
 def post_s2_cut(set_pmt: SetPmt, t_tol: float = 1e-6, width_s2: float = 1e-5, threshold: float = 0.02, nmax_grass: int = 5):
-    t_s1 = set_pmt.metadata["t_s1"]
+    t_s1 = set_pmt.t_s1
     t_drift = set_pmt.time_drift
-    # width_s2 = set_pmt.metadata["width_s2"]
+    # width_s2 = set_pmt.width_s2
     t2_end = t_s1 + t_drift + width_s2 + t_tol
 
     return make_time_amplitude_cut(t_start=t2_end, t_end=None, threshold=threshold, nmax_grass=nmax_grass)

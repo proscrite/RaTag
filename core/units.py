@@ -45,7 +45,7 @@ def mV(x: float) -> float:
 
 def V(x: float) -> float:
     """Identity function for clarity when specifying volts explicitly."""
-    return x * 1.0
+    return x * 1.0 if x is not None else 0.0
 
 def cm(x: float) -> float:
     """Convert cm → m (if needed externally)."""

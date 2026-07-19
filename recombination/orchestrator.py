@@ -108,7 +108,7 @@ def run_multiphysics_integration(config_path: str):
         
         df_drift = apply_transmission_efficiency(df_gs2, trans_model, e_el)
 
-        w_value = gs2_artifact.metadata.get("W_value", 22.3)  # Default W-value in eV
+        w_value = (gs2_artifact.W_value if gs2_artifact.W_value is not None else 22.3)  # Default W-value in eV
         
         # --- ISOTOPE SPECIFIC PHYSICS ---
 

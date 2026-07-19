@@ -252,14 +252,14 @@ def integrate_set_unified(set_pmt: SetPmt,
             't_window': (s2_start, s2_end),
             **s2_params_serializable,
             'set_metadata': {
-                't_s1': set_pmt.metadata.get('t_s1'),
-                't_s1_std': set_pmt.metadata.get('t_s1_std'),
-                't_s2_start_mean': set_pmt.metadata.get('t_s2_start_mean'),
-                't_s2_start_std': set_pmt.metadata.get('t_s2_start_std'),
-                't_s2_end_mean': set_pmt.metadata.get('t_s2_end_mean'),
-                't_s2_end_std': set_pmt.metadata.get('t_s2_end_std'),
-                's2_duration_mean': set_pmt.metadata.get('s2_duration_mean'),
-                's2_duration_std': set_pmt.metadata.get('s2_duration_std'),
+                't_s1': set_pmt.t_s1,
+                't_s1_std': set_pmt.t_s1_std,
+                't_s2_start_mean': set_pmt.t_s2_start_mean,
+                't_s2_start_std': set_pmt.t_s2_start_std,
+                't_s2_end_mean': set_pmt.t_s2_end_mean,
+                't_s2_end_std': set_pmt.t_s2_end_std,
+                's2_duration_mean': set_pmt.s2_duration_mean,
+                's2_duration_std': set_pmt.s2_duration_std,
             }
         }
     )
@@ -337,16 +337,16 @@ def integrate_run_unified(run: Run,
         print(f"[{i}/{len(sets_to_process)}] Processing: {set_name}")
         
         # Validate preconditions
-        if "t_s1" not in set_pmt.metadata or set_pmt.time_drift is None:
+        if set_pmt.t_s1 is None or set_pmt.time_drift is None:
             raise ValueError(f"Set {set_name} missing t_s1 or time_drift. Run prepare_run() first.")
         
-        t_s1 = set_pmt.metadata['t_s1']
-        dt_s1 = set_pmt.metadata.get('t_s1_std', 0.0)
+        t_s1 = set_pmt.t_s1
+        dt_s1 = (set_pmt.t_s1_std if set_pmt.t_s1_std is not None else 0.0)
         print(f"  → Using tS1: [{t_s1:.2f} ± {dt_s1:.2f}] µs")
         # Determine S2 integration window
-        if use_estimated_s2_windows and 't_s2_start' in set_pmt.metadata:
-            s2_start = set_pmt.metadata['t_s2_start'] + ts2_tol
-            s2_end = set_pmt.metadata['t_s2_end']
+        if use_estimated_s2_windows and set_pmt.t_s2_start is not None:
+            s2_start = set_pmt.t_s2_start + ts2_tol
+            s2_end = set_pmt.t_s2_end
             print(f"  → Using estimated S2 window: [{s2_start:.2f}, {s2_end:.2f}] µs")
         else:
             s2_start = t_s1 + set_pmt.time_drift + ts2_tol

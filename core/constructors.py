@@ -1,15 +1,21 @@
 from dataclasses import replace
 from pathlib import Path
+import re
 from typing import  Optional, List, Tuple
 
-from .dataIO import load_wfm, parse_subdir_name
+from .dataIO import load_wfm
+from RaTag.io.file_ops import parse_subdir_name, find_set_files, detect_fastframe_properties, detect_multiiso_set
 from .datatypes import SetPmt, Run
 from .units import V, to_Td, cm_to_mm
-from .physics import compute_reduced_field, redfield_to_speed
+from el_tpc.physics import compute_reduced_field, redfield_to_speed
+
+
+
 
 # ------------------------
 # --- Run constructor  ---
 # ------------------------
+
 def populate_run(run: Run, nfiles: Optional[int] = None) -> Run:
     """
     Populate a Run with all measurement sets from subdirectories.
@@ -144,7 +150,7 @@ def set_from_dir(source_dir: Path, nfiles: Optional[int] = None) -> SetPmt:
     
     return SetPmt(source_dir=source_dir,
                   filenames=filenames,
-                  metadata=metadata,
+                  **metadata,
                   multiiso=multiiso,
                   ff=ff,
                   nframes=nframes)
@@ -156,8 +162,8 @@ def set_fields(set_pmt: SetPmt, drift_gap_cm: float, el_gap_cm: float,
     Return a new SetPmt with drift/EL fields and reduced fields.
     """
     try:
-        v_gate = V(set_pmt.metadata.get("gate"))
-        v_anode = V(set_pmt.metadata.get("anode"))
+        v_gate = V(set_pmt.gate)
+        v_anode = V(set_pmt.anode)
     except Exception as e:
         raise ValueError(f"Voltage metadata missing or invalid in {set_pmt.source_dir.name}: {e}")
 

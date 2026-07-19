@@ -11,7 +11,7 @@ import lmfit
 from lmfit.model import ModelResult
 
 from .units import V_to_mV, s_to_us
-from .datatypes import SiliconWaveform, Waveform, SetPmt, Run, S2Areas, PMTWaveform, XRayResults, FrameProxy
+from .datatypes import SiliconWaveform, Waveform, SetPmt, Run, S2Areas, PMTWaveform
 from .wfm2read_fast import wfm2read # type: ignore
 PathLike = Union[str, Path]
 from RaTag.core.uid_utils import parse_file_seq_from_name
@@ -103,49 +103,6 @@ def iter_frames(set_pmt, max_files: int = None) -> Iterator[Waveform]:
             # Single frame: yield as-is
             yield wf
 
-def iter_frameproxies(set_pmt: SetPmt, chunk_dir: str = None, fmt='8b', scale=0.1, max_files: int=None, show_progress: bool = False) -> Iterator[FrameProxy]:
-    """
-    Iterate over files in the SetPmt and yield FrameProxy objects.
-    - set_pmt.filenames must be list of file paths
-    - parse file_seq via your existing logic (use parse_file_seq_from_name or sequential)
-
-    Optional progress printing:
-    - When `show_progress=True` prints integer percent completion (frames) and
-      the current file number / total files. The percent is printed only when
-      the integer value increases (1% steps).
-    """
-    from RaTag.alphas.energy_map_writer import parse_file_seq_from_name
-
-    if chunk_dir is None:     # Handle custom chunk_dirs, if None, default is the set_pmt raw_data loc
-        chunk_dir = set_pmt.source_dir
-
-    files = set_pmt.filenames if max_files is None else set_pmt.filenames[:max_files]
-
-    total_files = len(files)
-    total_frames = total_files * (set_pmt.nframes or 0)
-
-    frames_processed = 0
-    last_percent = -1
-    current_file_num = 0
-
-    for p in files:
-        file_seq = parse_file_seq_from_name(p)  # or use manifest mapping if you used it earlier
-        current_file_num += 1
-        # optionally verify path exists
-        for frame_idx in range(set_pmt.nframes):
-            # Update progress counters
-            frames_processed += 1
-            if show_progress and total_frames > 0:
-                percent = int((frames_processed * 100) / total_frames)
-                if percent > last_percent:
-                    last_percent = percent
-                    print(f"  {percent}% complete — file {current_file_num}/{total_files}")
-
-            yield FrameProxy(file_path=set_pmt.source_dir / p,
-                             file_seq=file_seq,
-                             frame_idx=frame_idx,
-                             chunk_dir=chunk_dir,
-                             fmt=fmt, scale=scale)
 # ----------------------------------------
 # --- Subdirectory parsers for set constructions  ---
 # -------------------------------------
@@ -215,26 +172,33 @@ def save_set_metadata(set_pmt: SetPmt) -> None:
         with open(metadata_file, 'r') as f:
             existing_metadata = json.load(f)
     
-    attrs = ['drift_field', 'EL_field', 'red_drift_field', 'red_EL_field', 'speed_drift', 'time_drift']
-
     # Start with existing metadata, then update with new values
     metadata = {
         **existing_metadata,  # Keep existing data
         "set_name": set_pmt.source_dir.name,
         "source_dir": str(set_pmt.source_dir),
     }
-    
-    # Update field/transport properties (only if not None)
-    for key in attrs:
-        value = getattr(set_pmt, key)
+
+    exclude_fields = {"source_dir", "filenames", "multiiso", "ff", "nframes"}
+    set_dict = asdict(set_pmt)
+
+    # Filter out None values and formatting
+    for key, value in set_dict.items():
+        if key in exclude_fields:
+            continue
         if value is not None:
-            metadata[key] = round(value, 3) if isinstance(value, float) else value
-    
-    # Update metadata fields (only if not None)
-    for key, value in set_pmt.metadata.items():
-        if value is not None:
-            metadata[key] = round(value, 3) if isinstance(value, float) else value
-    
+            if isinstance(value, float):
+                metadata[key] = round(value, 3)
+            elif isinstance(value, dict):
+                # XRayMetadata converts to a dict containing subfields via asdict
+                metadata[key] = {k: (round(v, 3) if isinstance(v, float) else v) 
+                                 for k, v in value.items() if v is not None}
+            elif isinstance(value, tuple) or isinstance(value, list):
+                # E.g., area_s2_ci95 tuple
+                metadata[key] = [(round(v, 3) if isinstance(v, float) else v) for v in value]
+            else:
+                metadata[key] = value
+                
     with open(metadata_file, 'w') as f:
         json.dump(metadata, f, indent=2)
 
@@ -248,6 +212,8 @@ def load_set_metadata(set_pmt: SetPmt) -> Optional[SetPmt]:
     Returns:
         Updated SetPmt with loaded metadata, or None if file doesn't exist
     """
+    from RaTag.core.datatypes import XRayMetadata
+    
     # Look in central processed run directory
     metadata_dir = get_output_root(set_pmt.source_dir.parent) / "set_summaries"
     metadata_file = metadata_dir / f"{set_pmt.source_dir.name}_metadata.json"
@@ -258,24 +224,21 @@ def load_set_metadata(set_pmt: SetPmt) -> Optional[SetPmt]:
     with open(metadata_file, 'r') as f:
         data = json.load(f)
     
-    # Load ALL metadata keys (not just specific ones)
-    metadata = {k: v for k, v in data.items() 
-                if k not in ["set_name", "source_dir", "drift_field", "EL_field", 
-                            "red_drift_field", "red_EL_field", "speed_drift", 
-                            "time_drift", "diffusion_coefficient"]}
+    valid_keys = {f.name for f in fields(SetPmt)}
+    exclude_fields = {"source_dir", "filenames", "multiiso", "ff", "nframes"}
     
-    # Restore SetPmt with all properties
-    return replace(
-        set_pmt,
-        metadata={**set_pmt.metadata, **metadata},  # Merge with existing
-        drift_field=data.get("drift_field"),
-        EL_field=data.get("EL_field"),
-        red_drift_field=data.get("red_drift_field"),
-        red_EL_field=data.get("red_EL_field"),
-        speed_drift=data.get("speed_drift"),
-        time_drift=data.get("time_drift"),
-        diffusion_coefficient=data.get("diffusion_coefficient")
-    )
+    update_kwargs = {}
+    for k, v in data.items():
+        if k in valid_keys and k not in exclude_fields:
+            if k == "xray_metadata" and v is not None:
+                update_kwargs[k] = XRayMetadata(**v)
+            elif v is not None:
+                if isinstance(v, list):
+                    # Coerce iterables back to tuples if needed, e.g. for ci95
+                    v = tuple(v)
+                update_kwargs[k] = v
+    
+    return replace(set_pmt, **update_kwargs)
 
 # ----------------------------------------
 # --- Run metadata storing           -----
@@ -312,8 +275,8 @@ def save_run_metadata(run: Run) -> None:
         "sets": [
             {
                 "name": s.source_dir.name,
-                "v_gate": s.metadata['gate'],
-                "v_anode": s.metadata['anode'],
+                "v_gate": s.gate,
+                "v_anode": s.anode,
                 "drift_field": s.drift_field,
                 "time_drift": s.time_drift,
                 "n_waveforms": len(s.filenames) if s.filenames else 0,
@@ -387,14 +350,14 @@ def store_s2area(s2: S2Areas,
     # Add set metadata if provided
     if set_pmt is not None:
         results_dict["set_metadata"] = {
-            "t_s1": set_pmt.metadata.get("t_s1"),
-            "t_s1_std": set_pmt.metadata.get("t_s1_std"),
-            "t_s2_start": set_pmt.metadata.get("t_s2_start"),
-            "t_s2_start_std": set_pmt.metadata.get("t_s2_start_std"),
-            "t_s2_end": set_pmt.metadata.get("t_s2_end"),
-            "t_s2_end_std": set_pmt.metadata.get("t_s2_end_std"),
-            "s2_duration": set_pmt.metadata.get("s2_duration"),
-            "s2_duration_std": set_pmt.metadata.get("s2_duration_std"),
+            "t_s1": getattr(set_pmt, "t_s1", None),
+            "t_s1_std": getattr(set_pmt, "t_s1_std", None),
+            "t_s2_start": getattr(set_pmt, "t_s2_start", None),
+            "t_s2_start_std": getattr(set_pmt, "t_s2_start_std", None),
+            "t_s2_end": getattr(set_pmt, "t_s2_end", None),
+            "t_s2_end_std": getattr(set_pmt, "t_s2_end_std", None),
+            "s2_duration": getattr(set_pmt, "s2_duration", None),
+            "s2_duration_std": getattr(set_pmt, "s2_duration_std", None),
             "drift_field": float(set_pmt.drift_field) if set_pmt.drift_field is not None else None,
             "EL_field": float(set_pmt.EL_field) if set_pmt.EL_field is not None else None,
             "time_drift": float(set_pmt.time_drift) if set_pmt.time_drift is not None else None,
@@ -442,7 +405,7 @@ def load_s2area(set_pmt: SetPmt, input_dir: Optional[Path] = None) -> S2Areas:
             areas=arr['s2_areas'],
             uids=arr['uids'],
             method=results.get("method", "loaded_from_npz"),
-            params=results.get("params", {"set_metadata": set_pmt.metadata}),
+            params=results.get("params", {"set_metadata": asdict(set_pmt)}),
             mean=results.get("mean"),
             sigma=results.get("sigma"),
             ci95=results.get("ci95"),
@@ -455,181 +418,8 @@ def load_s2area(set_pmt: SetPmt, input_dir: Optional[Path] = None) -> S2Areas:
             areas=arr['s2_areas'],
             uids=arr['uids'],
             method="loaded_from_npz",
-            params={"set_metadata": set_pmt.metadata}
+            params={"set_metadata": asdict(set_pmt)}
         )
-
-# ------------------------------------------
-# --- XRayResults storage and retrieval  ---
-# ------------------------------------------
-# NOTE: These functions are obsolete and kept for backward compatibility only.
-# New X-ray workflow uses store_s2area() with suffix="xray_areas" instead.
-
-def store_xray_results(xr, path: Optional[PathLike] = None) -> None:
-    """
-    DEPRECATED: Store XRayResults in .npy file inside the set's directory.
-    
-    This function is obsolete. Use store_s2area() with suffix="xray_areas" instead.
-    """
-    raise NotImplementedError(
-        "store_xray_results() is deprecated. "
-        "Use store_s2area(s2_areas, set_pmt, suffix='xray_areas') instead."
-    )
-
-
-def store_xrayset(xrays, outdir: Optional[Path] = None) -> None:
-    """
-    DEPRECATED: Store results of X-ray classification.
-    
-    This function is obsolete. Use store_s2area() with suffix="xray_areas" instead.
-    """
-    raise NotImplementedError(
-        "store_xrayset() is deprecated. "
-        "Use store_s2area(s2_areas, set_pmt, suffix='xray_areas') instead."
-    )
-
-    # Aggregate rejection reasons
-    rejection_reasons = {}
-    for ev in xrays.events:
-        if not ev.accepted:
-            reason = ev.reason or "unknown"
-            rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
-
-    # Filter out non-serializable items from params (e.g., 'integrator' function)
-    params_serializable = {
-        k: v for k, v in xrays.params.items() 
-        if k != 'integrator' and not callable(v)
-    }
-    
-    # Summary statistics only (no individual events)
-    meta = {
-        "set_id": str(xrays.set_id),  # Convert Path to string for JSON serialization
-        "params": params_serializable,
-        "n_events": len(xrays.events),
-        "n_accepted": sum(ev.accepted for ev in xrays.events),
-        "n_rejected": sum(not ev.accepted for ev in xrays.events),
-        "rejection_reasons": rejection_reasons,
-        "accepted_area_stats": {
-            "mean": float(np.mean(accepted_areas)) if accepted_areas else None,
-            "std": float(np.std(accepted_areas)) if accepted_areas else None,
-            "min": float(np.min(accepted_areas)) if accepted_areas else None,
-            "max": float(np.max(accepted_areas)) if accepted_areas else None,
-        }
-    }
-
-    with open(outdir / "xray_results.json", "w") as f:
-        json.dump(meta, f, indent=2)
-
-
-
-def load_xray_results(run: Run) -> dict[str, XRayResults]:
-    """
-    Load X-ray classification results for all sets in a run.
-    
-    Args:
-        run: Run object with sets to load X-ray results from
-        
-    Returns:
-        Dictionary mapping set names to XRayResults objects
-        
-    Raises:
-        ValueError: If no X-ray results could be loaded from any set
-    """
-    raise NotImplementedError(
-        "store_xrayset() is deprecated. "
-        "Use store_s2area(s2_areas, set_pmt, suffix='xray_areas') instead."
-    )
-    xray_results = {}
-    
-    for set_pmt in run.sets:
-        xray_file = set_pmt.source_dir / 'xray_areas.npy'
-        
-        if not xray_file.exists():
-            print(f"Warning: X-ray results file not found for {set_pmt.source_dir.name}")
-            continue
-            
-        try:
-            # Load the numpy array of XRayEvent objects
-            events = np.load(xray_file, allow_pickle=True)
-            
-            # Convert array to list if needed
-            if isinstance(events, np.ndarray):
-                events = events.tolist()
-            
-            # Create XRayResults object
-            xray_result = XRayResults(
-                set_id=set_pmt.source_dir,
-                events=events,
-                params={}  # Add params if you have them stored elsewhere
-            )
-            
-            xray_results[set_pmt.source_dir.name] = xray_result
-            
-        except Exception as e:
-            print(f"Warning: Failed to load X-ray results from {xray_file}: {e}")
-            continue
-    
-    if not xray_results:
-        raise ValueError("No X-ray results could be loaded from any set")
-    
-    return xray_results
-
-
-def aggregate_xray_areas(run: Run, output_dir: Optional[Path] = None) -> Run:
-    """
-    Aggregate X-ray areas from all sets in a run and save combined result.
-    
-    X-rays are not affected by drift field (except statistics), so we combine
-    all accepted X-ray events across all sets to improve statistics for fitting.
-    
-    Args:
-        run: Run object with X-ray classification completed
-        output_dir: Optional output directory (defaults to run.root_directory/processed_data)
-        
-    Returns:
-        Unchanged run object (pure side effect: saves combined areas to disk)
-        
-    Raises:
-        FileNotFoundError: If no X-ray results found for any set
-    """
-    all_areas = []
-    all_uids = []
-    
-    for set_pmt in run.sets:
-        xray_file = get_output_root(set_pmt.source_dir.parent) / "s2_areas" / f"{set_pmt.source_dir.name}_xray_areas.npz"
-        
-        if not xray_file.exists():
-            print(f"  ⚠ No X-ray results for {set_pmt.source_dir.name} - skipping")
-            continue
-        
-        data = np.load(xray_file)
-        areas = data['xray_areas']
-        uids = data['uids']
-        all_areas.append(areas)
-        all_uids.append(uids)
-        print(f"  ✓ Loaded {len(areas)} X-ray events from {set_pmt.source_dir.name}")
-    
-    if not all_areas:
-        raise FileNotFoundError("No X-ray results found for any set in run")
-    
-    combined_areas = np.concatenate(all_areas)
-    combined_uids = np.concatenate(all_uids)
-    print(f"\n  📊 Combined: {len(combined_areas)} total X-ray events")
-    
-    # Save combined areas and UIDs
-    if output_dir is None:
-        output_dir = run.root_directory / "processed_data"
-    
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    output_file = output_dir / f"{run.run_id}_xray_areas_combined.npz"
-    np.savez_compressed(output_file,
-                       xray_areas=combined_areas,
-                       uids=combined_uids.astype(np.uint32))
-    print(f"  💾 Saved combined areas and UIDs to {output_file.name}")
-    
-    return run  # ← Return run unchanged
-
 
 def store_isotope_df(df: pd.DataFrame, filepath: PathLike) -> None:
     """
@@ -666,7 +456,7 @@ def save_figure(fig, filename: PathLike, dpi: int = 150) -> None:
 # --- Fit result saving and loading  -----
 # ----------------------------------------
 
-def save_fit_result(result: ModelResult, output_path: str | Path) -> Path:
+def save_fit_result(result: ModelResult, output_path: Union[str, Path]) -> Path:
     """
     Saves an lmfit ModelResult to a human-readable JSON file.
     
@@ -690,13 +480,8 @@ def save_fit_result(result: ModelResult, output_path: str | Path) -> Path:
         
     return output_path
 
-def load_fit_result(input_path: str | Path) -> ModelResult:
+def load_fit_result(input_path: Union[str, Path]) -> ModelResult:
     """
     Loads an lmfit ModelResult from a JSON file for downstream plotting or analysis.
     """
-    input_path = Path(input_path)
-    
-    with open(input_path, 'r') as f:
-        json_data = f.read()
-        
-    return lmfit.model.load_modelresult(json_data)
+    return lmfit.model.load_modelresult(str(input_path))

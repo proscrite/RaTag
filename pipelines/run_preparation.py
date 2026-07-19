@@ -17,6 +17,7 @@ from RaTag.workflows.timing_estimation import (estimate_s1_in_run, estimate_s2_i
 
 def prepare_run(run: Run,
                 max_files: Optional[int] = None,
+                max_frames: Optional[int] = None,
                 max_frames_s1: int = 200,
                 max_frames_s2: int = 500,
                 threshold_s1: float = 1.0,
@@ -49,6 +50,9 @@ def prepare_run(run: Run,
     print("=" * 60)
     print(f"PREPARING RUN: {run.run_id}")
     print("=" * 60)
+
+    if max_files is None:
+        max_files = max_frames
     
     steps = [
         partial(initialize_run, max_files=max_files),

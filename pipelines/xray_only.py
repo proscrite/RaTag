@@ -231,7 +231,7 @@ def xray_pipeline_replot(run: Run,
     print("="*60)
     
     # Check that we have cached results
-    sets_with_results = [s for s in run.sets if 'n_accepted' in s.metadata]
+    sets_with_results = [s for s in run.sets if s.n_accepted is not None]
     
     if len(sets_with_results) == 0:
         print("  ⚠ No cached classification results found - run classification first")

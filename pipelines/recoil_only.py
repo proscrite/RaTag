@@ -34,6 +34,7 @@ from RaTag.workflows.recoil_integration import (integrate_s2_in_run,
 def recoil_pipeline(run: Run,
                     range_sets: slice = None,
                     max_frames: Optional[int] = None,
+                    max_files: Optional[int] = None,
                     integration_config: IntegrationConfig = IntegrationConfig(),
                     fit_config: FitConfig = FitConfig(),
                     force_refit: bool = False) -> Run:
@@ -56,6 +57,7 @@ def recoil_pipeline(run: Run,
         run: Prepared Run object
         range_sets: Optional slice to process subset of sets
         max_frames: Optional limit on frames per set (testing)
+        max_files: Alias for max_frames (backward compatibility)
         integration_config: S2 integration parameters
         fit_config: Gaussian fitting parameters
         
@@ -67,6 +69,9 @@ def recoil_pipeline(run: Run,
         >>> run = prepare_run(my_run)
         >>> run = recoil_pipeline(run, max_frames=100)
     """
+    # Backward compatibility: max_files is an alias for max_frames
+    if max_files is not None:
+        max_frames = max_files
     print("\n" + "="*60)
     print(f"ION RECOIL ANALYSIS PIPELINE: {run.run_id}")
     print("="*60)
@@ -167,12 +172,20 @@ def recoil_pipeline_multiiso(run: Run,
 # EXAMPLE: Custom Pipeline Variations
 # ============================================================================
 
-def recoil_pipeline_quick(run: Run, max_frames: int = 50) -> Run:
+def recoil_pipeline_quick(run: Run, max_frames: int = 50, max_files: int = None) -> Run:
     """
     Quick test version - limited frames, skip field plot.
     
     Useful for testing integration settings on a small sample.
+    
+    Args:
+        run: Prepared Run object
+        max_frames: Optional limit on frames per set
+        max_files: Alias for max_frames (backward compatibility)
     """
+    # Backward compatibility: max_files is an alias for max_frames
+    if max_files is not None:
+        max_frames = max_files
     return integrate_s2_in_run(run, max_frames=max_frames)
 
 
@@ -201,7 +214,8 @@ def recoil_downstream_pipeline(run: Run,
     return pipe_run(run, *steps)
 
 def recoil_pipeline_replot(run: Run,
-                           fit_config: FitConfig = FitConfig()) -> Run:
+                           fit_config: FitConfig = FitConfig(),
+                           max_files: int = None) -> Run:
     """
     Refit and regenerate plots from cached S2 integration results.
     

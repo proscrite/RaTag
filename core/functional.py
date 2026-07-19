@@ -215,18 +215,18 @@ def apply_workflow_to_run(run,
         # Check cache: both metadata key AND data file must exist
         data_file = data_file_dir / f"{set_pmt.source_dir.name}_{data_file_suffix}"
         
-        has_cache_key = cache_key in set_pmt.metadata
+        has_cache_key = getattr(set_pmt, cache_key, None) is not None
         has_data_file = data_file.exists()
         
         if has_cache_key and has_data_file:
-            print(f"  📂 Loaded from cache ({cache_key}={set_pmt.metadata.get(cache_key)}, data file exists)")
+            print(f"  📂 Loaded from cache ({cache_key}={getattr(set_pmt, cache_key, None)}, data file exists)")
             print(f"   File path: {data_file}")
             updated_sets.append(set_pmt)
             continue
         
         # Debug: why cache failed
         if not has_cache_key:
-            print(f"  ⚠ Cache miss: '{cache_key}' not in metadata (has: {list(set_pmt.metadata.keys())[:5]}...)")
+            print(f"  ⚠ Cache miss: '{cache_key}' not in metadata (metadata missing)")
         if not has_data_file:
             print(f"  ⚠ Cache miss: data file not found at {data_file}")
         

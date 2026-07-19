@@ -45,18 +45,18 @@ def _get_time_windows(set_pmt: SetPmt) -> tuple[float, float, float]:
 
     """
     # Check that t_s1 is available
-    if 't_s1' not in set_pmt.metadata:
+    if set_pmt.t_s1 is None:
         raise ValueError(f"Set {set_pmt.source_dir.name} missing t_s1 - run timing estimation first")
     
     # Extract and ensure proper float type (metadata might store as string)
-    t_s1 = float(set_pmt.metadata['t_s1'])
+    t_s1 = float(set_pmt.t_s1)
     
     # Determine S2 start: prefer t_s2_start, fallback to t_s1 + time_drift
-    if 't_s2_start' in set_pmt.metadata or 't_s2_end' not in set_pmt.metadata:
+    if set_pmt.t_s2_start is not None or set_pmt.t_s2_end is None:
         raise ValueError(f"Set {set_pmt.source_dir.name} missing S2 window metadata")
     
-    s2_start = float(set_pmt.metadata['t_s2_start'])
-    s2_end = float(set_pmt.metadata['t_s2_end'])
+    s2_start = float(set_pmt.t_s2_start)
+    s2_end = float(set_pmt.t_s2_end)
     
     return t_s1, s2_start, s2_end
 

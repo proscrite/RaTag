@@ -10,16 +10,19 @@ from dataclasses import replace
 from typing import Optional, cast
 
 from RaTag.core.datatypes import Run, SetPmt
-from RaTag.core.physics import with_gas_density
+from RaTag.el_tpc.physics import gas_density_cm3
 from RaTag.core.constructors import populate_run as _populate_run, set_from_dir, set_fields, set_transport_properties
 from RaTag.core.dataIO import save_set_metadata, load_set_metadata
 from RaTag.core.functional import map_over
 
 
-def add_gas_density(run: Run) -> Run:
+def with_gas_density(run) -> Run:
     """Add gas density to run based on experimental parameters."""
-    run = with_gas_density(run)
-    print(f"Gas density: {run.gas_density:.3e} cm⁻³")
+    if run.pressure is not None and run.temperature is not None:
+        n_cm3 = gas_density_cm3(run.pressure, run.temperature)
+        run = replace(run, gas_density=n_cm3)
+    else:
+        raise ValueError("Pressure and temperature must be set to compute gas density.")
     return run
 
 
