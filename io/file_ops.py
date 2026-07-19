@@ -278,8 +278,12 @@ def load_cache(set_obj: Union[SetPmt, SetAlpha]) -> Optional[Union[SetPmt, SetAl
         
     valid_keys = {f.name for f in fields(set_obj)}
     
+    # Pure 1:1 mapping.
     update_kwargs = {k: v for k, v in data.items() if k in valid_keys}
-            
+    
+    if 'source_dir' in update_kwargs and isinstance(update_kwargs['source_dir'], str):
+        update_kwargs['source_dir'] = Path(update_kwargs['source_dir'])
+    
     return replace(set_obj, **update_kwargs)
 
 
