@@ -24,8 +24,8 @@ def resolve_multiiso_separation(set_pmt: SetPmt, set_alpha: SetAlpha, force: boo
     alpha_arrays = file_ops.load_npz_arrays(set_alpha, 'alpha_energies')
 
     # 2. Safely merge on UIDs
-    df_pmt = pd.DataFrame(pmt_arrays).drop_duplicates(subset=['uids'])
-    df_alpha = pd.DataFrame(alpha_arrays).drop_duplicates(subset=['uids'])
+    df_pmt = pd.DataFrame({'s2_areas': pmt_arrays['s2_areas'], 'uids': pmt_arrays['uids']})
+    df_alpha = pd.DataFrame({'energies': alpha_arrays['energies'], 'uids': alpha_arrays['uids']})
     df_merged = pd.merge(df_pmt, df_alpha, on='uids', how='inner')
 
     spawned_data = []
