@@ -2,6 +2,7 @@ from typing import Optional, Dict, Union, List
 import math
 
 import numpy as np
+from scipy.ndimage import maximum_filter1d
 from typing import Dict, Any, Tuple
 from dataclasses import replace
 import matplotlib.pyplot as plt
@@ -135,12 +136,14 @@ def find_s1(wf: Waveform, config: TimingConfig) -> np.ndarray:
 def find_s2(wf: Waveform, config: TimingConfig, t_min_s2: float) -> tuple[np.ndarray, np.ndarray]:
     """
     Peak-Anchored Vectorized S2 boundary tracking.
-    Now includes a heavy macroscopic envelope filter and a strict Minimum Area cut 
-    to reject shifted S1s and noise. Returns (starts, ends).
+    Uses a macroscopic envelope filter and integrates over the pedestal-subtracted 
+    waveform to accurately assess the absolute S2 Area.
     """
-    # 1. HEAVY Macroscopic Smoothing (1500 samples / 300 ns)
-    wf_smooth = moving_average(wf, window=config.s2_window_ma)
-    wf_clip = threshold_clip(wf_smooth, threshold=config.bs_threshold)
+    # 0. Enforce Zero-Centered Baseline
+    wf_sub = subtract_pedestal(wf, config.n_pedestal)
+    
+    # 1. Threshold Clipping (Applied to subtracted waveform!)
+    wf_clip = threshold_clip(wf_sub, threshold=config.bs_threshold)
     
     mask = wf_clip.t > t_min_s2
     if not np.any(mask):
@@ -150,19 +153,20 @@ def find_s2(wf: Waveform, config: TimingConfig, t_min_s2: float) -> tuple[np.nda
     t_sliced = wf_clip.t[mask]
     v_sliced = wf_clip.v[:, mask] if wf_clip.ff else wf_clip.v[mask][np.newaxis, :]
     
-    # We need the raw waveform to compute the true, undiminished S2 area
-    v_raw = wf.v[:, mask] if wf.ff else wf.v[mask][np.newaxis, :]
-    
-    # 2. Anchor to the Global Maximum
+    # 2. Envelope Detection (Maximum Filter)
+    # Bridges the THGEM avalanche gaps without losing true amplitude
+    v_envelope = maximum_filter1d(v_sliced, size=500, axis=1)
+
+    # 3. Anchor to the Global Maximum
     peak_idx = np.argmax(v_sliced, axis=1)
     peak_heights = v_sliced[np.arange(len(v_sliced)), peak_idx]
     peak_times = t_sliced[peak_idx]
     
     has_s2_height = peak_heights > config.s2_threshold
     
-    # 3. Dynamic Outward Boundary Search
+    # 4. Dynamic Outward Boundary Search (using the envelope)
     dynamic_thresh = np.maximum(peak_heights * config.s2_fraction, config.s2_threshold)[:, np.newaxis]
-    below_thresh = v_sliced <= dynamic_thresh
+    below_thresh = v_envelope <= dynamic_thresh
     
     idx_2d = np.arange(v_sliced.shape[1])[np.newaxis, :]
     peak_idx_2d = peak_idx[:, np.newaxis]
@@ -182,25 +186,25 @@ def find_s2(wf: Waveform, config: TimingConfig, t_min_s2: float) -> tuple[np.nda
     has_end_drop = np.any(valid_below_right, axis=1)
     end_idx = np.where(has_end_drop, np.maximum(end_below_idx - 1, 0), v_sliced.shape[1] - 1)
     
-    # 4. Area Integration using the RAW waveform
-    dt = wf.t[1] - wf.t[0]
-    t_2d = wf.t[np.newaxis, :]
+    # 5. Area Integration using the SUBTRACTED waveform
+    dt = wf_sub.t[1] - wf_sub.t[0]
+    t_2d = wf_sub.t[np.newaxis, :]
     peak_times_2d = peak_times[:, np.newaxis]
     
     local_mask = (t_2d >= peak_times_2d - 1.5) & (t_2d <= peak_times_2d + 1.5)
-    v_full = wf.v if wf.ff else wf.v[np.newaxis, :]
+    v_full = wf_sub.v if wf_sub.ff else wf_sub.v[np.newaxis, :]
     s2_areas = np.sum(v_full * local_mask, axis=1) * dt
     
     widths = t_sliced[end_idx] - t_sliced[start_idx]
-    # 5. Apply the Cuts
-    # The candidate must be tall enough AND have a massive area (rejecting S1s)
+    
+    # 6. Apply the Cuts
     valid_cut = (
         has_s2_height & 
         (peak_idx > 0) &                            # VETO: We sliced into a falling tail
         (widths >= config.s2_min_width) &           # VETO: The boundaries collapsed
-        (s2_areas >= config.s2_min_area) &          # VETO: Too small (shifted S1)
-        (s2_areas <= config.s2_max_area) &           # VETO: Too large (X-rays / alphas)
-        (t_sliced[start_idx] <= config.s2_start_max)  # VETO: S2 start time too late
+        (s2_areas >= config.s2_min_area) &          # VETO: Too small (shifted S1 or noise)
+        (s2_areas <= config.s2_max_area) &          # VETO: Too large (X-rays / alphas)
+        (t_sliced[start_idx] <= getattr(config, 's2_start_max', 0.5))  # VETO: S2 start time too late
     )
 
     starts = np.full(wf_clip.nframes, np.nan, dtype=np.float32)
@@ -210,6 +214,7 @@ def find_s2(wf: Waveform, config: TimingConfig, t_min_s2: float) -> tuple[np.nda
     ends[valid_cut] = t_sliced[end_idx[valid_cut]]
     
     return starts, ends
+
 # ============================================================================
 # SET-LEVEL WORKFLOW 
 # ============================================================================
