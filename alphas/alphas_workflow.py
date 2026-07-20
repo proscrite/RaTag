@@ -100,6 +100,7 @@ def map_alpha_events(run: Run,
     if not getattr(run, 'alpha_sets', None):
         print("  ⚠ No alpha_sets found in Run. Bootstrap the run first.")
         return run
+    print(f"Force flag: {force}")
     savgol_window = getattr(config, 'savgol_window', 501) if config else 501
 
     bound_alphas = lambda s: resolve_alpha_energies(s, max_frames=max_frames, 

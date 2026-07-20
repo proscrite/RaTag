@@ -38,6 +38,7 @@ multi_isotope:
 
 # Energy mapping and calibration configuration
 energy_mapping:
+  force: true
   generate: true            # Set to false to skip regeneration if maps exist
   max_frames: null          # Number of frames to process (null = all)
   pattern: "*.wfm"       # Glob pattern for alpha channel files

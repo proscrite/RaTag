@@ -28,8 +28,8 @@ def pipeline_alpha_calibration(run: Run, config: dict = None) -> Run:
     alpha_config = config.get('energy_mapping', AlphaCalibrationConfig())
     alpha_config = AlphaCalibrationConfig(**{k: v for k, v in alpha_config.items() if hasattr(AlphaCalibrationConfig, k)})
     
-    force = config.get('force', False)
-    max_frames = config.get('max_frames', None)
+    force = alpha_config.force
+    max_frames = alpha_config.max_frames
     
     
     # 1. Extraction
