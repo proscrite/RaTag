@@ -63,7 +63,7 @@ def resolve_alpha_energies(set_alpha: SetAlpha,
     print("  🔹 Resolving alpha energies for:", set_alpha.source_dir.name)
     out_uids, out_energies = [], []
     
-    for wf in file_ops.iter_alpha_waveforms(set_alpha, max_files=max_files):
+    for wf in file_ops.iter_alpha_waveforms(set_alpha, max_files=max_files,  show_progress=True):
         v_2d = wf.v if wf.ff else wf.v[np.newaxis, :]
 
         energies = _compute_alpha_energies(v_2d, savgol_window=savgol_window)
