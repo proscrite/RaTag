@@ -6,13 +6,18 @@ from RaTag.core.datatypes import SetPmt
 
 def parse_file_seq_from_name(fname: str) -> int:
     base = Path(fname).name
-    m = re.search(r'_(\d+)Wfm', base)
-    if m:
+
+    if m := re.search(r'_Batch(\d+)', base, re.IGNORECASE):
         return int(m.group(1))
-    # fallback but conservative
-    m2 = re.search(r'_(\d+)', base)
-    if m2:
-        return int(m2.group(1))
+    
+    if m := re.search(r'_(\d+)Wfm', base, re.IGNORECASE):
+        return int(m.group(1))
+        
+    #  Legacy fallback: Anchored to the end of the filename
+    # Matches "_001.wfm" or "_001_CH3.wfm", physically avoiding datestamps
+    if m := re.search(r'_(\d+)(?:_CH\d+)?\.wfm$', base, re.IGNORECASE):
+        return int(m.group(1))
+    
     # Last-resort - raise to avoid silent mis-parses
     raise ValueError(f"Cannot parse file_seq from filename {base}")
 

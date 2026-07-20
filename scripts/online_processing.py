@@ -58,6 +58,24 @@ def monitor_and_process(config_path: Path, poll_interval: int = 10, stable_thres
     
     try:
         while True:
+            run_is_complete = (run_dir / "RUN_COMPLETE.lock").exists()
+
+            current_dirs = [d for d in run_dir.iterdir() if d.is_dir() and not d.name.startswith('.')]
+            unprocessed_dirs = [d for d in current_dirs if d not in processed_dirs]
+            
+            # 2. Timeout & Graceful Exit Logic
+            if not unprocessed_dirs:
+                if run_is_complete:
+                    print(f"\n[{datetime.now().strftime('%H:%M:%S')}] RUN_COMPLETE.lock detected and all directories processed. Exiting gracefully.")
+                    break
+                    
+                idle_ticks += 1
+                if idle_ticks >= global_timeout_ticks:
+                    print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Global timeout reached. Assuming run is complete. Exiting.")
+                    break
+            else:
+                idle_ticks = 0
+                
             current_dirs = [d for d in run_dir.iterdir() if d.is_dir() and not d.name.startswith('.')]
             unprocessed_dirs = [d for d in current_dirs if d not in processed_dirs]
             
