@@ -17,7 +17,7 @@ from RaTag.plotting import (
     catch_plot_errors, build_fig_grid
 )
 from RaTag.el_tpc.fit_s2_area import fit_s2_crystalball, v_crystalball_right
-from thgem_tpc.timing_workflow import compute_timing_statistics
+from RaTag.thgem_tpc.timing_workflow import compute_timing_statistics
 # ============================================================================
 # 1. PURE MATH & PHYSICS (The Vectorized Engine)
 # ============================================================================
@@ -113,18 +113,19 @@ def find_s2(wf, config = TimingConfig()):
         (s2_areas < config.s2_max_area)
     )
 
-    filtered_areas = s2_areas[accepted_events]
-    filtered_peak_times = peak_times[accepted_events]
-    filtered_start_times = start_time[accepted_events]
-    filtered_end_times = end_time[accepted_events]
-    filtered_uids = wf.uids[accepted_events]
+    
+    filtered_areas = s2_areas[accepted_events] if np.sum(accepted_events) > 0 else np.array([])
+    filtered_peak_times = peak_times[accepted_events] if np.sum(accepted_events) > 0 else np.array([])
+    filtered_start_times = start_time[accepted_events] if np.sum(accepted_events) > 0 else np.array([])
+    filtered_end_times = end_time[accepted_events] if np.sum(accepted_events) > 0 else np.array([])
+    filtered_uids = wf.uids[accepted_events] if np.sum(accepted_events) > 0 else np.array([])
     return {
-        's2_areas': filtered_areas,
-        'peak_times': filtered_peak_times,
-        'start_times': filtered_start_times,
-        'end_times': filtered_end_times,
-        'uids': filtered_uids,
-        'n_accepted': np.sum(accepted_events)
+        's2_areas': np.atleast_1d(filtered_areas),
+        'peak_times': np.atleast_1d(filtered_peak_times),
+        'start_times': np.atleast_1d(filtered_start_times),
+        'end_times': np.atleast_1d(filtered_end_times),
+        'uids': np.atleast_1d(filtered_uids),
+        'n_accepted': int(np.sum(accepted_events))
     }
 # ============================================================================
 # 2. SET-LEVEL ETL (Cached Solver)
@@ -133,7 +134,7 @@ def find_s2(wf, config = TimingConfig()):
 @allow_force
 @load_cached_metadata(target_attr='n_areas_recoil')
 @load_cached_npz(signal_type='s2_areas')
-@require_attributes('t_s2_start', 't_s2_end')
+# @require_attributes('t_s2_start', 't_s2_end')
 @write_metadata(target_attr='n_areas_recoil')
 @write_npz_arrays(signal_type='s2_areas')
 @limit_frames
@@ -145,11 +146,18 @@ def resolve_set_recoils(set_pmt: SetPmt,
     """
     total_frames = 0
     accepted_frames = 0
-
+    accum_areas, accum_uids, accum_starts, accum_ends, accum_peaks = [], [], [], [], []
     for wf in iter_waveforms(set_pmt, max_files=max_files, show_progress=True):
         result_dict = find_s2(wf, config=config)
         total_frames += wf.nframes
         accepted_frames += result_dict['n_accepted']
+        
+        if result_dict['n_accepted'] > 0:
+            accum_areas.append(result_dict['s2_areas'])
+            accum_uids.append(result_dict['uids'])
+            accum_starts.append(result_dict['start_times'])
+            accum_ends.append(result_dict['end_times'])
+            accum_peaks.append(result_dict['peak_times'])
 
     retention = float((accepted_frames / total_frames * 100) if total_frames > 0 else 0.0)
     print(f"  {set_pmt.source_dir.name}: {accepted_frames}/{total_frames} events ({retention:.1f}%)")
@@ -157,13 +165,13 @@ def resolve_set_recoils(set_pmt: SetPmt,
     stats = {}
     area_arrays = {}
     timing_arrays = {}
-    if result_dict['s2_areas']:
-        start_concat = np.concatenate(result_dict['start_times'])
-        end_concat = np.concatenate(result_dict['end_times'])
-        uids_concat = np.concatenate(result_dict['uids'])
+    if len(result_dict['s2_areas']) > 0:
+        start_concat = np.concatenate(accum_areas)
+        end_concat = np.concatenate(accum_ends)
+        uids_concat = np.concatenate(accum_uids)
 
         area_arrays = {
-            "s2_areas": np.concatenate(result_dict['s2_areas']),
+            "s2_areas": np.concatenate(accum_areas),
             "uids": uids_concat
         }
 
@@ -171,7 +179,7 @@ def resolve_set_recoils(set_pmt: SetPmt,
             "uids": uids_concat,
             "t_s2_start": start_concat,
             "t_s2_end": end_concat,
-            "t_s2_peak":  np.concatenate(result_dict['peak_times'])
+            "t_s2_peak":  np.concatenate(accum_peaks)
         }
 
         stats.update(compute_timing_statistics(start_concat, name='t_s2_start'))
