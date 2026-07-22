@@ -185,8 +185,6 @@ def resolve_set_recoils(set_pmt: SetPmt,
         stats.update(compute_timing_statistics(start_concat, name='t_s2_start'))
         stats.update(compute_timing_statistics(end_concat, name='t_s2_end'))
 
-        if len(uids_concat) == accepted_frames:
-            print(f"  ✓ All {accepted_frames} accepted events have valid UIDs.")
         stats['n_areas_recoil'] = len(uids_concat)
         
 
@@ -267,7 +265,7 @@ def map_recoil_fits(run: Run,
 
     bound_fitter = lambda s: resolve_set_s2_fit(s, config=config, force=force)
     
-    updated_sets = map_over(run.sets, bound_fitter, catch_errors=True)
+    updated_sets = map_over(run.sets, bound_fitter, catch_errors=False)
     
     return replace(run, sets=updated_sets)
 

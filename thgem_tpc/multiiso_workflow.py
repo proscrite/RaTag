@@ -51,21 +51,38 @@ def resolve_multiiso_separation(set_pmt: SetPmt, set_alpha: SetAlpha, force: boo
 # 2. RUN-LEVEL ORCHESTRATOR
 # ============================================================================
 
-def map_multiiso_separation(run: Run, force: bool = False) -> Run:
+def map_multiiso_separation(run: Run, force: bool = False) -> dict[str, Run]:
     """
     Strictly zips PMT and Alpha sets together, separating the data and 
-    flattening the spawned subset results back into run.sets.
+    spawning a distinct Run object for each isotope.
     """
     print(f"\n" + "="*60 + f"\nSEPARATING MULTI-ISOTOPE SETS: {run.run_id}\n" + "="*60)
     
-    all_spawned_sets = []
+    # Dictionary to hold the grouped sets: { 'Th228': [SetPmt, ...], 'Ra224': [...] }
+    isotope_groups = {}
     
     # STRICT PAIRING BY DEFINITION
     for set_pmt, set_alpha in zip(run.sets, run.alpha_sets):
         print(f"\n  Mapping {set_pmt.source_dir.name}...")
         
-        spawned_subsets = resolve_multiiso_separation(set_pmt, set_alpha, force=force)
-        all_spawned_sets.extend(spawned_subsets)
+        # The decorator returns a flat list of the spawned SetPmt clones
+        spawned_sets = resolve_multiiso_separation(set_pmt, set_alpha, force=force)
         
-    # Overwrite the run's sets with the flattened list of cloned, isotope-specific sets
-    return replace(run, sets=all_spawned_sets)
+        # Route each clone into its respective isotope group
+        for s_pmt in spawned_sets:
+            iso = s_pmt.target_isotope
+            if iso not in isotope_groups:
+                isotope_groups[iso] = []
+            isotope_groups[iso].append(s_pmt)
+            
+    # Convert the grouped sets into fully independent Run objects
+    spawned_runs = {}
+    for iso, grouped_sets in isotope_groups.items():
+        # Spawn a new Run, explicitly tagging the target isotope and assigning the subsets.
+        iso_run_id = f"{run.run_id}_{iso}"
+        spawned_runs[iso] = replace(run, run_id=iso_run_id,
+                                    target_isotope=iso, 
+                                    sets=grouped_sets, alpha_sets=[] )
+        print(f"\n  ✓ Spawned new run object: {iso_run_id} with {len(grouped_sets)} sets.")
+        
+    return spawned_runs

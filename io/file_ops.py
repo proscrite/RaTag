@@ -13,7 +13,7 @@ PathLike = Union[str, Path]
 
 from RaTag.core.decorators import track_iterator_progress
 from RaTag.core.dataIO import load_wfm, load_alpha
-from RaTag.core.paths import get_output_root
+from RaTag.core.paths import get_output_root, get_npz_path, get_cache_path
 from RaTag.core.datatypes import PMTWaveform, SetAlpha, Waveform, SiliconWaveform, SetPmt, SetAlpha, Run, S2Areas
 SetT = TypeVar("SetT", SetPmt, SetAlpha)
 
@@ -243,25 +243,12 @@ def detect_fastframe_properties(set_dir: Path, filenames: List[str]) -> Tuple[bo
 # ===========================================================================
 
 
-def _get_cache_path(set_obj: Union[SetPmt, SetAlpha]) -> Path:
-    """Helper to centralize where the JSON lives."""
-    metadata_dir = get_output_root(set_obj.source_dir.parent) / "set_summaries"
-    metadata_dir.mkdir(parents=True, exist_ok=True)
-
-    # Route to different files based on the class of the object
-    if isinstance(set_obj, SetAlpha):
-        suffix = "_alphas_metadata.json"
-    else:
-        suffix = "_metadata.json"
-    return metadata_dir / f"{set_obj.source_dir.name}{suffix}"
-
-
 def save_cache(set_obj: Union[SetPmt, SetAlpha]) -> None:
     """
     Saves the current computed state to JSON.
     Relies on the object being fully hydrated beforehand to prevent data loss.
     """
-    cache_path = _get_cache_path(set_obj)
+    cache_path = get_cache_path(set_obj)
     
     # Structural fields that belong to the raw scan, not the compute cache
     exclude = {"source_dir", "filenames", "multiiso"}
@@ -282,7 +269,7 @@ def save_cache(set_obj: Union[SetPmt, SetAlpha]) -> None:
 
 def load_cache(set_obj: Union[SetPmt, SetAlpha]) -> Optional[Union[SetPmt, SetAlpha]]:
     """Loads computed fields from JSON cache if available and valid."""
-    cache_path = _get_cache_path(set_obj)
+    cache_path = get_cache_path(set_obj)
     
     if not cache_path.exists():
         return None
@@ -304,24 +291,14 @@ def load_cache(set_obj: Union[SetPmt, SetAlpha]) -> Optional[Union[SetPmt, SetAl
 # ============================================================================
 #  .npz load/save for dense arrays (e.g. areas, timings)
 # ============================================================================
-def _get_npz_path(set_obj, signal_type: str) -> Path:
-    """Centralized path routing for all NPZ files."""
-    root = get_output_root(set_obj.source_dir.parent)
-    
-    # Routing for multi-isotope spawned sets (e.g., 'isotope_areas/Th228/')
-    target_isotope = getattr(set_obj, 'target_isotope', None)
-    if target_isotope:
-        return root / "isotope_areas" / target_isotope / f"{set_obj.name}_{signal_type}.npz"
-        
-    return root / signal_type / f"{set_obj.name}_{signal_type}.npz"
 
 def check_npz_exists(set_obj: Union[SetPmt, SetAlpha], signal_type: str) -> bool:
     """Returns True if the specified NPZ file exists."""
-    return _get_npz_path(set_obj, signal_type).exists()
+    return get_npz_path(set_obj, signal_type).exists()
 
 def save_npz_arrays(set_obj: Union[SetPmt, SetAlpha], signal_type: str, arrays: dict) -> Path:
     """Generic helper to save dense .npz arrays."""
-    data_file = _get_npz_path(set_obj, signal_type)
+    data_file = get_npz_path(set_obj, signal_type)
     data_file.parent.mkdir(parents=True, exist_ok=True)
     
     np.savez_compressed(data_file, **arrays)
@@ -339,7 +316,7 @@ def save_run_npz_arrays(run: Run, signal_type: str, arrays: dict) -> Path:
 
 def load_npz_arrays(set_obj: Union[SetPmt, SetAlpha], signal_type: str) -> dict:
     """Generic helper to cleanly load dense .npz arrays (e.g., 'timing', 's2_areas')."""
-    data_file = _get_npz_path(set_obj, signal_type)
+    data_file = get_npz_path(set_obj, signal_type)
     print(f"  Loading {signal_type} arrays from: {data_file}")
     return dict(np.load(data_file)) if data_file.exists() else {}
 
