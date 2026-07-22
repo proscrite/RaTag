@@ -20,13 +20,14 @@ SetT = TypeVar("SetT", SetPmt, SetAlpha)
 # --- Lazy loader ---
 @track_iterator_progress
 def iter_waveforms(set_pmt: SetPmt, max_files: Optional[int] = None,
+                   start_file: int = 0,
                    show_progress: bool = True ) -> Iterator[PMTWaveform]:
     """Yield PMTWaveform objects lazily, one by one."""
     
     if max_files is not None:
-        waveforms = islice(set_pmt.filenames, max_files)
+        waveforms = islice(set_pmt.filenames, start_file, start_file + max_files)
     else:
-        waveforms = set_pmt.filenames
+        waveforms = islice(set_pmt.filenames, start_file, None)
 
     for fn in waveforms:
         yield load_wfm(Path(set_pmt.source_dir) / Path(fn))
