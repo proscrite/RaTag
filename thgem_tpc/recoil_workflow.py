@@ -17,7 +17,7 @@ from RaTag.plotting import (
     catch_plot_errors, build_fig_grid
 )
 from RaTag.el_tpc.fit_s2_area import fit_s2_crystalball, v_crystalball_right
-from thgem_tpc.timing_workflow import compute_timing_statistics
+from RaTag.thgem_tpc.timing_workflow import compute_timing_statistics
 # ============================================================================
 # 1. PURE MATH & PHYSICS (The Vectorized Engine)
 # ============================================================================

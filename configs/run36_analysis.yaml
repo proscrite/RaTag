@@ -50,8 +50,8 @@ energy_mapping:
 
 # Preparation stage (S1/S2 timing estimation)
 preparation:
-  force: false
-  max_frames: 1200       # Number of frames for S1 estimation
+  force: true
+  max_frames: null       # Number of frames for S1 estimation
   s1_t_min: -4.0            # µs- S1 window low bound 
   s1_t_max: -2.5            # µs - S1 window high bound
   s1_v_min: 3.0             # mV - S1 window low bound

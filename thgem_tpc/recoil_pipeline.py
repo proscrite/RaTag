@@ -25,7 +25,7 @@ def pipeline_recoil_analysis(run: Run, config: dict = None) -> Run:
         config = {}
 
     timing_config = config.get('preparation', TimingConfig())
-    integ_config = config.get('integration_config', IntegrationConfig())
+    integ_config = config.get('integration', IntegrationConfig())
     fit_config = config.get('fit_config', FitConfig())
 
     timing_config = TimingConfig(**{k: v for k, v in timing_config.items() if hasattr(TimingConfig, k)})
