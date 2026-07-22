@@ -75,18 +75,19 @@ class TimingConfig:
     # S2 Search Parameters
     max_frames_s2: int = None        # Maximum number of frames to consider for S2 search (None = all)
     s2_margin: float = 0.9           # (µs) Multiplier for drift time to set S2 window
-    s2_threshold: float = 0.5        # (mV) Absolute minimum baseline floor for S2 edges
-    s2_fraction: float = 0.05        # Fractional threshold for S2 boundaries (e.g., 5% of peak)
-    s2_min_area: float = 0.5         # (mV*µs) Minimum S2 area to consider valid
+    s2_threshold: float = 150        # (mV) Maximum for frame clipping detection
+    s2_fraction: float = 0.2        # Fractional threshold for S2 boundaries (e.g., 5% of peak)
+    s2_min_area: float = 0.25         # (mV*µs) Minimum S2 area to consider valid
     s2_max_area: float = 50          # (mV*µs) Maximum S2 area to consider valid
     s2_min_width: float = 0.2        # (µs) Minimum S2 width to consider valid
     s2_start_max: float = 0.5        # (µs) Maximum S2 start time
+    s2_start_min: float = -2.0       # (µs) Minimum S2 start time
 
     # Preprocessing Parameters
     n_pedestal: int = 200            # Samples for pedestal subtraction
     bs_threshold: float = 0.02       # (mV) Initial noise clipping threshold
     s1_window_ma: int = 10           # Samples (~2 ns) strictly for defeating digitizer quantization
-    s2_window_ma: int = 1200          # Samples (~20 ns) for macroscopic S2 envelope tracking
+    s2_window_ma: int = 1000          # Samples (~20 ns) for macroscopic S2 envelope tracking
 
 @dataclass(frozen=True)
 class XRayConfig:

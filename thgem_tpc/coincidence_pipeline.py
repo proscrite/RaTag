@@ -32,7 +32,7 @@ def pipeline_coincidence_recoil(run: Run, config: dict = None) -> Run:
     timing_config = TimingConfig(**{k: v for k, v in timing_config.items() if hasattr(TimingConfig, k)})
     integ_config = IntegrationConfig(**{k: v for k, v in integ_config.items() if hasattr(IntegrationConfig, k)})
     fit_config = FitConfig(**{k: v for k, v in fit_config.items() if hasattr(FitConfig, k)})
-
+    
     print(f"  Timing Config: {timing_config}")
     # 1. Drift Physics Mapping (Saves drift physics in JSON)
     run = map_drift_physics(run, force=False)

@@ -2,38 +2,25 @@
 import numpy as np
 from typing import Optional, Tuple
 from dataclasses import replace
+from scipy.ndimage import maximum_filter1d
 
 from RaTag.core.datatypes import Run, SetPmt, S2Areas
-from RaTag.core.config import IntegrationConfig, FitConfig
+from RaTag.core.config import IntegrationConfig, FitConfig, TimingConfig
 from RaTag.core.paths import get_output_root
 from RaTag.core.decorators import *
 from RaTag.core.functional import map_over
 from RaTag.io.file_ops import iter_waveforms, load_s2areas, load_fit_result
-from RaTag.waveform.preprocessing import standard_preprocessing
+from RaTag.waveform.preprocessing import subtract_pedestal
 # from RaTag.core.fitting import fit_set_s2
 from RaTag.plotting import (
     plot_s2areas_summary, plot_run_s2_vs_field, 
     catch_plot_errors, build_fig_grid
 )
 from RaTag.el_tpc.fit_s2_area import fit_s2_crystalball, v_crystalball_right
+from thgem_tpc.timing_workflow import compute_timing_statistics
 # ============================================================================
 # 1. PURE MATH & PHYSICS (The Vectorized Engine)
 # ============================================================================
-
-def _compute_static_bounds(set_pmt: SetPmt, config: IntegrationConfig) -> tuple[float, float]:
-    """Calculates the global static integration window for the set."""
-    if set_pmt.t_s2_start is None or set_pmt.t_s2_end is None:
-        raise ValueError(f"Set {set_pmt.source_dir.name} missing S2 timing metadata. Run Timing Pipeline first.")
-        
-    t_start = float(set_pmt.t_s2_start)
-    t_end = float(set_pmt.t_s2_end)
-    std_start = float(set_pmt.t_s2_start_std or 0.0)
-    std_end = float(set_pmt.t_s2_end_std or 0.0)
-    
-    static_start = t_start - (config.n_sigma_start * std_start)
-    static_end = t_end + (config.n_sigma_end * std_end)
-    
-    return static_start, static_end
 
 def calculate_s2_areas(set_pmt: SetPmt, 
                        max_files: Optional[int] = None, 
@@ -71,6 +58,74 @@ def calculate_s2_areas(set_pmt: SetPmt,
     return np.concatenate(out_areas), np.concatenate(out_uids)
 
 
+def find_s2(wf, config = TimingConfig()):
+    # 1. Base parameters & preprocessing
+
+    is_clipped = np.any(wf.v >= config.s2_threshold, axis=1)
+    has_no_clips = ~is_clipped
+
+    wf_sub = subtract_pedestal(wf, n_points=config.n_pedestal)
+    v_envelope = maximum_filter1d(wf_sub.v, size=config.s2_window_ma, axis=1)
+    wf_smooth = replace(wf_sub, v=v_envelope, nframes=wf_sub.nframes)
+
+    mask = wf_smooth.t > config.s2_start_min
+    t_sliced = wf_smooth.t[mask]
+    v_sliced = wf_smooth.v[:, mask] if wf_smooth.ff else wf_smooth.v[mask][np.newaxis, :]
+
+    # 2. Anchor to Global Maximum & Find Boundaries
+    peak_idx = np.argmax(v_sliced, axis=1)
+    peak_heights = v_sliced[np.arange(len(v_sliced)), peak_idx]
+    peak_times = t_sliced[peak_idx]
+        
+    dynamic_thresh = (peak_heights * config.s2_fraction)[:, np.newaxis]
+    below_thresh = v_sliced <= dynamic_thresh
+    idx_2d = np.arange(v_sliced.shape[1])[np.newaxis, :]
+
+    # Left boundary search
+    left_mask = idx_2d <= peak_idx[:, np.newaxis]
+    valid_left = below_thresh & left_mask
+    first_below_left_rev = np.argmax(np.fliplr(valid_left), axis=1)
+    start_time = t_sliced[np.clip(v_sliced.shape[1] - 1 - first_below_left_rev, 0, v_sliced.shape[1] - 1)]
+
+    # Right boundary search
+    right_mask = idx_2d >= peak_idx[:, np.newaxis]
+    valid_right = below_thresh & right_mask
+    last_below_right = np.argmax(valid_right, axis=1)
+    end_time = t_sliced[np.clip(last_below_right - 1, 0, v_sliced.shape[1] - 1)]
+
+    # 3. Area Integration
+    dt = wf_sub.t[1] - wf_sub.t[0]
+    t_2d = wf_sub.t[np.newaxis, :]
+    s2_mask = (t_2d >= start_time[:, np.newaxis]) & (t_2d <= end_time[:, np.newaxis])
+    s2_areas = np.sum(wf_sub.v * s2_mask, axis=1) * dt
+
+    # 4. COMBINE ALL CUTS VECTORIALLY
+    # Check if left and right searches successfully found valid boundaries (did not default entirely)
+    has_valid_left = np.any(valid_left, axis=1)
+    has_valid_right = np.any(valid_right, axis=1)
+
+    # Assemble the final acceptance filter mask
+    accepted_events = (
+        has_no_clips & 
+        has_valid_left & 
+        has_valid_right & 
+        (s2_areas > config.s2_min_area) & 
+        (s2_areas < config.s2_max_area)
+    )
+
+    filtered_areas = s2_areas[accepted_events]
+    filtered_peak_times = peak_times[accepted_events]
+    filtered_start_times = start_time[accepted_events]
+    filtered_end_times = end_time[accepted_events]
+    filtered_uids = wf.uids[accepted_events]
+    return {
+        's2_areas': filtered_areas,
+        'peak_times': filtered_peak_times,
+        'start_times': filtered_start_times,
+        'end_times': filtered_end_times,
+        'uids': filtered_uids,
+        'n_accepted': np.sum(accepted_events)
+    }
 # ============================================================================
 # 2. SET-LEVEL ETL (Cached Solver)
 # ============================================================================
@@ -84,21 +139,54 @@ def calculate_s2_areas(set_pmt: SetPmt,
 @limit_frames
 def resolve_set_recoils(set_pmt: SetPmt, 
                         max_files: Optional[int] = None, 
-                        config: IntegrationConfig = IntegrationConfig()) -> tuple[SetPmt, dict]:
+                        config: TimingConfig = TimingConfig()) -> tuple[SetPmt, dict]:
     """
-    Executes S2 integration and formats the arrays for storage.
+    Executes S2 detection and integration and formats the arrays for storage.
     """
-    areas, uids = calculate_s2_areas(set_pmt, max_files=max_files, config=config)
+    total_frames = 0
+    accepted_frames = 0
+
+    for wf in iter_waveforms(set_pmt, max_files=max_files, show_progress=True):
+        result_dict = find_s2(wf, config=config)
+        total_frames += wf.nframes
+        accepted_frames += result_dict['n_accepted']
+
+    retention = float((accepted_frames / total_frames * 100) if total_frames > 0 else 0.0)
+    print(f"  {set_pmt.source_dir.name}: {accepted_frames}/{total_frames} events ({retention:.1f}%)")
     
+    stats = {}
+    area_arrays = {}
+    timing_arrays = {}
+    if result_dict['s2_areas']:
+        start_concat = np.concatenate(result_dict['start_times'])
+        end_concat = np.concatenate(result_dict['end_times'])
+        uids_concat = np.concatenate(result_dict['uids'])
+
+        area_arrays = {
+            "s2_areas": np.concatenate(result_dict['s2_areas']),
+            "uids": uids_concat
+        }
+
+        timing_arrays = {
+            "uids": uids_concat,
+            "t_s2_start": start_concat,
+            "t_s2_end": end_concat,
+            "t_s2_peak":  np.concatenate(result_dict['peak_times'])
+        }
+
+        stats.update(compute_timing_statistics(start_concat, name='t_s2_start'))
+        stats.update(compute_timing_statistics(end_concat, name='t_s2_end'))
+
+        if len(uids_concat) == accepted_frames:
+            print(f"  ✓ All {accepted_frames} accepted events have valid UIDs.")
+        stats['n_areas_recoil'] = len(uids_concat)
+        
+
     # Update Set Metadata
-    updated_set = replace(set_pmt, n_areas_recoil=len(areas))
+    file_ops.save_npz_arrays(set_pmt, 'timing', timing_arrays)
+    updated_set = replace(set_pmt, **stats)
     
-    arrays = {
-        "s2_areas": areas,
-        "uids": uids
-    }
-    
-    return updated_set, arrays
+    return updated_set, area_arrays
 
 
 # ============================================================================
@@ -107,7 +195,7 @@ def resolve_set_recoils(set_pmt: SetPmt,
 
 def map_recoil_integration(run: Run, 
                     max_frames: Optional[int] = None, 
-                    config: IntegrationConfig = IntegrationConfig(),
+                    config: TimingConfig = TimingConfig(),
                     force: bool = False) -> Run:
     """Entry point: Maps the Recoil Integration workflow across all sets."""
     print("\n" + "="*60)
