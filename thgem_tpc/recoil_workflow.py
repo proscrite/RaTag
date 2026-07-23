@@ -18,6 +18,7 @@ from RaTag.plotting import (
 )
 from RaTag.el_tpc.fit_s2_area import fit_s2_crystalball, v_crystalball_right
 from RaTag.thgem_tpc.timing_workflow import compute_timing_statistics
+
 # ============================================================================
 # 1. PURE MATH & PHYSICS (The Vectorized Engine)
 # ============================================================================
@@ -100,7 +101,6 @@ def find_s2(wf, config = TimingConfig()):
     s2_areas = np.sum(wf_sub.v * s2_mask, axis=1) * dt
 
     # 4. COMBINE ALL CUTS VECTORIALLY
-    # Check if left and right searches successfully found valid boundaries (did not default entirely)
     has_valid_left = np.any(valid_left, axis=1)
     has_valid_right = np.any(valid_right, axis=1)
 
@@ -166,7 +166,7 @@ def resolve_set_recoils(set_pmt: SetPmt,
     area_arrays = {}
     timing_arrays = {}
     if len(result_dict['s2_areas']) > 0:
-        start_concat = np.concatenate(accum_areas)
+        start_concat = np.concatenate(accum_starts)
         end_concat = np.concatenate(accum_ends)
         uids_concat = np.concatenate(accum_uids)
 
