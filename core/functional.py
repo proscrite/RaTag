@@ -4,7 +4,7 @@ from typing import Callable, TypeVar, Optional
 from functools import reduce
 from dataclasses import replace
 from pathlib import Path
-from .paths import get_output_root
+# from .paths import get_output_root
 import numpy as np
 
 T = TypeVar('T')
@@ -186,8 +186,10 @@ def apply_workflow_to_run(run,
     print(workflow_name.upper())
     print("="*60)
     
+    from RaTag.core.paths import get_output_root
+
     # Setup data directory (always needed)
-    data_dir = get_output_root(run.root_directory)
+    # data_dir = get_output_root(run.root_directory)
     data_dir.mkdir(parents=True, exist_ok=True)
 
     # Data files are stored in a subdirectory derived from the data_file_suffix

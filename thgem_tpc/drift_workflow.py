@@ -1,7 +1,7 @@
 from dataclasses import replace
 from re import A
 from typing import cast
-from RaTag.core.datatypes import Run, SetPmt
+from RaTag.core.datatypes import Run, SetPmt, SetAlpha
 
 
 from dataclasses import replace

@@ -8,7 +8,7 @@ from functools import wraps
 from dataclasses import replace
 
 from RaTag.io import file_ops
-from RaTag.core.paths import get_output_root
+from RaTag.core import paths
 from RaTag.core.datatypes import SetAlpha, SetPmt, Run
 
 # Type variable for type hinting in decorators, strictly for SetPmt or Run
@@ -70,7 +70,7 @@ def track_iterator_progress(func):
         # 2. Passively sniff the denominator for the progress bar UI
         max_files = kwargs.get('max_files', None)
         total = min(len(set_obj.filenames), max_files) if max_files else len(set_obj.filenames)
-        prefix = f"Iterating {set_obj.source_dir.name}"
+        prefix = f"Iterating {set_obj.name}"
         
         if total == 0:
             yield from generator
@@ -123,7 +123,7 @@ def load_cached_metadata(target_attr: str):
         def wrapper(set_pmt: SetPmt, *args, **kwargs):
             cached_set = file_ops.load_cache(set_pmt)
             if cached_set and getattr(cached_set, target_attr, None) is not None:
-                print(f"  📂 Cache Hit: Loaded metadata for '{target_attr} in {set_pmt.source_dir.name}'")
+                print(f"  📂 Cache Hit: Loaded metadata for '{target_attr} in {set_pmt.name}'")
                 return cached_set
                 
             return func(set_pmt, *args, **kwargs)
@@ -146,7 +146,7 @@ def write_metadata(target_attr: str):
             
             # Disk save
             file_ops.save_cache(updated_set)
-            print(f"  ✓ {updated_set.source_dir.name}: Computed '{target_attr}' and stored metadata")
+            print(f"  ✓ {updated_set.name}: Computed '{target_attr}' and stored metadata")
             
             return updated_set
         return wrapper
@@ -160,7 +160,7 @@ def load_cached_npz(signal_type: str):
             
             arrays = file_ops.load_npz_arrays(set_pmt, signal_type)
             if arrays is not None and len(arrays) > 0:
-                print(f"  📂 {set_pmt.source_dir.name}: Loaded '{signal_type}' arrays from disk")
+                print(f"  📂 {set_pmt.name}: Loaded '{signal_type}' arrays from disk")
                 return set_pmt
                 
             return func(set_pmt, *args, **kwargs)
@@ -219,7 +219,7 @@ def load_cached_isotope_arrays(signal_type: str):
             ]
             
             if all(file_ops.check_npz_exists(clone, signal_type) for clone in expected_clones):
-                print(f"  ⏭ Skipping separation for {set_pmt.source_dir.name} (Multi-iso clones already exist)")
+                print(f"  ⏭ Skipping separation for {set_pmt.name} (Multi-iso clones already exist)")
                 return expected_clones
                 
             return func(set_pmt, set_alpha, *args, **kwargs)
@@ -254,9 +254,9 @@ def load_cached_plots(subfolder: str, expected_suffixes: list[str]):
         @wraps(func)
         def wrapper(obj, *args, **kwargs):
             is_run = hasattr(obj, 'run_id')
-            name = obj.run_id if is_run else obj.source_dir.name
-            root = get_output_root(obj) if is_run else get_output_root(obj.source_dir.parent)
-            out_dir = root / "plots" / subfolder
+            name = obj.run_id if is_run else obj.name
+            # root = paths.get_output_root(obj) if is_run else paths.get_output_root(obj.source_dir.parent)
+            out_dir = paths.get_plot_dir(obj, subfolder=subfolder)
             
             target_files = [out_dir / Path(s).parent / f"{name}_{Path(s).name}.png" for s in expected_suffixes]
             
@@ -276,16 +276,15 @@ def write_plots(subfolder: str):
     def decorator(func):
         @wraps(func)
         def wrapper(obj, *args, **kwargs):
-            # Execute the downstream stack. 
             # Expects the core function to return (updated_obj, figures_dict)
             result = func(obj, *args, **kwargs)
             updated_obj, figures_dict = result if isinstance(result, tuple) else (result, {})
             
             is_run = hasattr(updated_obj, 'run_id')
-            name = updated_obj.run_id if is_run else updated_obj.source_dir.name
-            root = get_output_root(updated_obj) if is_run else get_output_root(updated_obj.source_dir.parent)
-            out_dir = root / "plots" / subfolder
-            
+            name = updated_obj.run_id if is_run else updated_obj.name
+            # root = paths.get_output_root(updated_obj) if is_run else paths.get_output_root(updated_obj.source_dir.parent)
+            out_dir = paths.get_plot_dir(updated_obj, subfolder=subfolder)
+
             for suffix_path, fig in figures_dict.items():
                 if fig is not None:
                     p = Path(suffix_path)
@@ -310,11 +309,10 @@ def load_cached_fit(suffix: str):
     def decorator(func):
         @wraps(func)
         def wrapper(set_pmt, *args, **kwargs):
-            out_dir = get_output_root(set_pmt.source_dir.parent) / "fits"
-            out_path = out_dir / f"{set_pmt.source_dir.name}_{suffix}.json"
+            out_dir = paths.get_fit_path(set_pmt, suffix)
             
-            if out_path.exists():
-                print(f"  ⏭ Skipping fit '{suffix}' for {set_pmt.source_dir.name} (already exists)")
+            if out_dir.exists():
+                print(f"  ⏭ Skipping fit '{suffix}' for {set_pmt.name} (already exists)")
                 return set_pmt
                 
             return func(set_pmt, *args, **kwargs)
@@ -331,9 +329,7 @@ def write_fit(suffix: str):
             updated_set, model_result = func(set_pmt, *args, **kwargs)
             
             if model_result is not None:
-                out_dir = get_output_root(updated_set.source_dir.parent) / "fits"
-                out_dir.mkdir(parents=True, exist_ok=True)
-                out_path = out_dir / f"{updated_set.source_dir.name}_{suffix}.json"
+                out_path = paths.get_fit_path(updated_set, suffix)
                 file_ops.save_fit_result(model_result, out_path)
                 
             return updated_set 
@@ -347,7 +343,7 @@ def load_cached_alpha_fits(suffix: str = "alpha_fits"):
         def wrapper(set_alpha, *args, **kwargs):
             # We just check if the metadata knows the fit succeeded
             if getattr(set_alpha, 'alpha_fit_success', False):
-                print(f"  ⏭ Skipping alpha fits for {set_alpha.source_dir.name} (already exist)")
+                print(f"  ⏭ Skipping alpha fits for {set_alpha.name} (already exist)")
                 return set_alpha
             return func(set_alpha, *args, **kwargs)
         wrapper.is_loader = True 
@@ -363,12 +359,12 @@ def write_alpha_fits(suffix: str = "alpha_fit"):
             updated_set, fit_dict = result if isinstance(result, tuple) else (result, None)
             
             if fit_dict is not None:
-                out_dir = get_output_root(updated_set.source_dir.parent) / "fits" / "alpha_fits"
+                out_dir = paths.get_output_root(updated_set.source_dir.parent) / "fits" / "alpha_fits"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 
                 # Save each peak as a flat file: e.g., 'Ch4_noSCA_Th228_alpha_fit.json'
                 for peak_name, model_result in fit_dict.items():
-                    out_path = out_dir / f"{updated_set.source_dir.name}_{peak_name}_{suffix}.json"
+                    out_path = out_dir / f"{updated_set.name}_{peak_name}_{suffix}.json"
                     file_ops.save_fit_result(model_result, out_path)
                 
             return updated_set 

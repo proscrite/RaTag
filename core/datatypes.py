@@ -3,14 +3,10 @@ from dataclasses import dataclass, fields, field, replace
 from pathlib import Path
 from functools import lru_cache
 
-from typing import Callable, Optional, Dict, Any, List, TYPE_CHECKING
+from typing import Optional, Dict, Any, List, TYPE_CHECKING
 
 import numpy as np
 
-import matplotlib.pyplot as plt     # type: ignore[import]
-from matplotlib.ticker import ScalarFormatter # type: ignore[import]
-
-from RaTag.alphas.energy_map_reader import get_energy_for_frame
 if TYPE_CHECKING:
     from typing import List as ListType
 

@@ -1,11 +1,13 @@
 from __future__ import annotations
 import os
 from pathlib import Path
-from typing import Optional
-from typing import TYPE_CHECKING
+from typing import Optional, Union, TYPE_CHECKING
+
+from RaTag.core.datatypes import SetAlpha, SetPmt
 
 if TYPE_CHECKING:
     from RaTag.core.datatypes import Run
+
 
 
 def get_processed_root_from_env() -> Optional[Path]:
@@ -84,3 +86,51 @@ def get_output_root(run: Run | Path) -> Path:
         data_root = p.parent
 
     return data_root / "processed" / p.name
+
+def get_cache_path(set_obj: Union[SetPmt, SetAlpha]) -> Path:
+    """Helper to centralize where the JSON lives. Routes to isotope subfolder if tagged."""
+    metadata_dir = get_output_root(set_obj.source_dir.parent) / "set_summaries"
+
+    target_isotope = getattr(set_obj, 'target_isotope', None)
+    if target_isotope:
+        metadata_dir = metadata_dir / target_isotope
+
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+
+    # Route to different files based on the class of the object
+    if isinstance(set_obj, SetAlpha):
+        suffix = "_alphas_metadata.json"
+    else:
+        suffix = "_metadata.json"
+    return metadata_dir / f"{set_obj.name}{suffix}"
+
+def get_npz_path(set_obj, signal_type: str) -> Path:
+    """Centralized path routing for all NPZ files."""
+    root = get_output_root(set_obj.source_dir.parent)
+    
+    # Routing for multi-isotope spawned sets (e.g., 'isotope_areas/Th228/')
+    target_isotope = getattr(set_obj, 'target_isotope', None)
+    if target_isotope:
+        return root / "isotope_areas" / target_isotope / f"{set_obj.name}_{signal_type}.npz"
+        
+    return root / signal_type / f"{set_obj.name}_{signal_type}.npz"
+
+def get_fit_path(set_pmt, suffix: str) -> Path:
+    out_dir = get_output_root(set_pmt.source_dir.parent) / "fits"
+    target_isotope = getattr(set_pmt, 'target_isotope', None)
+    if target_isotope:
+        out_dir = out_dir / target_isotope
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir / f"{set_pmt.name}_{suffix}.json"
+
+
+def get_plot_dir(obj, subfolder: str) -> Path:
+    is_run = hasattr(obj, 'run_id')
+    root = get_output_root(obj) if is_run else get_output_root(obj.source_dir.parent)
+    out_dir = root / "plots" / subfolder
+    
+    target_isotope = getattr(obj, 'target_isotope', None)
+    if target_isotope:
+        out_dir = out_dir / target_isotope
+        
+    return out_dir
