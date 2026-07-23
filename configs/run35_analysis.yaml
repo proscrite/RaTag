@@ -25,6 +25,7 @@ execution:
   run_alphas: true
   run_xrays: false
   run_recoils: true
+  run_multiiso: true
   
 #  Multi-isotope configuration (optional)
 multi_isotope:
@@ -50,7 +51,7 @@ energy_mapping:
 
 # Preparation stage (S1/S2 timing estimation)
 preparation:
-  force: true
+  force: false
   max_frames: null       # Number of frames for S1 estimation
   s1_t_min: -4.0            # µs- S1 window low bound 
   s1_t_max: -2.5            # µs - S1 window high bound
