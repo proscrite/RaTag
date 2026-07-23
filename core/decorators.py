@@ -214,7 +214,9 @@ def load_cached_isotope_arrays(signal_type: str):
             
             # Predict what the spawned sets will look like
             expected_clones = [
-                replace(set_pmt, target_isotope=iso, multiiso=True) 
+                replace(set_pmt, target_isotope=iso, multiiso=True,
+                        area_s2_mean=None, area_s2_ci95=None, 
+                        area_s2_sigma=None, area_s2_fit_success=None) 
                 for iso in set_alpha.isotope_ranges_E.keys()
             ]
             

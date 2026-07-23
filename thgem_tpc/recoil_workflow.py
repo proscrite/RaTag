@@ -221,6 +221,7 @@ def map_recoil_integration(run: Run,
 # ============================================================================
 
 @allow_force
+@load_cached_metadata(target_attr='area_s2_fit_success')
 @load_cached_fit(suffix='s2_areas_hist_fit')
 @require_attributes('n_areas_recoil')
 @write_metadata(target_attr='area_s2_fit_success')

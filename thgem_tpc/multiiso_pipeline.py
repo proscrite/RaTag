@@ -14,8 +14,9 @@ def pipeline_multi_isotope(run: Run, config: dict = None) -> Run:
     
     for iso, iso_run in multi_run_dict.items():
         print(f"\n" + "="*60 + f"\nFITTING ISOTOPE: {iso}\n" + "="*60)
-        iso_run = map_recoil_fits(iso_run, config=fit_config)
-        
+        fitted_run = map_recoil_fits(iso_run, config=fit_config)
+        multi_run_dict[iso] = fitted_run  # Update the dict with the fitted run
+
         # 3. Plot: same as in single-isotope recoil workflow
         iso_run = map_recoil_plots(iso_run, config=fit_config)
     
