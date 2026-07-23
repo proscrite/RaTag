@@ -1,16 +1,16 @@
-run_id: "RUN38"
-description: "Single isotope Th228 analysis, 25 kV/cm EL field"
+run_id: "RUN39"
+description: "Multi-isotope analysis, 20 kV/cm EL field"
 
 # Data location
 data:
-  raw_data_path: "\\\\Lab104con\\K\\AXO-RITA\\raw_data\\RUN38_EL25kVcm"
-  output_base: "\\\\Lab104con\\K\\AXO-RITA\\processed\\RUN38_EL25kVcm"  # Optional, defaults to raw_data_path
+  raw_data_path: "\\\\Lab104con\\K\\AXO-RITA\\raw_data\\RUN39_EL20kVcm"
+  output_base: "\\\\Lab104con\\K\\AXO-RITA\\processed\\RUN39_EL20kVcm"  # Optional, defaults to raw_data_path
   pmt_pattern: "*_CH3.wfm"
   alpha_pattern: "*_CH4.wfm"
 
 # Run parameters
 experiment:
-  el_field: 25000.0          # V/cm - EL field
+  el_field: 20000.0          # V/cm - EL field
   target_isotope: "multi"   # Isotope being studied
   pressure: 1.0             # bar - Gas pressure
   temperature: 297.0        # K - Temperature

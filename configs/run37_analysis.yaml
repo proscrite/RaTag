@@ -59,12 +59,12 @@ preparation:
   s1_max_area: 0.15         # mV·µs - S1 area detection threshold
 
   s2_margin: 0.9
-  s2_threshold: 0.5
-  s2_fraction: 0.05
+  s2_threshold: 150
+  s2_fraction: 0.25
   s2_min_area: 0.5
   s2_max_area: 50
   s2_min_width: 0.2
-  
+
 # Integration stage (S2 area calculation)
 integration:
   force: false
