@@ -76,7 +76,7 @@ def calculate_s2_areas(set_pmt: SetPmt,
 # ============================================================================
 
 @allow_force
-@load_cached_metadata(target_attr='n_areas_recoil')
+# @load_cached_metadata(target_attr='n_areas_recoil')
 @load_cached_npz(signal_type='s2_areas')
 @require_attributes('t_s2_start', 't_s2_end')
 @write_metadata(target_attr='n_areas_recoil')
