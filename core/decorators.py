@@ -276,7 +276,6 @@ def write_plots(subfolder: str):
     def decorator(func):
         @wraps(func)
         def wrapper(obj, *args, **kwargs):
-            # Execute the downstream stack. 
             # Expects the core function to return (updated_obj, figures_dict)
             result = func(obj, *args, **kwargs)
             updated_obj, figures_dict = result if isinstance(result, tuple) else (result, {})

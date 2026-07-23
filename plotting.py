@@ -488,7 +488,7 @@ def plot_s2_vs_drift(df: pd.DataFrame,
     else:
         # Multi-series plot (one per hue value)
         colors = {'Ra224': 'red', 'Rn220': 'blue', 'Po216': 'green', 
-                  'Po212': 'orange', 'Th228': 'purple'}
+                  'Po212': 'orange', 'Th228': 'purple', 'Bi212': 'brown'}
         
         for group_value in df[hue].unique():
             df_group = df[df[hue] == group_value]

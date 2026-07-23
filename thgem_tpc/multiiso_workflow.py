@@ -3,9 +3,10 @@ from dataclasses import replace
 import pandas as pd
 
 from RaTag.core.datatypes import Run, SetPmt, SetAlpha
+from RaTag.core.paths import get_output_root
 from RaTag.core.decorators import *
-from RaTag.alphas.energy_map_reader import get_energies_for_uids
 from RaTag.io import file_ops
+from RaTag.plotting import plot_s2_vs_drift
 
 
 # ============================================================================
@@ -86,3 +87,50 @@ def map_multiiso_separation(run: Run, force: bool = False) -> dict[str, Run]:
         print(f"\n  ✓ Spawned new run object: {iso_run_id} with {len(grouped_sets)} sets.")
         
     return spawned_runs
+
+# ============================================================================
+# 3. Combined Plotter Orchestrator
+# ============================================================================
+@load_cached_plots(subfolder="s2_areas", expected_suffixes=["s2_vs_field_multiiso"])
+@write_plots(subfolder="s2_areas")
+def map_multiiso_s2_vs_field(bare_run: Run, spawned_runs: dict[str, Run]) -> tuple[Run, dict]:
+    """
+    Aggregates S2 metadata across all spawned isotope runs, builds a unified DataFrame,
+    and plots the comparative S2 Area vs Drift Field.
+    """
+    print(f"\n" + "="*60 + f"\nPLOTTING MULTI-ISOTOPE S2 VS FIELD: {bare_run.run_id}\n" + "="*60)
+
+    data = []
+    for iso, iso_run in spawned_runs.items():
+        for s_pmt in iso_run.sets:
+            # Only include sets where the Crystal Ball fit succeeded
+            if getattr(s_pmt, 'area_s2_fit_success', False):
+                data.append({
+                    'drift_field': s_pmt.drift_field,
+                    's2_mean': s_pmt.area_s2_mean,
+                    's2_ci95': s_pmt.area_s2_ci95,
+                    'isotope': iso
+                })
+
+    if not data:
+        print(f"  [Skip] No successful S2 fits found across isotopes for {bare_run.run_id}.")
+        return bare_run, {}
+
+    df = pd.DataFrame(data)
+
+    # 2. Explicit Plotting Call (Depth of 1)
+    fig, _ = plot_s2_vs_drift(df=df, 
+                              run_id=bare_run.run_id, title_suffix=" (Multi-Isotope)", 
+                              hue='isotope')
+
+    # 3. Explicit I/O Routing
+    df.to_csv(get_output_root(bare_run.root_directory) / "isotope_areas" / f"{bare_run.run_id}_s2_vs_field_multiiso.csv", index=False)
+    return bare_run, {"s2_vs_field_multiiso": fig}
+
+    ## This is handled by the @write_plots decorator, so we don't need to manually save the figure here.
+    # out_dir = get_output_root(bare_run.root_directory) / "plots" / "s2_areas"
+    # out_dir.mkdir(parents=True, exist_ok=True)
+    
+    # out_path = out_dir / f"{bare_run.run_id}_s2_vs_field_multiiso.png"
+    
+    # file_ops.save_figure(fig, out_path)
