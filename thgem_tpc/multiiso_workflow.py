@@ -36,10 +36,12 @@ def resolve_multiiso_separation(set_pmt: SetPmt, set_alpha: SetAlpha, force: boo
         mask = (df_merged['energies'] >= v_min) & (df_merged['energies'] <= v_max)
         df_iso = df_merged[mask]
         
-        cloned_set = replace(set_pmt, target_isotope=isotope, multiiso=True)
+        cloned_set = replace(set_pmt, target_isotope=isotope, multiiso=True,
+                             area_s2_mean=None, area_s2_ci95=None, 
+                             area_s2_sigma=None, area_s2_fit_success=None)
         iso_arrays = {
             'uids': df_iso['uids'].values,
-            's2_areas': df_iso['s2_areas'].values
+            's2_areas': df_iso['s2_areas'].values,
         }
         
         spawned_data.append((cloned_set, iso_arrays))
@@ -91,6 +93,7 @@ def map_multiiso_separation(run: Run, force: bool = False) -> dict[str, Run]:
 # ============================================================================
 # 3. Combined Plotter Orchestrator
 # ============================================================================
+@allow_force
 @load_cached_plots(subfolder="s2_areas", expected_suffixes=["s2_vs_field_multiiso"])
 @write_plots(subfolder="s2_areas")
 def map_multiiso_s2_vs_field(bare_run: Run, spawned_runs: dict[str, Run]) -> tuple[Run, dict]:
