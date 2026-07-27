@@ -238,7 +238,8 @@ def resolve_set_s2_fit(set_pmt: SetPmt,
     
     try:
         result = fit_s2_crystalball(s2_areas.areas, bin_cuts=config.bin_cuts,
-                                       nbins=config.nbins, smooth=config.smooth )
+                                    nbins=config.nbins, max_lower_bound=config.max_lower_bound,
+                                    smooth=config.smooth )
         metadata_updates = {
             'area_s2_mean': result['peak_position'],
             'area_s2_ci95': result['ci95'],

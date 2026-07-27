@@ -57,6 +57,7 @@ class FitConfig:
     bg_cutoff: float = 2.0     # Upper limit for background fitting (mV·µs)
     n_sigma: float = 2.5       # Sigmas above background for signal region
     smooth: int = 4            # Smoothing window for histogram counts (bins)
+    max_lower_bound: float = 0.5 # Limit for lower bound of signal fitting range (mV·µs)
 
 @dataclass(frozen=True)
 class TimingConfig:

@@ -77,12 +77,12 @@ integration:
 
 fit_config:
   force: true
-  bin_cuts: [0, 50]       # mV·µs - Histogram range
+  bin_cuts: [4, 50]       # mV·µs - Histogram range
   nbins: 100              # Number of histogram bins
   bg_threshold: 0.5       # Background fraction threshold for two-stage fitting (0-1)
   bg_cutoff: 0.07          # mV·µs - Upper limit for background fitting
   n_sigma: 3.0            # Sigmas above background mean for signal region cutoff
-  upper_limit: 5.0        # mV·µs - Upper limit for signal fitting range
+  max_lower_bound: 10.0        # mV·µs - Upper limit for signal fitting range
 
 # X-ray classification
 xray_classification:
