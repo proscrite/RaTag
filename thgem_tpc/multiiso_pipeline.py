@@ -20,5 +20,5 @@ def pipeline_multi_isotope(run: Run, config: dict = None) -> Run:
         # 3. Plot: same as in single-isotope recoil workflow
         plotted_run = map_recoil_plots(fitted_run, config=fit_config, force=fit_config.force)
     
-    run = map_multiiso_s2_vs_field(run, spawned_runs=multi_run_dict)
+    run = map_multiiso_s2_vs_field(run, spawned_runs=multi_run_dict, force=fit_config.force)
     return run

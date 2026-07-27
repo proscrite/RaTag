@@ -20,7 +20,7 @@ def v_crystalball_right(x, N, beta, m, x0, sigma):
     tail = A_tail / (denom_safe)**m
     return N * np.where(z < absb, gauss, tail)
 
-def _find_dynamic_lower_bound(cbins: np.ndarray, counts: np.ndarray ) -> float:
+def _find_dynamic_lower_bound(cbins: np.ndarray, counts: np.ndarray, max_lower_bound: float) -> float:
     """Finds the 'valley' between the low-energy noise peak and the S2 signal peak."""
     
     # Smooth lightly to prevent false minima from statistical noise
@@ -30,8 +30,11 @@ def _find_dynamic_lower_bound(cbins: np.ndarray, counts: np.ndarray ) -> float:
     minima_indices, _ = find_peaks(-n_smooth)
     
     if len(minima_indices) > 0:
-        return cbins[minima_indices[0]]
         
+        lower_bound = cbins[minima_indices[0]]
+        if lower_bound < max_lower_bound:  # Guardrail against unphysical excessive lower bounds
+            return lower_bound
+    
     return 0.0 # Safe fallback if no distinct valley exists
 
 def compute_fit_ci(param: lmfit.Parameter, bin_width: float, confidence_level: float = 1.96) -> float:
@@ -46,6 +49,7 @@ def compute_fit_ci(param: lmfit.Parameter, bin_width: float, confidence_level: f
 def fit_s2_crystalball(data: np.ndarray, 
                        bin_cuts: Tuple[float, float] = (0, 15), 
                        nbins: int = 100,
+                       max_lower_bound: float = 1.5,
                        smooth: int = 3) -> Dict[str, Any]:
     """
     Fits a right-tailed Crystal Ball to the S2 signal.
@@ -60,7 +64,8 @@ def fit_s2_crystalball(data: np.ndarray,
         raise ValueError("Not enough data to fit.")
 
     # 2. Find the Valley (Dynamic Thresholding)
-    lower_bound = _find_dynamic_lower_bound(cbins, counts)
+    lower_bound = _find_dynamic_lower_bound(cbins, counts, max_lower_bound)
+
     # 3. Mask data for fitting (Only fit the signal region!)
     fit_mask = cbins >= lower_bound
     cbins_fit = cbins[fit_mask]
