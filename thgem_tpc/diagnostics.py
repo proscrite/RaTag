@@ -40,11 +40,12 @@ def compute_pmt_diagnostics(wf_pmt: PMTWaveform, config: TimingConfig) -> dict:
         
         right_side = below_thresh[peak_idx_global:]
         end_idx = np.where(right_side)[0][0] + peak_idx_global if np.any(right_side) else len(v_env) - 1
-        
+
+        peak_t = t[peak_idx_global]
         start_t = t[start_idx]
         end_t = t[end_idx]
         
-        int_mask = (t >= start_t) & (t <= end_t)
+        int_mask = (t >= peak_t) & (t <= end_t)
         s2_area = np.sum(v_sub[int_mask]) * dt
         
         if (s2_area > config.s2_min_area) and (s2_area < config.s2_max_area):
@@ -53,7 +54,7 @@ def compute_pmt_diagnostics(wf_pmt: PMTWaveform, config: TimingConfig) -> dict:
     return {
         't': t, 'v_raw': v_raw, 'v_sub': v_sub, 'v_env': v_env,
         'search_mask': search_mask, 'dynamic_thresh': dynamic_thresh,
-        'start_t': start_t, 'end_t': end_t, 's2_area': s2_area, 
+        'start_t': peak_t, 'end_t': end_t, 's2_area': s2_area, 
         'peak_v': peak_v, 'status': status
     }
 
@@ -92,9 +93,9 @@ def compute_alpha_diagnostics(wf_alpha: SiliconWaveform, isotope_ranges_V: dict 
 
 def plot_pmt_diagnostic(ax: plt.Axes, data: dict, frame_idx: int):
     """Declarative plotter for the PMT S2 channel."""
-    ax.plot(data['t'], data['v_raw'], color='lightgray', linewidth=1, label='Raw Waveform')
-    ax.plot(data['t'], data['v_sub'], color='blue', linewidth=0.8, alpha=0.7, label='Pedestal Subtracted')
-    ax.plot(data['t'], data['v_env'], color='green', linewidth=1.2, alpha=0.8, label='S2 Envelope (Max Filter)')
+    # ax.plot(data['t'], data['v_raw'], color='lightgray', linewidth=1, label='Raw Waveform')
+    ax.plot(data['t'], data['v_sub'], color='blue', linewidth=0.8, alpha=0.7, label='Raw waveform')
+    # ax.plot(data['t'], data['v_env'], color='green', linewidth=1.2, alpha=0.8, label='S2 Envelope (Max Filter)')
     
     if np.any(data['search_mask']):
         # ax.axhline(data['dynamic_thresh'], color='orange', linestyle=':', label=f'Threshold ({data['dynamic_thresh']:.1f} mV)')
@@ -145,18 +146,19 @@ def plot_full_coincidence_diagnostic(wf_pmt: PMTWaveform,
     Depth-of-1 Orchestrator:
     Manages layout state, delegates math to compute helpers, and hands results to plot helpers.
     """
-    fig, (ax_pmt, ax_alpha) = plt.subplots(2, 1, sharex=True, figsize=(14, 10))
+    # fig, (ax_pmt, ax_alpha) = plt.subplots(2, 1, sharex=True, figsize=(14, 10))
+    fig, ax_pmt = plt.subplots(figsize=(8, 6))
     fig.subplots_adjust(hspace=0.05)
     
     # 1. Delegate Math
     pmt_data = compute_pmt_diagnostics(wf_pmt, config)
-    alpha_data = compute_alpha_diagnostics(wf_alpha, isotope_ranges_V)
+    # alpha_data = compute_alpha_diagnostics(wf_alpha, isotope_ranges_V)
     
     # 2. Delegate Side-Effects
     plot_pmt_diagnostic(ax_pmt, pmt_data, wf_pmt.frame_idx)
-    plot_alpha_diagnostic(ax_alpha, alpha_data)
+    # plot_alpha_diagnostic(ax_alpha, alpha_data)
     
     # 3. Enforce Shared Context
-    ax_alpha.set_xlim(pmt_data['t'][0], pmt_data['t'][-1])
+    # ax_alpha.set_xlim(pmt_data['t'][0], pmt_data['t'][-1])
     
     return fig

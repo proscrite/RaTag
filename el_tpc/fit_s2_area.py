@@ -57,6 +57,7 @@ def fit_s2_crystalball(data: np.ndarray,
     """
     # 1. Build Histogram
     filtered = data[(data >= bin_cuts[0]) & (data <= bin_cuts[1])]
+    print(f"Histogramming with bin_cuts: {bin_cuts}")
     counts, bins = np.histogram(filtered, bins=nbins, range=bin_cuts)
     cbins = 0.5 * (bins[1:] + bins[:-1])
     

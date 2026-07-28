@@ -76,7 +76,7 @@ class TimingConfig:
     # S2 Search Parameters
     max_frames_s2: int = None        # Maximum number of frames to consider for S2 search (None = all)
     s2_margin: float = 0.9           # (µs) Multiplier for drift time to set S2 window
-    s2_threshold: float = 150        # (mV) Maximum for frame clipping detection
+    s2_threshold: float = 230        # (mV) Maximum for frame clipping detection
     s2_fraction: float = 0.2        # Fractional threshold for S2 boundaries (e.g., 5% of peak)
     s2_min_area: float = 0.25         # (mV*µs) Minimum S2 area to consider valid
     s2_max_area: float = 50          # (mV*µs) Maximum S2 area to consider valid

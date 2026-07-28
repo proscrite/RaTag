@@ -97,7 +97,7 @@ def find_s2(wf, config = TimingConfig()):
     # 3. Area Integration
     dt = wf_sub.t[1] - wf_sub.t[0]
     t_2d = wf_sub.t[np.newaxis, :]
-    s2_mask = (t_2d >= start_time[:, np.newaxis]) & (t_2d <= end_time[:, np.newaxis])
+    s2_mask = (t_2d >= peak_times[:, np.newaxis]) & (t_2d <= end_time[:, np.newaxis])
     s2_areas = np.sum(wf_sub.v * s2_mask, axis=1) * dt
 
     # 4. COMBINE ALL CUTS VECTORIALLY
