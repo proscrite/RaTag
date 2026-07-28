@@ -4,6 +4,7 @@ RaTag Online DAQ Monitor.
 Polls the raw data directory for new, stable acquisitions and dynamically 
 triggers the main.py orchestrator.
 """
+import subprocess
 import sys
 import time
 import argparse
@@ -13,7 +14,7 @@ from datetime import datetime
 from RaTag.io.file_ops import load_yaml
 
 # Import the orchestrator's main function directly
-from main import main as execute_main_pipeline
+# from main import main as execute_main_pipeline
 
 
 def evaluate_directory_stability(current_count: int, last_count: int, current_ticks: int, threshold: int) -> tuple[int, int, bool]:
@@ -62,7 +63,7 @@ def monitor_and_process(config_path: Path, poll_interval: int = 10, stable_thres
 
             current_dirs = [d for d in run_dir.iterdir() if d.is_dir() and not d.name.startswith('.')]
             unprocessed_dirs = [d for d in current_dirs if d not in processed_dirs]
-            
+
             # 2. Timeout & Graceful Exit Logic
             if not unprocessed_dirs:
                 if run_is_complete:
@@ -76,20 +77,8 @@ def monitor_and_process(config_path: Path, poll_interval: int = 10, stable_thres
             else:
                 idle_ticks = 0
                 
-            current_dirs = [d for d in run_dir.iterdir() if d.is_dir() and not d.name.startswith('.')]
-            unprocessed_dirs = [d for d in current_dirs if d not in processed_dirs]
-            
-            # Global Timeout Logic
-            if not unprocessed_dirs:
-                idle_ticks += 1
-                if idle_ticks >= global_timeout_ticks:
-                    print(f"\n[{datetime.now().strftime('%H:%M:%S')}] No new directories for {global_timeout_ticks * poll_interval} seconds. Assuming run is complete. Exiting.")
-                    break
-            else:
-                idle_ticks = 0
-            
-            triggered = False
-            
+            newly_stable_dirs = []
+
             for d in unprocessed_dirs:
                 current_count = len(list(d.glob('*.wfm')))
                 last_count = file_counts.get(d, -1)
@@ -103,25 +92,22 @@ def monitor_and_process(config_path: Path, poll_interval: int = 10, stable_thres
                 
                 if is_stable:
                     print(f"\n[{datetime.now().strftime('%H:%M:%S')}] >>> ACQUISITION COMPLETE: {d.name} ({new_count} files)")
-                    triggered = True
-                    processed_dirs.add(d)
+                    newly_stable_dirs.append(d.name)
+                    processed_dirs.add(d)  # Mark as processed to avoid re-triggering
             
             # Execute Main Pipeline
-            if triggered:
+            if newly_stable_dirs:
                 print(f"Delegating execution to main.py orchestrator...")
+                print(f"Note: Ensure the 'force' flag in the YAML config is properly configured to avoid unnecessary reprocessing.")
+
+                main_script = Path(__file__).resolve().parent / "main.py"
+                abs_config = config_path.resolve()
+                cmd = [sys.executable, str(main_script), str(abs_config), "--allowed-sets"] + newly_stable_dirs                
                 
-                # Temporarily patch sys.argv so main() can parse the config path natively
-                original_argv = sys.argv.copy()
-                sys.argv = ['main.py', str(config_path)]
-                
-                try:
-                    execute_main_pipeline()
-                finally:
-                    # Restore original arguments to prevent state bleed
-                    sys.argv = original_argv
+                # subprocess.run blocks the monitor until the orchestrator finishes, preventing concurrent overlaps
+                subprocess.run(cmd, check=True) 
                 
                 print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Processing complete. Resuming monitoring...\n")
-            
             time.sleep(poll_interval)
             
     except KeyboardInterrupt:

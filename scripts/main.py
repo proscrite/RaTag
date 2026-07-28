@@ -22,6 +22,7 @@ def main():
     # The ONLY CLI argument is the path to the config file
     parser = argparse.ArgumentParser(description='RaTag YAML-Driven Pipeline Orchestrator')
     parser.add_argument('config', type=Path, help='Path to YAML config file')
+    parser.add_argument('--allowed-sets', nargs='+', default=None, help='Specific set directories to process')
     args = parser.parse_args()
 
     # 1. Load the Absolute Source of Truth
@@ -35,7 +36,7 @@ def main():
     print(f"{'='*60}\n")
 
     # 2. Bootstrap the base Run object (Handles instantiation and I/O discovery)
-    run = bootstrap_from_config(args.config)
+    run = bootstrap_from_config(args.config, allowed_sets=args.allowed_sets)
 
     # 3. Route sequentially based strictly on the YAML execution block
     if exec_cfg.get('run_alphas', False):

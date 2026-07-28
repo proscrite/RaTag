@@ -129,7 +129,8 @@ def bootstrap_bare_alpha_set(dir_path: Path, filenames: List[Path], multiiso: bo
 def bootstrap_from_path(run_dir: Union[str, Path], run_id: Optional[str] = None, 
                         el_field: Optional[float] = None, target_isotope: Optional[str] = None,
                         pmt_pattern: str = "*_CH3.wfm", 
-                        alpha_pattern: str = "*_CH4.wfm") -> Run:
+                        alpha_pattern: str = "*_CH4.wfm",
+                        allowed_sets: Optional[List[str]] = None) -> Run:
     """
     DECLARATIVE PIPELINE: Assembles a Run object from a raw data directory.
     
@@ -141,7 +142,10 @@ def bootstrap_from_path(run_dir: Union[str, Path], run_id: Optional[str] = None,
     run_id, el_field, target_isotope = _resolve_bootstrapping_params(run_dir, run_id, el_field, target_isotope)
     
     # Scan for valid subdirectories (ignoring hidden folders, etc.)
-    raw_set_dirs = [d for d in run_dir.iterdir() if d.is_dir() and not d.name.startswith('.')]
+    if allowed_sets is not None:
+        raw_set_dirs = [d for d in run_dir.iterdir() if d.is_dir() and not d.name.startswith('.') and d.name in allowed_sets]
+    else:
+        raw_set_dirs = [d for d in run_dir.iterdir() if d.is_dir() and not d.name.startswith('.')]
     
     print(f"Found {len(raw_set_dirs)} directories in {run_dir.name}")
 
@@ -168,7 +172,7 @@ def bootstrap_from_path(run_dir: Union[str, Path], run_id: Optional[str] = None,
                alpha_sets=alpha_sets)
 
 
-def bootstrap_from_config(config_path: Union[str, Path]) -> Run:
+def bootstrap_from_config(config_path: Union[str, Path], allowed_sets: Optional[List[str]] = None) -> Run:
     """
     WRAPPER: Reads a YAML config and passes the physical parameters 
     down to the path builder.
@@ -188,7 +192,8 @@ def bootstrap_from_config(config_path: Union[str, Path]) -> Run:
                                    el_field=exp_params['el_field'],
                                    target_isotope=exp_params['target_isotope'],
                                    pmt_pattern=pmt_pattern,
-                                   alpha_pattern=alpha_pattern)
+                                   alpha_pattern=alpha_pattern,
+                                   allowed_sets=allowed_sets)
     
     # 3. Enrich the Run with physical parameters from the config
     enriched_run = replace(bare_run,
