@@ -10,7 +10,7 @@ from RaTag.core.decorators import *
 from RaTag.core.functional import map_over
 from RaTag.io import file_ops
 from RaTag.core.fitting import v_crystalball_left
-
+from RaTag.core.paths import get_output_root
 from RaTag.alphas.alphas_fitting import (
     select_roi,
     beta_continuum,

@@ -97,7 +97,7 @@ def find_s2(wf, config = TimingConfig()):
     # 3. Area Integration
     dt = wf_sub.t[1] - wf_sub.t[0]
     t_2d = wf_sub.t[np.newaxis, :]
-    s2_mask = (t_2d >= start_time[:, np.newaxis]) & (t_2d <= end_time[:, np.newaxis])
+    s2_mask = (t_2d >= peak_times[:, np.newaxis]) & (t_2d <= end_time[:, np.newaxis])
     s2_areas = np.sum(wf_sub.v * s2_mask, axis=1) * dt
 
     # 4. COMBINE ALL CUTS VECTORIALLY
@@ -238,7 +238,8 @@ def resolve_set_s2_fit(set_pmt: SetPmt,
     
     try:
         result = fit_s2_crystalball(s2_areas.areas, bin_cuts=config.bin_cuts,
-                                       nbins=config.nbins, smooth=config.smooth )
+                                    nbins=config.nbins, max_lower_bound=config.max_lower_bound,
+                                    smooth=config.smooth )
         metadata_updates = {
             'area_s2_mean': result['peak_position'],
             'area_s2_ci95': result['ci95'],
