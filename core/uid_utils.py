@@ -22,12 +22,11 @@ def parse_file_seq_from_name(fname: str) -> int:
     raise ValueError(f"Cannot parse file_seq from filename {base}")
 
 def make_uid(file_seq: int, frame_idx: int) -> int:
-    # frame_idx expected 0..48
-    return int(file_seq) * 64 + int(frame_idx)
+    return int(file_seq) * 10_000 + int(frame_idx)
 
 def decode_uid(uid: int):
-    file_seq = uid // 64
-    frame_idx = uid % 64
+    file_seq = uid // 10_000
+    frame_idx = uid % 10_000
     return file_seq, frame_idx
 
 def generate_all_uids_for_set(set_pmt) -> np.ndarray:

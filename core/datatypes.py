@@ -31,13 +31,13 @@ class Waveform:
     
     @property
     def uid(self) -> int:
-        return self.file_seq * 64 + self.frame_idx
+        return self.file_seq * 10_000 + self.frame_idx
     
     @property
     def uids(self) -> np.ndarray:
         """Return array of UIDs for each frame (for FastFrame) or single UID for single-frame."""
         if self.ff and self.nframes > 1:
-            return  self.file_seq * 64 + np.arange(self.nframes)
+            return  self.file_seq * 10_000 + np.arange(self.nframes)
         else:
             return np.array([self.uid])
 
