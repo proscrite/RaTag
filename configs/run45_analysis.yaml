@@ -1,16 +1,16 @@
-run_id: "RUN44"
-description: "Multi-isotope analysis, 20 kV/cm EL field"
+run_id: "RUN45"
+description: "Multi-isotope analysis, 30 kV/cm EL field"
 
 # Data location
 data:
-  raw_data_path: "\\\\Lab104con\\K\\AXO-RITA\\raw_data\\RUN44_EL20kVcm"
-  output_base: "\\\\Lab104con\\K\\AXO-RITA\\processed\\RUN44_EL20kVcm"  # Optional, defaults to raw_data_path
+  raw_data_path: "\\\\Lab104con\\K\\AXO-RITA\\raw_data\\RUN45_EL30kVcm"
+  output_base: "\\\\Lab104con\\K\\AXO-RITA\\processed\\RUN45_EL30kVcm"  # Optional, defaults to raw_data_path
   pmt_pattern: "*_CH3.wfm"
   alpha_pattern: "*_CH4.wfm"
 
 # Run parameters
 experiment:
-  el_field: 20000.0          # V/cm - EL field
+  el_field: 30000.0          # V/cm - EL field
   target_isotope: "multi"   # Isotope being studied
   pressure: 1.0             # bar - Gas pressure
   temperature: 297.0        # K - Temperature
@@ -51,7 +51,7 @@ energy_mapping:
 
 # Preparation stage (S1/S2 timing estimation)
 preparation:
-  force: false
+  force: true
   max_frames: null       # Number of frames for S1 estimation
   s1_t_min: -4.0            # µs- S1 window low bound 
   s1_t_max: -2.5            # µs - S1 window high bound
@@ -60,10 +60,10 @@ preparation:
   s1_max_area: 0.15         # mV·µs - S1 area detection threshold
   
   s2_margin: 0.9
-  s2_threshold: 150
+  s2_threshold: 230
   s2_fraction: 0.05
   s2_min_area: 0.5
-  s2_max_area: 100
+  s2_max_area: 150
   s2_min_width: 0.2
   
 # Integration stage (S2 area calculation)
@@ -77,12 +77,12 @@ integration:
 
 fit_config:
   force: true
-  bin_cuts: [0, 15]       # mV·µs - Histogram range
+  bin_cuts: [0, 100]       # mV·µs - Histogram range
   nbins: 100              # Number of histogram bins
   bg_threshold: 0.5       # Background fraction threshold for two-stage fitting (0-1)
   bg_cutoff: 0.07          # mV·µs - Upper limit for background fitting
   n_sigma: 3.0            # Sigmas above background mean for signal region cutoff
-  max_lower_bound: 5.0        # mV·µs - Upper limit for signal fitting range
+  max_lower_bound: 10.0        # mV·µs - Upper limit for signal fitting range
 
 # X-ray classification
 xray_classification:
