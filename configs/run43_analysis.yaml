@@ -51,7 +51,7 @@ energy_mapping:
 
 # Preparation stage (S1/S2 timing estimation)
 preparation:
-  force: false
+  force: true
   max_frames: null       # Number of frames for S1 estimation
   s1_t_min: -4.0            # µs- S1 window low bound 
   s1_t_max: -2.5            # µs - S1 window high bound
@@ -60,10 +60,10 @@ preparation:
   s1_max_area: 0.15         # mV·µs - S1 area detection threshold
   
   s2_margin: 0.9
-  s2_threshold: 150
-  s2_fraction: 0.25
+  s2_threshold: 230
+  s2_fraction: 0.05
   s2_min_area: 0.5
-  s2_max_area: 50
+  s2_max_area: 150
   s2_min_width: 0.2
   
 # Integration stage (S2 area calculation)
