@@ -77,8 +77,8 @@ class TimingConfig:
     max_frames_s2: int = None        # Maximum number of frames to consider for S2 search (None = all)
     s2_margin: float = 0.9           # (µs) Multiplier for drift time to set S2 window
     s2_threshold: float = 230        # (mV) Maximum for frame clipping detection
-    s2_fraction: float = 0.2        # Fractional threshold for S2 boundaries (e.g., 5% of peak)
-    s2_min_area: float = 0.25         # (mV*µs) Minimum S2 area to consider valid
+    s2_fraction: float = 0.05        # Fractional threshold for S2 boundaries (e.g., 5% of peak)
+    s2_min_area: float = 0.5         # (mV*µs) Minimum S2 area to consider valid
     s2_max_area: float = 50          # (mV*µs) Maximum S2 area to consider valid
     s2_min_width: float = 0.2        # (µs) Minimum S2 width to consider valid
     s2_start_max: float = 0.5        # (µs) Maximum S2 start time
@@ -94,15 +94,18 @@ class TimingConfig:
 class XRayConfig:
     """Configuration for X-ray event classification and integration."""
     force: bool = False
+    max_frames: Optional[int] = None  # Maximum number of frames to process (None = all)
     bs_threshold: float = 0.5          # (mV)  -- baseline threshold for signal detection
     max_area_s1: float = 100          # (mV·µs) -- max allowed area before S1 (reject if exceeded)
     max_area_s2: float = 100          # (mV·µs) -- max allowed area in S2 window (reject if exceeded)
-    min_xray_area: float = 0.2        # (mV·µs) -- min required X-ray area (reject if below)
+    min_xray_area: float = 0.5        # (mV·µs) -- min required X-ray area (reject if below)
     min_s2_sep: float = 1.0           # (µs)   -- min required separation before S2 window
     min_s1_sep: float = 0.5           # (µs)   -- min required separation after S1
     n_pedestal: int = 200             # number of pre-trigger samples for pedestal subtraction
     ma_window: int = 10               # moving average window length (samples)
     dt: float = 2e-4                  # integration timestep (µs)
+    max_v_clip: float = 150.0             # (mV) -- maximum voltage to consider for clipping detection
+
 
 
 # -------------------------------

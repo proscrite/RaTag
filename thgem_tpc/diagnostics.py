@@ -11,7 +11,7 @@ from RaTag.core.config import TimingConfig
 # 1. PHYSICS & MATH (Pure Compute Helpers)
 # ============================================================================
 
-def compute_pmt_diagnostics(wf_pmt: PMTWaveform, config: TimingConfig) -> dict:
+def compute_pmt_diagnostics(wf_pmt: PMTWaveform, config: TimingConfig, t_start_delay: float = 0.0, integ_interval: float = 1.5) -> dict:
     """Re-inlines the S2 detection math to expose all traces for plotting."""
     dt = wf_pmt.dt
     t = wf_pmt.t
@@ -45,7 +45,8 @@ def compute_pmt_diagnostics(wf_pmt: PMTWaveform, config: TimingConfig) -> dict:
         start_t = t[start_idx]
         end_t = t[end_idx]
         
-        int_mask = (t >= peak_t) & (t <= end_t)
+        # int_mask = (t >= peak_t) & (t <= end_t)
+        int_mask = (t >= peak_t + t_start_delay) & (t <= peak_t + integ_interval - t_start_delay)
         s2_area = np.sum(v_sub[int_mask]) * dt
         
         if (s2_area > config.s2_min_area) and (s2_area < config.s2_max_area):
@@ -54,7 +55,8 @@ def compute_pmt_diagnostics(wf_pmt: PMTWaveform, config: TimingConfig) -> dict:
     return {
         't': t, 'v_raw': v_raw, 'v_sub': v_sub, 'v_env': v_env,
         'search_mask': search_mask, 'dynamic_thresh': dynamic_thresh,
-        'start_t': peak_t, 'end_t': end_t, 's2_area': s2_area, 
+        # 'start_t': peak_t, 'end_t': end_t, 's2_area': s2_area, 
+        'start_t': peak_t + t_start_delay, 'end_t': peak_t + integ_interval - t_start_delay, 's2_area': s2_area, 
         'peak_v': peak_v, 'status': status
     }
 
@@ -146,19 +148,19 @@ def plot_full_coincidence_diagnostic(wf_pmt: PMTWaveform,
     Depth-of-1 Orchestrator:
     Manages layout state, delegates math to compute helpers, and hands results to plot helpers.
     """
-    # fig, (ax_pmt, ax_alpha) = plt.subplots(2, 1, sharex=True, figsize=(14, 10))
     fig, ax_pmt = plt.subplots(figsize=(8, 6))
     fig.subplots_adjust(hspace=0.05)
     
-    # 1. Delegate Math
+    # 1. Math
     pmt_data = compute_pmt_diagnostics(wf_pmt, config)
-    # alpha_data = compute_alpha_diagnostics(wf_alpha, isotope_ranges_V)
     
-    # 2. Delegate Side-Effects
+    
+    if wf_alpha is not None:
+        alpha_data = compute_alpha_diagnostics(wf_alpha, isotope_ranges_V)
+        fig, (ax_pmt, ax_alpha) = plt.subplots(2, 1, sharex=True, figsize=(14, 10))
+        plot_alpha_diagnostic(ax_alpha, alpha_data)
+        # ax_alpha.set_xlim(pmt_data['t'][0], pmt_data['t'][-1])
+    
     plot_pmt_diagnostic(ax_pmt, pmt_data, wf_pmt.frame_idx)
-    # plot_alpha_diagnostic(ax_alpha, alpha_data)
-    
-    # 3. Enforce Shared Context
-    # ax_alpha.set_xlim(pmt_data['t'][0], pmt_data['t'][-1])
     
     return fig

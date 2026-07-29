@@ -59,9 +59,8 @@ def calculate_s2_areas(set_pmt: SetPmt,
     return np.concatenate(out_areas), np.concatenate(out_uids)
 
 
-def find_s2(wf, config = TimingConfig()):
+def find_s2(wf, config = TimingConfig(), t_start_delay: float = 0, integ_interval: float = 1.5) -> dict:
     # 1. Base parameters & preprocessing
-
     is_clipped = np.any(wf.v >= config.s2_threshold, axis=1)
     has_no_clips = ~is_clipped
 
@@ -97,7 +96,9 @@ def find_s2(wf, config = TimingConfig()):
     # 3. Area Integration
     dt = wf_sub.t[1] - wf_sub.t[0]
     t_2d = wf_sub.t[np.newaxis, :]
-    s2_mask = (t_2d >= peak_times[:, np.newaxis]) & (t_2d <= end_time[:, np.newaxis])
+    # s2_mask = (t_2d >= start_times[:, np.newaxis]) & (t_2d <= end_time[:, np.newaxis])
+    s2_mask = (t_2d >= peak_times[:, np.newaxis] + t_start_delay) & (t_2d <= end_time[:, np.newaxis] )  
+
     s2_areas = np.sum(wf_sub.v * s2_mask, axis=1) * dt
 
     # 4. COMBINE ALL CUTS VECTORIALLY
@@ -148,7 +149,7 @@ def resolve_set_recoils(set_pmt: SetPmt,
     accepted_frames = 0
     accum_areas, accum_uids, accum_starts, accum_ends, accum_peaks = [], [], [], [], []
     for wf in iter_waveforms(set_pmt, max_files=max_files, show_progress=True):
-        result_dict = find_s2(wf, config=config)
+        result_dict = find_s2(wf, config=config, t_start_delay = 0, integ_interval=1.5)
         total_frames += wf.nframes
         accepted_frames += result_dict['n_accepted']
         
