@@ -1,0 +1,53 @@
+run_id: "RUN_47"
+description: "Th228 X-ray analysis, 25 kV/cm EL field"
+
+# Data location
+data:
+  raw_data_path: "/Volumes/KINGSTON/RaTag_data/raw_waveforms/RUN47_xrays"
+  output_base: "/Volumes/KINGSTON/RaTag_data/processed/RUN47_xrays"  # Optional, defaults to raw_data_path
+  pmt_pattern: "*_.wfm"
+
+# Run parameters
+experiment:
+  el_field: 25000.0          # V/cm - EL field
+  target_isotope: "Th228"   # Isotope being studied
+  pressure: 1.0             # bar - Gas pressure
+  temperature: 297.0        # K - Temperature
+  sampling_rate: 5.0e9      # Hz - Oscilloscope sampling rate
+  el_gap: 0.04               # cm - EL gap distance
+  drift_gap: 0.48            # cm - Drift gap distance
+  width_s2: 1.1             # µs - S2 signal width
+  W_value: 22.0             # eV - Mean energy per ion pair
+  E_gamma_xray: 12300.0     # eV - X-ray energy
+
+execution:
+  run_xrays: true
+
+fit_config:
+  force: true
+  bin_cuts: [2, 55]       # mV·µs - Histogram range
+  nbins: 100              # Number of histogram bins
+  bg_threshold: 0.5       # Background fraction threshold for two-stage fitting (0-1)
+  bg_cutoff: 0.07          # mV·µs - Upper limit for background fitting
+  n_sigma: 3.0            # Sigmas above background mean for signal region cutoff
+  upper_limit: 5.0        # mV·µs - Upper limit for signal fitting range
+  max_upper_bound: 10.0  # mV·µs - Max allowed upper bound for fitting range
+
+# X-ray classification
+xray_classification:
+  force: false
+  max_frames: null          # null = all frames, or specify number
+  bs_threshold: 0.5         # mV - Baseline threshold for signal detection
+  max_area_s1: 1.0e5        # mV·µs - Max allowed area before S1 (reject large pre-S1 signals)
+  max_area_s2: 1.0e5        # mV·µs - Max allowed area in S2 window (reject noise/pile-up)
+  min_s2_sep: 1.0           # µs - Min required separation before S2 window
+  min_s1_sep: 0.5           # µs - Min required separation after S1
+  n_pedestal: 200           # Samples for pedestal calculation
+  ma_window: 10             # Moving average window size
+  dt: 0.0002                # µs - Integration timestep
+  
+  min_xray_area: 0.5        # mV·µs - Min required X-ray area (reject low-quality events)
+  max_v_clip: 150           # mV - Max voltage for clipping (reject saturated signals)  
+  t_s1: -3.0                # µs - Start of S1 search window
+  t_s2_start: 0.5           # µs - Start of S2 search window
+

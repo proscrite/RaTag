@@ -104,6 +104,8 @@ class XRayConfig:
     n_pedestal: int = 200             # number of pre-trigger samples for pedestal subtraction
     ma_window: int = 10               # moving average window length (samples)
     dt: float = 2e-4                  # integration timestep (µs)
+    t_s1: float = -3.0                # (µs) Start of S1 search window
+    t_s2_start: float = 0.5           # (µs) Start of S2 search window
     max_v_clip: float = 150.0             # (mV) -- maximum voltage to consider for clipping detection
 
 
