@@ -126,8 +126,11 @@ def resolve_set_xrays(set_pmt: SetPmt,
     """
     Executes X-ray classification and formats the arrays for storage.
     """
-    t_s1 = XRayConfig().get('t_s1', set_pmt.t_s1)
-    t_s2_start = XRayConfig().get('t_s2_start', set_pmt.t_s2_start)
+    t_s1 = config.t_s1 if config.t_s1 is not None else set_pmt.t_s1
+    t_s2_start = config.t_s2_start if config.t_s2_start is not None else set_pmt.t_s2_start
+
+    if t_s1 is None or t_s2_start is None:
+        raise ValueError(f"Set {set_pmt.source_dir.name} is missing required attributes t_s1 or t_s2_start.")
 
     
     if t_s1 is None or t_s2_start is None:
