@@ -1,11 +1,79 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import savgol_filter
-from scipy.ndimage import maximum_filter1d
 from matplotlib.figure import Figure
 
+from RaTag.waveform.preprocessing import moving_average, subtract_pedestal
 from RaTag.core.datatypes import PMTWaveform, SiliconWaveform
 from RaTag.core.config import TimingConfig
+
+
+def plot_s2_diagnostic(wf, s2_results: dict, config, frame_idx: int) -> None:
+    """
+    Diagnostic plotter that explicitly mirrors the find_s2 engine physics
+    and reads the boolean ledger for absolute diagnostic truth.
+    """
+    # 1. Exact Engine Physics Replication
+    wf_sub0 = subtract_pedestal(wf, n_points=config.n_pedestal)
+    v_raw_sub = wf_sub0.v[frame_idx] if wf_sub0.ff else wf_sub0.v
+    
+    wf_smooth = moving_average(wf, window=config.s2_window_ma)
+    wf_sub_smooth = subtract_pedestal(wf_smooth, n_points=config.n_pedestal)
+    
+    v_smooth = wf_sub_smooth.v[frame_idx] if wf_sub_smooth.ff else wf_sub_smooth.v
+    t_frame = wf.t
+    frame_uid = wf.uids[frame_idx]
+    
+    # 2. Extract 1:1 Data Lineage
+    frame_area = s2_results.get('raw_areas', np.zeros(wf.nframes))[frame_idx]
+    true_peak = s2_results.get('v_smooth_peaks', np.zeros(wf.nframes))[frame_idx]
+    
+    ledger = s2_results.get('cut_ledger', {})
+    if not ledger:
+        print("Cut ledger missing. Run find_s2 with updated engine.")
+        return
+
+    # 3. Determine Exact Failure Cause
+    status_msg = "ACCEPTED"
+    plot_color = 'green'
+    
+    if not ledger['pass_clip'][frame_idx]:
+        status_msg = "REJECTED (Failed Anti-Clip)"
+        plot_color = 'crimson'
+    elif not ledger['pass_v_min'][frame_idx]:
+        status_msg = f"REJECTED (Failed v_min: Peak is {true_peak:.3f} mV)"
+        plot_color = 'darkorange'
+    elif not ledger['pass_area'][frame_idx]:
+        status_msg = "REJECTED (Failed Area Bounds)"
+        plot_color = 'purple'
+        
+    # 4. Render
+    fig, ax = plt.subplots(figsize=(12, 7))
+    ax.plot(t_frame, v_raw_sub, label='Raw Waveform (Subtracted)', color='blue', alpha=0.5)
+    ax.plot(t_frame, v_smooth, label=f'Smoothed (MA: {config.s2_window_ma})', color='black', linewidth=2)
+    
+    ax.axhline(config.s2_v_min, color='goldenrod', linestyle='-.', label=f'V_min Cut ({config.s2_v_min} mV)')
+    
+    # Calculate thresholds for visual reference only
+    search_mask = t_frame > config.s2_start_min
+    if np.any(search_mask):
+        peak_val = np.max(v_smooth[search_mask])
+        ax.axhline(peak_val * config.s2_fraction_left, color='green', linestyle='--', label=f'Left Thresh ({config.s2_fraction_left*100}%)')
+        ax.axhline(peak_val * config.s2_fraction_right, color='red', linestyle='--', label=f'Right Thresh ({config.s2_fraction_right*100}%)')
+
+    if status_msg == "ACCEPTED":
+        try:
+            idx = np.where(s2_results['uids'] == frame_uid)[0][0]
+            ax.axvspan(s2_results['start_times'][idx], s2_results['end_times'][idx], color='green', alpha=0.2, label='Integration Window')
+        except IndexError:
+            pass
+
+    ax.set_title(f"UID: {frame_uid} | {status_msg}\nComputed Area: {frame_area:.3f} mV·µs", color=plot_color, fontweight='bold')
+    ax.set_xlabel("Time (µs)")
+    ax.set_ylabel("Amplitude (mV)")
+    ax.legend(loc='upper left')
+    ax.grid(alpha=0.3)
+
 
 # ============================================================================
 # 1. PHYSICS & MATH (Pure Compute Helpers)

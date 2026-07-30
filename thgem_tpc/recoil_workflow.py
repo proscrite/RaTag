@@ -69,12 +69,13 @@ def _find_right_boundary(v_sliced: np.ndarray, t_sliced: np.ndarray, peak_idx: n
 
 
 
-def _integrate_s2_areas(wf_sub: Waveform, start_times: np.ndarray, end_times: np.ndarray, t_start_delay: float = 0.0) -> np.ndarray:
-    t_2d = wf_sub.t[np.newaxis, :]
-    s2_mask = (t_2d >= start_times[:, np.newaxis] + t_start_delay) 
-    # 4. Area Integration
-    dt = wf_sub.t[1] - wf_sub.t[0]
-    s2_areas = np.sum(wf_sub.v * s2_mask, axis=1) * dt
+def _integrate_s2_areas(wf: Waveform, start_times: np.ndarray, end_times: np.ndarray) -> np.ndarray:
+    t_2d = wf.t[np.newaxis, :]
+    s2_mask = (t_2d >= start_times[:, np.newaxis]) & (t_2d <= end_times[:, np.newaxis])
+
+    dt = wf.t[1] - wf.t[0]
+    s2_areas = np.sum(wf.v * s2_mask, axis=1) * dt
+
     return s2_areas
 
 def _check_area_bounds(areas: np.ndarray, min_area: float, max_area: float) -> np.ndarray:
@@ -140,24 +141,20 @@ def find_s2(wf: Waveform, config: TimingConfig, t_start_s2: float) -> dict:
     pass_v_min = peak_heights > config.s2_v_min
     start_times, pass_left = _find_left_boundary(
         v_sliced, t_sliced, peak_idx, peak_heights, peak_times, 
-        config.s2_fraction_left, config.s2_fallback_window_left
+        config.s2_fraction, config.s2_fallback_window_left
     )
     
     end_times, pass_right = _find_right_boundary(
         v_sliced, t_sliced, peak_idx, peak_heights, peak_times, 
-        config.s2_fraction_right, config.s2_fallback_window
+        config.s2_fraction, config.s2_fallback_window
     )
 
     # 4. Area Integration
-    dt = wf_clipped.t[1] - wf_clipped.t[0]
-    t_2d = wf_clipped.t[np.newaxis, :]
-    s2_mask = (t_2d >= start_times[:, np.newaxis]) & (t_2d <= end_times[:, np.newaxis])
-    s2_areas = np.sum(wf_clipped.v * s2_mask, axis=1) * dt
-
-    pass_area = _check_area_bounds(s2_areas, config.s2_min_area, config.s2_max_area)
+    s2_areas = _integrate_s2_areas(wf_clipped, start_times, end_times)
+    # pass_area = _check_area_bounds(s2_areas, config.s2_min_area, config.s2_max_area)
 
     # 5. Compile Final Acceptance
-    final_mask = pass_clip & pass_v_min & pass_area
+    final_mask = pass_clip & pass_v_min 
 
     # 6. Extract Diagnostic N-1 UIDs
     strict_v_min_failure = (~pass_v_min)
@@ -170,6 +167,7 @@ def find_s2(wf: Waveform, config: TimingConfig, t_start_s2: float) -> dict:
     stats['pass_v_min'] += int(pass_v_min.sum())
     stats['fallback_left'] += int((~pass_left & pass_clip).sum())
     stats['fallback_right'] += int((~pass_right & pass_clip).sum())
+    
     stats['accepted'] += int(final_mask.sum())
 
     # 8. Return Strictly Aligned Output
@@ -180,9 +178,15 @@ def find_s2(wf: Waveform, config: TimingConfig, t_start_s2: float) -> dict:
         'start_times': np.atleast_1d(start_times[final_mask]) if np.sum(final_mask) > 0 else np.array([]),
         'end_times': np.atleast_1d(end_times[final_mask]) if np.sum(final_mask) > 0 else np.array([]),
         'uids': np.atleast_1d(wf.uids[final_mask]) if np.sum(final_mask) > 0 else np.array([]),
-        # 'n_minus_one_uids': np.atleast_1d(n_minus_one_uids),
+        'n_minus_one_uids': np.atleast_1d(n_minus_one_uids),
         'n_accepted': int(np.sum(final_mask)),
         'stats': stats,
+        'cut_ledger': {
+            'pass_clip': pass_clip,
+            'pass_v_min': pass_v_min,
+            'pass_left': pass_left,
+            'pass_right': pass_right,
+        },
     }
 
 # ============================================================================
