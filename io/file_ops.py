@@ -82,6 +82,21 @@ def load_waveform_by_uid(set_pmt: SetPmt, uid: int) -> Tuple[PMTWaveform, Option
     wf = load_wfm(set_pmt.source_dir / target_fn)
     return wf, frame_idx if set_pmt.ff else None
 
+
+def load_alpha_by_uid(set_alpha: SetAlpha, uid: int) -> Tuple[PMTWaveform, Optional[int]]:
+    """Resolves a UID to its physical file and frame, and loads the PMTWaveform."""
+    from RaTag.core.uid_utils import decode_uid, parse_file_seq_from_name
+    
+    file_seq, frame_idx = decode_uid(uid)
+    
+    # Find the corresponding filename in the set
+    target_fn = next((fn for fn in set_alpha.filenames if parse_file_seq_from_name(fn) == file_seq), None)
+    if not target_fn:
+        raise ValueError(f"File sequence {file_seq} not found in set {set_alpha.source_dir.name}")
+        
+    wf = load_alpha(set_alpha.source_dir / target_fn)
+    return wf, frame_idx if set_alpha.ff else None
+
 def iter_frames(set_pmt: SetPmt, max_frames: Optional[int] = None, start_frame: int = 0) -> Iterator[Waveform]:
     """
     Lazily yields individual frames from a set.
@@ -318,12 +333,12 @@ def load_npz_arrays(set_obj: Union[SetPmt, SetAlpha], signal_type: str) -> dict:
     """Generic helper to cleanly load dense .npz arrays (e.g., 'timing', 's2_areas')."""
     data_file = get_npz_path(set_obj, signal_type)
     print(f"  Loading {signal_type} arrays from: {data_file}")
-    return dict(np.load(data_file)) if data_file.exists() else {}
+    return dict(np.load(data_file, allow_pickle=True)) if data_file.exists() else {}
 
 
 def load_s2areas_from_path(file_path: Union[Path, str]) -> S2Areas:
     """Constructs an S2Areas transient arrays from an explicit file path."""
-    arrays = dict(np.load(file_path))
+    arrays = dict(np.load(file_path, allow_pickle=True)) if Path(file_path).exists() else {}
     return S2Areas(
         uids=arrays.get("uids", np.array([])),
         areas=arrays.get("s2_areas", np.array([]))

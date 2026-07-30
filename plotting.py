@@ -19,7 +19,8 @@ from RaTag.core.paths import get_output_root
 # Basic waveform plotter
 # --------------------------------
 
-def plot_waveform(wf: PMTWaveform, frame: Optional[int] = None, ax=None, title: str = "Waveform", color: str = "b"):
+def plot_waveform(wf: PMTWaveform, frame: Optional[int] = None,
+                   ax=None, title: str = "Waveform", color: str = "b") -> tuple:
     """Plot a single waveform."""
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 6))

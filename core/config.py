@@ -67,8 +67,8 @@ class TimingConfig:
     force: bool = False
     # S1 Search Parameters
     max_frames: int = None        # Maximum number of frames to consider for S1 search (None = all)
-    s1_t_min: float = -4.0           # (µs) Start of empirical S1 search window
-    s1_t_max: float = -2.5           # (µs) End of empirical S1 search window
+    s1_t_min: float = -2.0           # (µs) Start of empirical S1 search window
+    s1_t_max: float = -1.0           # (µs) End of empirical S1 search window
     s1_v_min: float = 3.0            # (mV) Minimum height for valid S1
     s1_v_max: float = 15.0           # (mV) Maximum height for valid S1
     s1_max_area: float = 0.15        # (mV*µs) Max integrated area to reject alpha tails
@@ -83,12 +83,18 @@ class TimingConfig:
     s2_min_width: float = 0.2        # (µs) Minimum S2 width to consider valid
     s2_start_max: float = 0.5        # (µs) Maximum S2 start time
     s2_start_min: float = -2.0       # (µs) Minimum S2 start time
-
+    s2_v_min: float = 5.0            # (mV) Minimum S2 peak voltage to consider valid
     # Preprocessing Parameters
     n_pedestal: int = 200            # Samples for pedestal subtraction
     bs_threshold: float = 0.02       # (mV) Initial noise clipping threshold
     s1_window_ma: int = 10           # Samples (~2 ns) strictly for defeating digitizer quantization
     s2_window_ma: int = 1000          # Samples (~20 ns) for macroscopic S2 envelope tracking
+
+    s2_fraction_left: float = 0.02   # Fractional threshold for left S2 boundary
+    s2_fraction_right: float = 0.01  # Fractional threshold for right S2 boundary
+    s2_fallback_window: float = 1.5  # (µs) Fallback window for S2 detection if right boundary fails
+    s2_fallback_window_left: float = 0.5  # (µs) Fallback window for left S2 boundary if left boundary fails
+
 
 @dataclass(frozen=True)
 class XRayConfig:

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from RaTag.core.dataIO import load_wfm
 from RaTag.core.datatypes import PMTWaveform, Waveform
+from scipy.ndimage import uniform_filter1d
 
 
 def subtract_pedestal(wf: Waveform, n_points: int = 200) -> Waveform:
@@ -24,9 +25,11 @@ def moving_average(wf: PMTWaveform, window: int = 9) -> PMTWaveform:
     kernel = np.ones(window)/window
     if wf.ff:
         # Apply convolution to each frame
-        v = np.array([np.convolve(frame, kernel, mode="same") for frame in wf.v])
+        # v = np.array([np.convolve(frame, kernel, mode="same") for frame in wf.v])
+        v = uniform_filter1d(wf.v, size=window, axis=1, )  # Vectorized moving average for FastFrame
     else:
-        v = np.convolve(wf.v, kernel, mode="same")
+        v = uniform_filter1d(wf.v, size=window) # Vectorized moving average for single frame
+        # v = np.convolve(wf.v, kernel, mode="same")
     return replace(wf, v=v)
 
 def threshold_clip(wf: PMTWaveform, threshold: float = 0.02) -> PMTWaveform:
