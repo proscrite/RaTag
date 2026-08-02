@@ -978,20 +978,41 @@ def plot_s2areas_summary(ax: plt.Axes,
                     bin_cuts: tuple = (0, 15),
                     fit_model: Optional[Any] = None,
                     lower_bound: Optional[float] = None,
-                    color: str = 'orange') -> None:
+                    color: str = 'orange',
+                    target_isotope: Optional[str] = None) -> None:
     """Plot S2 area histogram with optional fit overlay. Handles missing data gracefully."""
-    
+
+    colors = {'Ra224': 'red', 'Rn220': 'blue', 'Po216': 'green', 
+              'Po212': 'lime', 'Th228': 'purple', 'Bi212': 'brown'}
+    z_hierarchy = {'Po212': 10, 'Bi212': 9, 'Po216': 8, 'Rn220': 7, 'Ra224': 6, 'Th228': 5}
+
+    active_color = colors.get(target_isotope, color)
+    active_z = z_hierarchy.get(target_isotope, 1)
+    prefix = f"{target_isotope} " if target_isotope != None else ""
+
+    alpha = 0.6
+    if active_color is not 'orange':
+        color = active_color
+        alpha=0.3
+
     # 1. Plot raw data
-    ax.hist(s2_areas.areas, bins=100, range=bin_cuts, alpha=0.5, color=color, label='Data')
+    ax.hist(s2_areas.areas, bins=100, range=bin_cuts, 
+            alpha=alpha, color=color, zorder=active_z,
+            label=f'{prefix}Data')
     
     # 2. Overlay fit
     if fit_model is not None:
         x_smooth = np.linspace(bin_cuts[0], bin_cuts[1], 500)
         y_fit = fit_model.eval(x=x_smooth)
         fit_mean = fit_model.params['sig_x0'].value
-        ax.plot(x_smooth, y_fit, 'g-', lw=2, label=f"Fit (μ={fit_mean:.2f})")
+        ax.plot(x_smooth, y_fit, color='g',
+                 linestyle='-', lw=2, 
+                 label=f"{prefix}Fit (μ={fit_mean:.2f})", zorder=active_z + 0.1)
         ax.axvline(fit_mean, color='green', linestyle=':', alpha=0.7)
-        ax.set(ylim=(0, np.max(fit_model.best_fit)*1.75))
+
+        new_ymax = np.max(fit_model.best_fit) * 1.25
+        current_ymax = ax.get_ylim()[1]
+        ax.set_ylim(0, max(current_ymax, new_ymax))
     if lower_bound is not None:
         ax.axvline(lower_bound, color='red', linestyle='--', alpha=0.7, label=f"Lower Fit Bound: {lower_bound:.2f}")
     # 3. Formatting

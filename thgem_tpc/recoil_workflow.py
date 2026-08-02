@@ -6,7 +6,7 @@ from scipy.ndimage import maximum_filter1d
 
 from RaTag.core.datatypes import Run, SetPmt, S2Areas, Waveform
 from RaTag.core.config import IntegrationConfig, FitConfig, TimingConfig
-from RaTag.core.paths import get_output_root
+from RaTag.core.paths import get_fit_path
 from RaTag.core.decorators import *
 from RaTag.core.functional import map_over
 from RaTag.io.file_ops import iter_waveforms, load_s2areas, load_fit_result
@@ -365,14 +365,16 @@ def map_recoil_plots(run: Run, config: FitConfig = FitConfig(), force: bool = Fa
             
             fit_model = None
             if set_pmt.area_s2_fit_success:
-                fit_path = get_output_root(set_pmt.source_dir.parent) / "fits" / f"{set_pmt.source_dir.name}_s2_areas_hist_fit.json"
+                fit_path = get_fit_path(set_pmt, 's2_areas_hist_fit')
                 fit_model = load_fit_result(fit_path, funcdefs={'v_crystalball_right': v_crystalball_right})
                 print(f"  Loaded fit model for {set_pmt.source_dir.name} with lower_bound={set_pmt.s2_background_bound}")
+            target_isotope = getattr(set_pmt, 'target_isotope', None)
             plot_s2areas_summary(ax=ax, set_name=set_pmt.source_dir.name, 
                                  s2_areas=s2_areas, 
                                  bin_cuts = config.bin_cuts,
                                  fit_model=fit_model,
-                                 lower_bound=set_pmt.s2_background_bound)
+                                 lower_bound=set_pmt.s2_background_bound,
+                                 target_isotope=target_isotope)
 
     figs["histograms"] = fig_hist
     figs["s2_vs_field"] = plot_run_s2_vs_field(run)
