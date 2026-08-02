@@ -44,27 +44,31 @@ energy_mapping:
   max_frames: null          # Number of frames to process (null = all)
   pattern: "*.wfm"       # Glob pattern for alpha channel files
   savgol_window: 501        # Savitzky-Golay window size (21-5001, must be odd, default: 501)
-  nbins: 120                # Number of bins for energy spectrum histograms
+  nbins: 200                # Number of bins for energy spectrum histograms
   energy_range: [4, 10.2]    # MeV - Energy range for spectrum fitting [SCA scale]
-  n_sigma: 2.0              # Number of sigmas for isotope range definition (default: 2.0)
+  n_sigma:
+    Th228: [6.0, 2.0]
+    Ra224: [2.0, 4.0]
+    default: [3.0, 3.0]
   use_quadratic: true       # Use quadratic (vs linear) energy calibration
 
 # Preparation stage (S1/S2 timing estimation)
 preparation:
   force: true
   max_frames: null       # Number of frames for S1 estimation
+
   n_pedestal: 200       # Samples for pedestal calculation
   bs_threshold: 0.02    # mV - Baseline subtraction threshold
 
-  s2_margin: 0.7       # µs - Multiplier for drift time to set S2 window
-  s2_threshold: 230    # mV - Maximum for frame clipping detection
+  s2_margin: 0.7        # µs - Multiplier for drift time to set S2 window
+  s2_threshold: 230     # mV - Maximum for frame clipping detection
   s2_fraction: 0.02     # Fractional threshold for S2 boundaries dynamic detection
   
-  s2_v_min: 10.0
-  s2_window_ma: 1000
+  s2_v_min: 10.0         # mV - Minimum S2 peak voltage to consider valid
+  s2_window_ma: 1000    # Samples for macroscopic S2 envelope tracking
 
-  s2_fallback_window: 1.5
-  s2_fallback_window_left: 0.5
+  s2_fallback_window: 1.5         # µs - Fallback S2 window size if dynamic detection fails
+  s2_fallback_window_left: 0.5    # µs - Fallback S2 window left extension if dynamic detection fails
   
 # Integration stage (S2 area calculation)
 integration:
@@ -77,12 +81,13 @@ integration:
 
 fit_config:
   force: true
-  bin_cuts: [4, 50]       # mV·µs - Histogram range
+  bin_cuts: [2, 55]       # mV·µs - Histogram range
   nbins: 100              # Number of histogram bins
   bg_threshold: 0.5       # Background fraction threshold for two-stage fitting (0-1)
   bg_cutoff: 0.07          # mV·µs - Upper limit for background fitting
   n_sigma: 3.0            # Sigmas above background mean for signal region cutoff
-  max_lower_bound: 10.0        # mV·µs - Upper limit for signal fitting range
+  upper_limit: 5.0        # mV·µs - Upper limit for signal fitting range
+  max_upper_bound: 10.0  # mV·µs - Max allowed upper bound for fitting range
 
 # X-ray classification
 xray_classification:

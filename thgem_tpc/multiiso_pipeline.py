@@ -1,4 +1,5 @@
-from RaTag.thgem_tpc.multiiso_workflow import map_multiiso_s2_vs_field, map_multiiso_separation
+from RaTag.thgem_tpc.multiiso_workflow import (map_multiiso_s2_vs_field, map_multiiso_separation,
+                                               map_multiiso_hist_grid)
 from RaTag.thgem_tpc.recoil_workflow import map_recoil_fits, map_recoil_plots
 from RaTag.core.datatypes import Run
 from RaTag.core.config import FitConfig
@@ -19,6 +20,7 @@ def pipeline_multi_isotope(run: Run, config: dict = None) -> Run:
 
         # 3. Plot: same as in single-isotope recoil workflow
         plotted_run = map_recoil_plots(fitted_run, config=fit_config, force=fit_config.force)
-    
+
+    run = map_multiiso_hist_grid(run, spawned_runs=multi_run_dict, config=fit_config, force=fit_config.force)
     run = map_multiiso_s2_vs_field(run, spawned_runs=multi_run_dict, force=fit_config.force)
     return run

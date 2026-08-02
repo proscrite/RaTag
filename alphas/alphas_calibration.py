@@ -5,7 +5,7 @@ import numpy as np
 from dataclasses import replace
 
 from RaTag.core.datatypes import Run, SetAlpha
-from RaTag.core.config import ALPHA_PEAK_DEFINITIONS
+from RaTag.core.config import ALPHA_PEAK_DEFINITIONS, AlphaCalibrationConfig
 from RaTag.core.decorators import *
 from RaTag.core.functional import map_over
 from RaTag.io import file_ops
@@ -52,18 +52,19 @@ def _load_alpha_fits(set_alpha: SetAlpha) -> dict:
 @write_metadata(target_attr='calib_a')
 @write_alpha_fits()
 def resolve_set_calibration(set_alpha: SetAlpha, 
-                            energy_range: tuple[float, float] = (3.5, 8.2),
+                            config: AlphaCalibrationConfig = AlphaCalibrationConfig(),
                             force: bool = False) -> tuple[SetAlpha, dict]:
                             
     print(f"  Calibrating alpha spectrum for {set_alpha.source_dir.name}...")
     
     arrays = file_ops.load_npz_arrays(set_alpha, 'alpha_energies')
-    bin_centers, counts = select_roi(arrays['energies'], *energy_range)
+    bin_centers, counts = select_roi(arrays['energies'], *config.energy_range)
     
     # Preliminary Fits
     fit_results = fit_multi_crystalball_progressive(bin_centers, counts, ALPHA_PEAK_DEFINITIONS)
     
-    calibration = derive_energy_calibration(fit_results, ALPHA_PEAK_DEFINITIONS, order=2)
+    calibration = derive_energy_calibration(fit_results, ALPHA_PEAK_DEFINITIONS, 
+                                            order=2 if config.use_quadratic else 1)
     
     crossover_V = None
     if 'Th228' in fit_results and 'Ra224' in fit_results:
@@ -76,8 +77,8 @@ def resolve_set_calibration(set_alpha: SetAlpha,
         print(f"    ✓ Bayesian overlap resolved at {crossover_V:.3f} mV")
 
     ranges_V, ranges_E, mean_res = derive_isotope_ranges(fit_results,
-                                                         calibration,
-                                                         n_sigma=1.0, crossover_V=crossover_V)
+                                                         calibration,                                                         
+                                                         n_sigma=config.n_sigma, crossover_V=crossover_V)
     
     print(f"    ✓ Calibration successful. Mean Resolution: {mean_res*100:.2f}%")
 
@@ -98,12 +99,12 @@ def resolve_set_calibration(set_alpha: SetAlpha,
 # ============================================================================
 
 def map_alpha_calibrations(run: Run, 
-                           energy_range: tuple[float, float] = (3.5, 8.2),
+                           config: AlphaCalibrationConfig = AlphaCalibrationConfig(),
                            force: bool = False) -> Run:
     """Entry point: Calibrates each alpha set independently."""
     print("\n" + "="*60 + f"\nCALIBRATING ALPHA ENERGIES: {run.run_id}\n" + "="*60)
     
-    bound_calibration = lambda s: resolve_set_calibration(s, energy_range=energy_range, force=force)
+    bound_calibration = lambda s: resolve_set_calibration(s, config=config, force=force)
     
     # Map over sets independently
     updated_alpha_sets = map_over(run.alpha_sets, bound_calibration, catch_errors=True)
