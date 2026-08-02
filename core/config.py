@@ -1,7 +1,6 @@
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Callable, Optional
-from .datatypes import PMTWaveform
+from typing import Optional, Union
 
 # -------------------------------
 # General analysis thresholds
@@ -135,7 +134,7 @@ class AlphaCalibrationConfig:
     savgol_window: int = 501           # Savitzky-Golay window size (must be odd)
     pattern: str = "*Ch4.wfm"          # (Deprecated, now in bootstrap) Glob pattern for alpha channel files
     nbins: int = 120                   # Number of histogram bins for energy spectra
-    n_sigma: float = 2.0               # Number of sigmas for isotope range definition
+    n_sigma: Union[float, dict[str, tuple[float, float]]] = 2.0
     use_quadratic: bool = True         # Use quadratic (vs linear) energy calibration
     energy_range: tuple[float, float] = (3.5, 8.2)  # Energy range for fitting (V)
 

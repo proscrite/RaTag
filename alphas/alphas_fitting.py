@@ -1,7 +1,7 @@
 import numpy as np
 import lmfit
 from lmfit.model import ModelResult
-from typing import Dict, Tuple, Optional, List
+from typing import Dict, Tuple, Optional, List, Union
 from dataclasses import dataclass
 
 from RaTag.core.fitting import v_crystalball_left
@@ -222,7 +222,7 @@ def refine_overlapping_pair(energies: np.ndarray, counts: np.ndarray,
 
 def derive_isotope_ranges(fit_results: dict[str, ModelResult],
                           calibration: EnergyCalibration,
-                          n_sigma: float = 1.0,
+                          n_sigma: Union[float, dict] = 2.0,
                           crossover_V: Optional[float] = None,
                           overlap_pair: tuple[str, str] = ('Th228', 'Ra224')) -> tuple[dict, dict, float]:
     """Computes ranges in V and E scales. Applies an exact crossover boundary if provided."""
@@ -231,14 +231,19 @@ def derive_isotope_ranges(fit_results: dict[str, ModelResult],
     for name, fit in fit_results.items():
         x0_SCA = fit.params['cb_x0'].value
         sigma_SCA = fit.params['cb_sigma'].value
-        
+
+        if isinstance(n_sigma, dict):
+            sig_left, sig_right = n_sigma.get(name, n_sigma.get('default', (2.0, 2.0)))
+        else:
+            sig_left = sig_right = float(n_sigma)
+
         x0_true = calibration.apply(np.array([x0_SCA]))[0]
         sigma_true = abs(calibration.derivative(np.array([x0_SCA]))[0]) * sigma_SCA
         
         resolutions.append((2.355 * sigma_true) / x0_true)
         
-        ranges_V[name] = (x0_SCA - (n_sigma * sigma_SCA), x0_SCA + (n_sigma * sigma_SCA))
-        ranges_E[name] = (x0_true - (n_sigma * sigma_true), x0_true + (n_sigma * sigma_true))
+        ranges_V[name] = (x0_SCA - (sig_left * sigma_SCA), x0_SCA + (sig_right * sigma_SCA))
+        ranges_E[name] = (x0_true - (sig_left * sigma_true), x0_true + (sig_right * sigma_true))
         
     # Apply the mathematical hard-clip if a crossover boundary was provided
     if crossover_V is not None and overlap_pair[0] in ranges_V and overlap_pair[1] in ranges_V:
