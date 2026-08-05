@@ -1,4 +1,5 @@
 import numpy as np
+import sys
 import random
 import json
 import matplotlib.pyplot as plt
@@ -31,25 +32,33 @@ def _integrate_window(v_window: np.ndarray, dt: float) -> np.ndarray:
     """Calorimetric step: Returns a 1D array of integrated areas for the given window."""
     return np.trapezoid(v_window, dx=dt, axis=1)
 
-def _check_min_area(areas: np.ndarray, min_area: float) -> np.ndarray:
+def _check_min_v(v: np.ndarray, min_v: float) -> np.ndarray:
     """SPE grass cut: Returns a 1D boolean mask of frames passing the minimum charge threshold."""
-    return areas > min_area
+    return np.max(v, axis=1) > min_v
 
-def _update_stats(stats: dict, pass_clip: np.ndarray, pass_area: np.ndarray, final_mask: np.ndarray) -> dict:
-    """Helper to update the stats dictionary with the results from a batch."""
+def _update_stats(stats: dict, pass_clip: np.ndarray, pass_v_min_el: np.ndarray, pass_v_min_drift: np.ndarray, mask_xray: np.ndarray, mask_recoil: np.ndarray) -> dict:
+    """Explicitly returns the updated dictionary to prevent NoneType state corruption."""
     stats['pass_clip'] += int(pass_clip.sum())
-    stats['pass_area'] += int(pass_area.sum())
-    stats['accepted'] += int(final_mask.sum())
+    stats['pass_v_min_el'] += int(pass_v_min_el.sum())
+    stats['pass_v_min_drift'] += int(pass_v_min_drift.sum())
+    stats['accepted_xray'] += int(mask_xray.sum())
+    stats['accepted_recoil'] += int(mask_recoil.sum())
     return stats
 
-def _print_xray_stats(stats: dict, n_acc: int):
-    print(f"    ✓ Classified {stats['total']} frames: {stats['accepted']} accepted")
-    print(f"      - Clipping reject:  {stats['total'] - stats['pass_clip']}")
-    print(f"      - SPE/Grass reject: {stats['total'] - stats['pass_area']}")
+def _print_xray_stats(stats: dict):
+    """Updates batch statistics on a single console line."""
+    msg = (f"\r    ✓ Batch: {stats['accepted_xray']}/{stats['total']} xray | "
+           f"{stats['accepted_recoil']}/{stats['total']} recoil | "
+           f"Rejects: {stats['total'] - stats['pass_clip']} clip, "
+           f"{stats['total'] - stats['pass_v_min_el']} EL min V, "
+           f"{stats['total'] - stats['pass_v_min_drift']} Drift min V")
     
+    sys.stdout.write(msg)
+    sys.stdout.flush()
+
 def _aggregate_run_stats(run: Run, json_stats: list):
     """Cleanly merges the independent set-level JSON files into a run-level summary."""
-    agg_stats = {'total': 0, 'pass_clip': 0, 'pass_area': 0, 'accepted': 0}
+    agg_stats = {'total': 0, 'pass_clip': 0, 'pass_v_min_el': 0, 'pass_v_min_drift': 0, 'accepted_xray': 0, 'accepted_recoil': 0}
     out_root = get_output_root(run) / "xray_areas"
     
     # 1. Accumulate
@@ -65,54 +74,67 @@ def _aggregate_run_stats(run: Run, json_stats: list):
         json.dump(agg_stats, f, indent=4)
 
 # ============================================================================
-# 2. PURE MATH & PHYSICS (The Vectorized Engine)
+# 2. PURE MATH & PHYSICS (Vectorized Bifurcated Integration on Batches)
 # ============================================================================
-
-def calculate_xray_areas(set_pmt: SetPmt, 
-                         t_s1: float, t_s2_start: float,
-                         max_files: Optional[int] = None, 
-                         config: XRayConfig = XRayConfig()) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Single-pass 2D vectorized integration of total charge in the drift window."""
+def calculate_bifurcated_areas(set_pmt: SetPmt, 
+                               t_s1: float, t_split: float, 
+                               start_file: int, max_files: int,
+                               config: XRayConfig) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict]:
+    """Single-pass 2D vectorized integration mapping both the X-Ray and Recoil phase spaces."""
     
-    print(f"  Searching X-Ray window: [{t_s1:.2f}, {t_s2_start:.2f}] µs")
+    out_uids_xray, out_xray, out_uids_recoil, out_recoil = [], [], [], []
+    stats = {'total': 0, 'pass_clip': 0, 'pass_v_min_el': 0, 'pass_v_min_drift': 0, 'accepted_xray': 0, 'accepted_recoil': 0}
 
-    out_uids, out_areas = [], []
-    stats = {'total': 0, 'pass_clip': 0, 'pass_area': 0, 'accepted': 0}
-
-    for wf in file_ops.iter_waveforms(set_pmt, max_files=max_files, show_progress=True):
+    for wf in file_ops.iter_waveforms(set_pmt, start_file=start_file, max_files=max_files, show_progress=False):
         
-        # 1. Preprocess
+        # Guard clause against empty frames/corrupted PyVISA reads
+        if wf.v is None or not len(wf.uids):
+            continue
+            
         wf = standard_preprocessing(wf, n_pedestal=int(config.n_pedestal),
                                     ma_window=int(config.ma_window),
                                     threshold=float(config.bs_threshold))
-        
+
         v_2d = wf.v if wf.ff else wf.v[np.newaxis, :]
         
-        # 2. Extract Phase Space Window
-        win_mask = _get_window_mask(wf.t, t_s1, t_s2_start)
-        v_win = v_2d[:, win_mask]
+        # 1. Extract Geometric Partitions
+        mask_xray = _get_window_mask(wf.t, t_s1, t_split)    # X-Ray window
+        mask_recoil = _get_window_mask(wf.t, t_split, wf.t[-1])  # Recoil window
 
-        # 3. Apply Hardware/Physics Cuts
-        pass_clip = _check_clipping(v_win, config.max_v_clip)
-        areas = _integrate_window(v_win, config.dt)
-        pass_area = _check_min_area(areas, config.min_xray_area)
+        v_xray = v_2d[:, mask_xray]
+        v_recoil = v_2d[:, mask_recoil]
 
-        # 4. Filter and Store
-        final_mask = pass_clip & pass_area
-        out_uids.append(wf.uids[final_mask])
-        out_areas.append(areas[final_mask])
+        # 2. Apply Hardware/Physics Cuts
+        pass_clip = _check_clipping(v_2d, config.max_v_clip)  # Check whole trace for alpha saturation
+        pass_v_min_el = _check_min_v(v_recoil, config.min_v_s2)     # Ensure a recoil actually exists
+        pass_v_min_drift = _check_min_v(v_xray, config.min_v_xray)  # Ensure a minimum drift signal (X-ray) actually exists
 
-        # 5. Log Chunk Stats
-        stats['total'] += len(wf.uids)
-        stats = _update_stats(stats, pass_clip=pass_clip, pass_area=pass_area, final_mask=final_mask)
+        areas_xray = _integrate_window(v_xray, config.dt)   # Integrate X-Ray window
+        areas_recoil = _integrate_window(v_recoil, config.dt)       # Integrate Recoil window
+
+        # 3. Decoupled Topological Masks
+        mask_xray = pass_clip & pass_v_min_drift
+        mask_recoil = pass_clip & pass_v_min_el
         
+        out_uids_xray.append(wf.uids[mask_xray])
+        out_xray.append(areas_xray[mask_xray])
 
-    # Compile Final Arrays
-    final_uids = np.concatenate(out_uids) if out_uids else np.array([])
-    final_areas = np.concatenate(out_areas) if out_areas else np.array([])
-    
-    _print_xray_stats(stats, n_acc=len(final_uids))
-    return final_areas, final_uids, stats
+        out_uids_recoil.append(wf.uids[mask_recoil])
+        out_recoil.append(areas_recoil[mask_recoil])
+
+        # 4. Log Chunk Stats
+        stats['total'] += len(wf.uids)
+        stats = _update_stats(stats, pass_clip, pass_v_min_el, pass_v_min_drift, mask_xray, mask_recoil)
+        
+    _print_xray_stats(stats, )
+
+    final_uids_xray = np.concatenate(out_uids_xray) if out_uids_xray else np.array([])
+    final_xray = np.concatenate(out_xray) if out_xray else np.array([])
+    final_uids_recoil = np.concatenate(out_uids_recoil) if out_uids_recoil else np.array([])
+    final_recoil = np.concatenate(out_recoil) if out_recoil else np.array([])
+
+    return final_xray, final_uids_xray, final_recoil, final_uids_recoil, stats
+
 # ============================================================================
 # 2. SET-LEVEL ETL (Cached Solver) and RUN-LEVEL AGGREGATOR
 # ============================================================================
@@ -124,25 +146,72 @@ def resolve_set_xrays(set_pmt: SetPmt,
                       max_files: Optional[int] = None, 
                       config: XRayConfig = XRayConfig()) -> tuple[SetPmt, dict]:
     """
-    Executes X-ray classification and formats the arrays for storage.
+    Orchestrates the bifurcated extraction across millions of frames, 
+    saving intermediate chunks to prevent RAM/I-O failure.
     """
-    t_s1 = config.t_s1 if config.t_s1 is not None else set_pmt.t_s1
-    t_s2_start = config.t_s2_start if config.t_s2_start is not None else set_pmt.t_s2_start
-
-    if t_s1 is None or t_s2_start is None:
-        raise ValueError(f"Set {set_pmt.source_dir.name} is missing required attributes t_s1 or t_s2_start.")
-
     
-    if t_s1 is None or t_s2_start is None:
-        raise ValueError(f"Set {set_pmt.source_dir.name} is missing required attributes t_s1 or t_s2_start.")
+    # Require explicit physics boundaries from config
+    t_s1 = config.t_s1 
+    t_split = config.t_s2_start
+
+    total_files = len(set_pmt.filenames) if max_files is None else min(len(set_pmt.filenames), max_files)
+    
+    print(f"  Mapping {total_files} files in geometric partition [{t_s1} - {t_split} | {t_split} - [END] µs")
+
+    # Dedicated checkpoint directories
+    out_root = get_output_root(set_pmt.source_dir.parent)
+    xray_chk_dir = out_root / "xray_checkpoints"
+    recoil_chk_dir = out_root / "recoil_checkpoints"
+    xray_chk_dir.mkdir(parents=True, exist_ok=True)
+    recoil_chk_dir.mkdir(parents=True, exist_ok=True)
+
+    all_xray, all_uids_xray = [], []
+    all_recoil, all_uids_recoil = [], []
+    agg_stats = {'total': 0, 'pass_clip': 0, 'pass_v_min_el': 0, 'pass_v_min_drift': 0, 'accepted_xray': 0, 'accepted_recoil': 0}
+
+    for start_idx in range(0, total_files, config.batch_size):
+        chunk_size = min(config.batch_size, total_files - start_idx)
+        print(f"    -> Processing batch {start_idx} to {start_idx + chunk_size}...")
+
+        xrays, uids_xray, recoils, uids_recoil, batch_stats = calculate_bifurcated_areas(set_pmt, t_s1, t_split,
+                                                                                         start_file=start_idx, max_files=chunk_size, config=config)
+
+        batch_xray_data = {"s2_areas": xrays, "uids": uids_xray, "stats": np.array([json.dumps(batch_stats)])}
+        batch_recoil_data = {"s2_areas": recoils, "uids": uids_recoil}
         
-    areas, uids, stats = calculate_xray_areas(set_pmt, t_s1=t_s1, t_s2_start=t_s2_start, max_files=max_files, config=config)
+        np.savez_compressed(xray_chk_dir / f"{set_pmt.source_dir.name}_xray_batch_{start_idx}.npz", **batch_xray_data)
+        np.savez_compressed(recoil_chk_dir / f"{set_pmt.source_dir.name}_recoil_batch_{start_idx}.npz", **batch_recoil_data)
+
+        # 2. RAM Accumulation
+        all_xray.append(xrays)
+        all_uids_xray.append(uids_xray)
+        
+        all_recoil.append(recoils)
+        all_uids_recoil.append(uids_recoil)
+
+        for k in agg_stats:
+            agg_stats[k] += batch_stats.get(k, 0)
+
+        
+    print()
+
+    ## 3. Final Reduction
+    final_xray = np.concatenate(all_xray) if all_xray else np.array([])
+    final_uids_xray = np.concatenate(all_uids_xray) if all_uids_xray else np.array([])
     
-    # Dense dictionary naturally saved to {set_name}_xray_areas.npz
+    final_recoil = np.concatenate(all_recoil) if all_recoil else np.array([])
+    final_uids_recoil = np.concatenate(all_uids_recoil) if all_uids_recoil else np.array([])
+
+    print(f"  ✓ Set {set_pmt.source_dir.name} Audit: {len(final_uids_xray)} X-Rays | {len(final_uids_recoil)} Recoils / {agg_stats['total']} total")
+
+    # 4. Save independent Recoil baseline NPZ directly using standard API
+    file_ops.save_npz_arrays(set_pmt, 's2_areas', {"s2_areas": final_recoil, "uids": final_uids_recoil})
+
+    # 5. Return X-Ray NPZ to standard decorator for pipeline continuity
     arrays = {
-        "s2_areas": areas,
-        "uids": uids,
-        "stats": np.array([json.dumps(stats)])  # Store stats as a JSON string in a 1-element array for npz compatibility
+        "s2_areas": final_xray,
+        "uids": final_uids_xray,
+        "stats": np.array([json.dumps(agg_stats)])
     }
     
     return set_pmt, arrays

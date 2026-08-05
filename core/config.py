@@ -96,6 +96,9 @@ class XRayConfig:
     t_s1: float = -3.0                # (µs) Start of S1 search window
     t_s2_start: float = 0.5           # (µs) Start of S2 search window
     max_v_clip: float = 150.0             # (mV) -- maximum voltage to consider for clipping detection
+    min_v_s2: float = 10.0              # (mV) -- minimum voltage to consider a valid S2 peak
+    min_v_xray: float = 7.0            # (mV) -- minimum voltage to consider a valid X-ray peak
+    batch_size: int = 50                  # Number of files to process in each parallel batch
 
 
 
