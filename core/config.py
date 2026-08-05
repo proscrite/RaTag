@@ -138,3 +138,26 @@ class AlphaCalibrationConfig:
     use_quadratic: bool = True         # Use quadratic (vs linear) energy calibration
     energy_range: tuple[float, float] = (3.5, 8.2)  # Energy range for fitting (V)
 
+
+
+@dataclass(frozen=True)
+class FinetuneConfig:
+    bin_cuts: tuple[float, float]
+    nbins: int
+    
+    # Background Guesses
+    bg_amplitude: float
+    bg_center: float
+    bg_sigma: float
+    
+    # Signal (THGEM Avalanche) Guesses
+    sig_N: float
+    sig_x0: float
+    sig_sigma: float
+    sig_m: float
+    sig_beta: float
+
+@dataclass(frozen=True)
+class RunFineTuneConfig:
+    """Maps specific physical sets to their explicit fine-tuned configurations."""
+    sets: dict[str, FinetuneConfig] = field(default_factory=dict)

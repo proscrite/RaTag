@@ -1,6 +1,7 @@
 from RaTag.thgem_tpc.multiiso_workflow import (map_multiiso_s2_vs_field, map_multiiso_separation,
                                                map_multiiso_hist_grid)
-from RaTag.thgem_tpc.recoil_workflow import map_recoil_fits, map_recoil_plots
+from RaTag.thgem_tpc.recoil_workflow import (map_finetuned_plots, map_finetune_fits,
+                                              map_recoil_fits, map_recoil_plots)
 from RaTag.core.datatypes import Run
 from RaTag.core.config import FitConfig
 
@@ -19,8 +20,16 @@ def pipeline_multi_isotope(run: Run, config: dict = None) -> Run:
         multi_run_dict[iso] = fitted_run  # Update the dict with the fitted run
 
         # 3. Plot: same as in single-isotope recoil workflow
-        plotted_run = map_recoil_plots(fitted_run, config=fit_config, force=fit_config.force)
+        plotted_run = map_recoil_plots(fitted_run, config=fit_config, force=force_multiiso)
 
-    run = map_multiiso_hist_grid(run, spawned_runs=multi_run_dict, config=fit_config, force=fit_config.force)
-    run = map_multiiso_s2_vs_field(run, spawned_runs=multi_run_dict, force=fit_config.force)
+        if exec_cfg.get('run_finetune', False):
+            print(f"\n" + "="*60 + f"\nFINETUNING ISOTOPE: {iso}\n" + "="*60)
+            finetune_dict = config.get('finetuning', {})
+
+            fitted_run = map_finetune_fits(fitted_run, finetune_dict=finetune_dict, force=force_finetune)
+            multi_run_dict[iso] = fitted_run  # Update the dict with the finetuned run
+            plotted_run = map_finetuned_plots(fitted_run, finetune_dict=finetune_dict, force=force_finetune)
+
+    run = map_multiiso_hist_grid(run, spawned_runs=multi_run_dict, config=fit_config, force=force_multiiso)
+    run = map_multiiso_s2_vs_field(run, spawned_runs=multi_run_dict, force=force_multiiso)
     return run
