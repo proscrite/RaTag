@@ -48,13 +48,15 @@ energy_mapping:
   energy_range: [4, 10.2]    # MeV - Energy range for spectrum fitting [SCA scale]
   n_sigma:
     Th228: [6.0, 2.0]
-    Ra224: [2.0, 4.0]
+    Ra224: [2.0, 3.0]
+    Bi212: [2.0, 2.0]
+    Rn220: [2.0, 2.0]
     default: [3.0, 3.0]
   use_quadratic: true       # Use quadratic (vs linear) energy calibration
 
 # Preparation stage (S1/S2 timing estimation)
 preparation:
-  force: true
+  force: false
   max_frames: null       # Number of frames for S1 estimation
 
   n_pedestal: 200       # Samples for pedestal calculation
@@ -89,16 +91,41 @@ fit_config:
   upper_limit: 5.0        # mV·µs - Upper limit for signal fitting range
   max_upper_bound: 10.0  # mV·µs - Max allowed upper bound for fitting range
 
-# X-ray classification
-xray_classification:
-  force: false
-  max_frames: null          # null = all frames, or specify number
-  bs_threshold: 0.5         # mV - Baseline threshold for signal detection
-  max_area_s1: 1.0e5        # mV·µs - Max allowed area before S1 (reject large pre-S1 signals)
-  max_area_s2: 1.0e5        # mV·µs - Max allowed area in S2 window (reject noise/pile-up)
-  min_xray_area: 0.0        # mV·µs - Min required X-ray area (reject low-quality events)
-  min_s2_sep: 1.0           # µs - Min required separation before S2 window
-  min_s1_sep: 0.5           # µs - Min required separation after S1
-  n_pedestal: 200           # Samples for pedestal calculation
-  ma_window: 10             # Moving average window size
-  dt: 0.0002                # µs - Integration timestep
+
+finetuning:
+  FieldScan_Gate0864_Anode1864:
+    Ra224:
+      bin_cuts: [0.0, 50.0]
+      nbins: 200
+      bg_amplitude: 300.0
+      bg_center: 5.0
+      bg_sigma: 1.5
+      sig_N: 400.0
+      sig_x0: 27.0
+      sig_sigma: 10.0
+      sig_m: 1.5
+      sig_beta: 1.5
+    Po216:
+      bin_cuts: [0.0, 50.0]
+      nbins: 200
+      bg_amplitude: 250.0
+      bg_center: 5.2
+      bg_sigma: 1.4
+      sig_N: 350.0
+      sig_x0: 28.5
+      sig_sigma: 9.0
+      sig_m: 1.6
+      sig_beta: 1.4
+
+  FieldScan_Gate0500_Anode3200:
+    Ra224:
+      bin_cuts: [0.0, 50.0]
+      nbins: 200
+      bg_amplitude: 150.0
+      bg_center: 4.8
+      bg_sigma: 1.2
+      sig_N: 500.0
+      sig_x0: 22.0
+      sig_sigma: 8.5
+      sig_m: 1.8
+      sig_beta: 1.2

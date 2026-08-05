@@ -2,6 +2,8 @@ import matplotlib.pyplot as plt # type: ignore
 import time
 from matplotlib.colors import LogNorm
 from matplotlib.colors import LogNorm
+import lmfit
+from lmfit.models import GaussianModel
 import numpy as np 
 import math
 from dataclasses import replace
@@ -11,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from RaTag.io.file_ops import load_npz_arrays
+from RaTag.core.config import FinetuneConfig
 from RaTag.core.datatypes import PMTWaveform, SetPmt, S2Areas, Run
 from RaTag.core.dataIO import load_wfm, iter_waveforms
 from RaTag.core.units import s_to_us, V_to_mV
@@ -991,7 +994,7 @@ def plot_s2areas_summary(ax: plt.Axes,
     prefix = f"{target_isotope} " if target_isotope != None else ""
 
     alpha = 0.6
-    if active_color is not 'orange':
+    if active_color != 'orange':
         color = active_color
         alpha=0.3
 
@@ -1473,3 +1476,58 @@ def plot_full_coincidence_diagnostic(wf, config, frame_idx=0, ax=None):
     
     if ax is None:
         plt.show()
+
+def plot_finetune_s2area(ax: plt.Axes,
+                         data: np.ndarray, 
+                         config: FinetuneConfig, 
+                         fit_result: dict, 
+                         set_name: str = "",
+                         color: str = 'orange',
+                         target_isotope: str = None) -> None:
+    """Plots the declarative dual-peak composite fit onto a provided axis."""
+    colors = {'Ra224': 'red', 'Rn220': 'blue', 'Po216': 'green', 
+                  'Po212': 'lime', 'Th228': 'purple', 'Bi212': 'brown'}
+    z_hierarchy = {'Po212': 10, 'Bi212': 9, 'Po216': 8, 'Rn220': 7, 'Ra224': 6, 'Th228': 5}
+
+    active_color = colors.get(target_isotope, color)
+    active_z = z_hierarchy.get(target_isotope, 1)
+    prefix = f"{target_isotope} " if target_isotope != None else ""
+
+    alpha = 0.6
+    if active_color != 'orange':
+        color = active_color
+        alpha=0.3
+
+    # 1. Reproduce histogram
+    filtered = data[(data >= config.bin_cuts[0]) & (data <= config.bin_cuts[1])]
+
+    counts, bins, _ = ax.hist(filtered, bins=config.nbins, range=config.bin_cuts, 
+                              alpha=alpha, color=color, zorder=active_z,
+                              label=f'{prefix}Data')
+    bins = np.array(bins)
+    counts = np.array(counts)
+    cbins = 0.5 * (bins[1:] + bins[:-1])  # Bin centers for fitting
+
+    composite_model = fit_result['result_composite']
+    # result_bg, result_sig = _decouple_composite_fit(composite_result=composite_model, x_data=cbins, y_data=counts)
+    x_smooth = np.linspace(config.bin_cuts[0], config.bin_cuts[1], 500)
+
+    comps = fit_result['result_composite'].eval_components(x=x_smooth)
+    y_bg = comps['bg_']
+    y_sig = comps['sig_']
+
+    # 2. Generate smooth curves
+    y_comp = y_bg + y_sig
+    
+    # 3. Plot components
+    prefix = f"{target_isotope} " if target_isotope else ""
+    ax.plot(x_smooth, y_bg, 'b--', lw=2, label=f"Background: µ = ({composite_model.params['bg_center'].value:.2f} ± {composite_model.params['bg_sigma'].value:.2f}) mV·µs")
+    ax.plot(x_smooth, y_sig, 'g-', lw=2, label=f"{prefix}Signal: µ = ({composite_model.params['sig_x0'].value:.2f} ± {composite_model.params['sig_sigma'].value:.2f}) mV·µs")
+    ax.plot(x_smooth, y_comp, 'k:', lw=1.5, alpha=0.7, label="Composite")
+    
+    # 4. Formatting
+    ax.axvline(fit_result['peak_position'], color='green', linestyle=':', alpha=0.8)
+    ax.set(title=set_name, xlabel='S2 Area (mV·µs)', ylabel='Counts')
+    ax.set_ylim(0, max(counts.max() if len(counts) > 0 else 10, y_comp.max()) * 1.15)
+    ax.legend(fontsize=7, loc='upper right')
+    ax.grid(True, alpha=0.3)

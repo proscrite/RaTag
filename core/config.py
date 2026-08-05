@@ -32,7 +32,6 @@ def _default_integrator():
 
 @dataclass(frozen=True)
 class IntegrationConfig:
-    force: bool = False
     max_frames: Optional[int] = None  # Maximum number of frames to process (None = all)
     bs_threshold: float = 0.8          # (mV)  -- min baseline voltage to consider
     max_area_s2: float = 1e5          # (mV·µs) -- max area for S2 window
@@ -49,7 +48,6 @@ class IntegrationConfig:
 
 @dataclass(frozen=True)
 class FitConfig:
-    force: bool = False
     bin_cuts: tuple[float, float] = (0, 50)
     nbins: int = 100
     bg_threshold: float = 0.3  # Background fraction threshold for two-stage fitting
@@ -63,7 +61,6 @@ class TimingConfig:
     """
     Configuration parameters for THGEM S1 and S2 timing extraction.
     """
-    force: bool = False
     # S1 Search Parameters
     max_frames: int = None        # Maximum number of frames to consider for S1 search (None = all)
     n_pedestal: int = 200            # Samples for pedestal subtraction
@@ -86,7 +83,6 @@ class TimingConfig:
 @dataclass(frozen=True)
 class XRayConfig:
     """Configuration for X-ray event classification and integration."""
-    force: bool = False
     max_frames: Optional[int] = None  # Maximum number of frames to process (None = all)
     bs_threshold: float = 0.5          # (mV)  -- baseline threshold for signal detection
     max_area_s1: float = 100          # (mV·µs) -- max allowed area before S1 (reject if exceeded)
@@ -112,8 +108,8 @@ class XRayConfig:
 ALPHA_PEAK_DEFINITIONS = [
     {'name': 'Th228', 'position': 4.3, 'window': (3.5, 4.4), 'sigma_init': 0.05, 'ref_energy': 5.42315},
     {'name': 'Ra224', 'position': 4.6, 'window': (4.4, 4.7), 'sigma_init': 0.05, 'ref_energy': 5.68537},
-    {'name': 'Bi212', 'position': 4.9, 'window': (4.7, 4.95), 'sigma_init': 0.05, 'ref_energy': 6.207},
-    {'name': 'Rn220', 'position': 5.1, 'window': (4.95, 5.2), 'sigma_init': 0.05, 'ref_energy': 6.40484},
+    {'name': 'Bi212', 'position': 4.9, 'window': (4.6, 4.95), 'sigma_init': 0.05, 'ref_energy': 6.207},
+    {'name': 'Rn220', 'position': 5.1, 'window': (4.7, 5.2), 'sigma_init': 0.05, 'ref_energy': 6.40484},
     {'name': 'Po216', 'position': 5.9, 'window': (5.2, 5.6), 'sigma_init': 0.05, 'ref_energy': 6.90628},
     {'name': 'Po212', 'position': 7.2, 'window': (6.7, 8.0), 'sigma_init': 0.07, 'ref_energy': 8.785},
 ]
@@ -129,7 +125,6 @@ ALPHA_SATELLITE_DEFINITIONS = [
 @dataclass(frozen=True)
 class AlphaCalibrationConfig:
     """Configuration for alpha spectrum calibration pipeline."""
-    force: bool = False
     max_frames: Optional[int] = None   # Number of frames to process (None = all)
     savgol_window: int = 501           # Savitzky-Golay window size (must be odd)
     pattern: str = "*Ch4.wfm"          # (Deprecated, now in bootstrap) Glob pattern for alpha channel files
@@ -138,3 +133,26 @@ class AlphaCalibrationConfig:
     use_quadratic: bool = True         # Use quadratic (vs linear) energy calibration
     energy_range: tuple[float, float] = (3.5, 8.2)  # Energy range for fitting (V)
 
+
+
+@dataclass(frozen=True)
+class FinetuneConfig:
+    bin_cuts: tuple[float, float]
+    nbins: int
+    
+    # Background Guesses
+    bg_amplitude: float
+    bg_center: float
+    bg_sigma: float
+    
+    # Signal (THGEM Avalanche) Guesses
+    sig_N: float
+    sig_x0: float
+    sig_sigma: float
+    sig_m: float
+    sig_beta: float
+
+@dataclass(frozen=True)
+class RunFineTuneConfig:
+    """Maps specific physical sets to their explicit fine-tuned configurations."""
+    sets: dict[str, FinetuneConfig] = field(default_factory=dict)

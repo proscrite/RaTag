@@ -66,19 +66,28 @@ def resolve_set_calibration(set_alpha: SetAlpha,
     calibration = derive_energy_calibration(fit_results, ALPHA_PEAK_DEFINITIONS, 
                                             order=2 if config.use_quadratic else 1)
     
-    crossover_V = None
+    crossovers = {}
     if 'Th228' in fit_results and 'Ra224' in fit_results:
         res_th, res_ra = refine_overlapping_pair(bin_centers, counts,
                                                  fit_results['Th228'], fit_results['Ra224'])
         
         fit_results['Th228'], fit_results['Ra224'] = res_th, res_ra  # Update fits with refined versions
         
-        crossover_V = resolve_likelihood_crossover(res_th, res_ra)
-        print(f"    ✓ Bayesian overlap resolved at {crossover_V:.3f} mV")
+        crossovers[('Th228', 'Ra224')] = resolve_likelihood_crossover(res_th, res_ra)
+        print(f"    ✓ Bayesian overlap for Th228-Ra224 resolved at {crossovers[('Th228', 'Ra224')]:.3f} mV")
 
-    ranges_V, ranges_E, mean_res = derive_isotope_ranges(fit_results,
-                                                         calibration,                                                         
-                                                         n_sigma=config.n_sigma, crossover_V=crossover_V)
+    # Commented out because it doesn't yield better results than the individual fits, and it can introduce instability in the calibration.
+    # if 'Rn220' in fit_results and 'Bi212' in fit_results:  
+    #     res_rn, res_bi = refine_overlapping_pair(bin_centers, counts,
+    #                                                 fit_results['Rn220'], fit_results['Bi212'])
+        
+    #     fit_results['Rn220'], fit_results['Bi212'] = res_rn, res_bi  # Update fits with refined versions
+        
+    #     crossovers[('Rn220', 'Bi212')] = resolve_likelihood_crossover(res_rn, res_bi)
+    #     print(f"    ✓ Bayesian overlap for Rn220-Bi212 resolved at {crossovers[('Rn220', 'Bi212')]:.3f} mV")
+
+    ranges_V, ranges_E, mean_res = derive_isotope_ranges(fit_results, calibration,
+                                                         n_sigma=config.n_sigma, crossovers=crossovers)
     
     print(f"    ✓ Calibration successful. Mean Resolution: {mean_res*100:.2f}%")
 

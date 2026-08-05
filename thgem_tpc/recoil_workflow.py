@@ -5,7 +5,7 @@ from dataclasses import replace
 from scipy.ndimage import maximum_filter1d
 
 from RaTag.core.datatypes import Run, SetPmt, S2Areas, Waveform
-from RaTag.core.config import IntegrationConfig, FitConfig, TimingConfig
+from RaTag.core.config import IntegrationConfig, FitConfig, TimingConfig, FinetuneConfig
 from RaTag.core.paths import get_fit_path
 from RaTag.core.decorators import *
 from RaTag.core.functional import map_over
@@ -14,9 +14,10 @@ from RaTag.waveform.preprocessing import subtract_pedestal, threshold_clip, movi
 # from RaTag.core.fitting import fit_set_s2
 from RaTag.plotting import (
     plot_s2areas_summary, plot_run_s2_vs_field, 
-    catch_plot_errors, build_fig_grid
+    catch_plot_errors, build_fig_grid,
+    plot_finetune_s2area
 )
-from RaTag.el_tpc.fit_s2_area import fit_s2_crystalball, v_crystalball_right
+from RaTag.el_tpc.fit_s2_area import fit_s2_crystalball, v_crystalball_right, fit_finetune_s2area
 from RaTag.thgem_tpc.timing_workflow import compute_timing_statistics
 
 # ============================================================================
@@ -66,7 +67,6 @@ def _find_right_boundary(v_sliced: np.ndarray, t_sliced: np.ndarray, peak_idx: n
                          peak_times + fallback_window)
 
     return end_times, has_valid_right
-
 
 
 def _integrate_s2_areas(wf: Waveform, start_times: np.ndarray, end_times: np.ndarray) -> np.ndarray:
@@ -380,3 +380,101 @@ def map_recoil_plots(run: Run, config: FitConfig = FitConfig(), force: bool = Fa
     figs["s2_vs_field"] = plot_run_s2_vs_field(run)
         
     return run, figs
+
+# ============================================================================
+#  FINETUNING WORKFLOWS (FIT AND PLOT)
+# ============================================================================
+
+@allow_force
+@load_cached_metadata(target_attr='area_s2_fit_success')
+@write_metadata(target_attr='area_s2_fit_success')
+@write_fit(suffix='s2_areas_finetune')
+def resolve_finetune_s2_fit(set_pmt: SetPmt, config: FinetuneConfig) -> tuple[SetPmt, Any]:
+    s2_areas = load_s2areas(set_pmt)
+    if len(s2_areas.areas) == 0:
+        return replace(set_pmt, area_s2_fit_success=False), None
+        
+    try:
+        # Calls the function we wrote earlier
+        result = fit_finetune_s2area(s2_areas.areas, config)
+        
+
+        metadata_updates = {
+            'area_s2_mean': result['peak_position'],
+            'area_s2_ci95': result['ci95'],
+            'area_s2_sigma': result['sigma'],
+            'area_s2_fit_success': True,
+        }
+        print(f"  ✓ Fine-Tuned: μ={result['peak_position']:.3f} ± {result['ci95']:.3f}")
+        
+        # Pass result_sig to the @write_fit decorator
+        return replace(set_pmt, **metadata_updates), result['result_composite']
+        
+    except Exception as e:
+        print(f"  ✗ Fine-Tune Fit failed for {set_pmt.source_dir.name}: {e}")
+        return replace(set_pmt, area_s2_fit_success=False), None
+
+
+def map_finetune_fits(run: Run, finetune_dict: dict, force: bool = False) -> Run:
+    """Routes explicit YAML parameters to specific sets and isotopes."""
+    print("\n" + "="*60 + f"\nFINE-TUNING S2 AREA DISTRIBUTIONS: {run.run_id}\n" + "="*60)
+    
+    updated_sets = []
+    for s in run.sets:
+        iso = getattr(s, 'target_isotope', None)
+        set_dict = finetune_dict.get(s.source_dir.name, {})
+        
+        # Pull isotope specific config, or fall back
+        config_dict = set_dict.get(iso, set_dict) if iso else set_dict
+
+        # 1. Filter strictly against the dataclass field registry
+        filtered_kwargs = {k: v for k, v in config_dict.items() if k in FinetuneConfig.__dataclass_fields__}
+        
+        # 2. Safely skip if no valid parameters exist for this pass (e.g., agnostic pass but only Ra224 defined)
+        if not filtered_kwargs:
+            updated_sets.append(s)
+            print(f"  [Skip] No fine-tuning parameters found for {s.source_dir.name} (Isotope: {iso})")
+            continue
+            
+        config = FinetuneConfig(**filtered_kwargs)
+        updated_s = resolve_finetune_s2_fit(s, config=config, force=force)
+        updated_sets.append(updated_s)
+        
+    return replace(run, sets=updated_sets)
+
+
+@allow_force
+@load_cached_plots(subfolder="s2_areas", expected_suffixes=["histograms_finetune"])
+@write_plots(subfolder="s2_areas")
+def map_finetuned_plots(run: Run, finetune_dict: dict, force: bool = False) -> tuple[Run, dict]:
+    """Generates a dedicated grid plot strictly for the fine-tuned sets."""
+    print("\n" + "="*60 + f"\nGENERATING FINE-TUNED S2 PLOTS: {run.run_id}\n" + "="*60)
+    
+    fig_hist, grid_cells = build_fig_grid(run, f"Fine-Tuned S2 Areas - {run.run_id}")
+    
+    for set_pmt, ax in grid_cells:
+        iso = getattr(set_pmt, 'target_isotope', None)
+        print(f"  Plotting {set_pmt.source_dir.name} (Isotope: {iso})")
+        set_dict = finetune_dict.get(set_pmt.source_dir.name, {})
+        config_dict = set_dict.get(iso, set_dict) if iso else set_dict
+        
+        # 1. Filter strictly against the dataclass field registry
+        filtered_kwargs = {k: v for k, v in config_dict.items() if k in FinetuneConfig.__dataclass_fields__}
+            
+        if not filtered_kwargs or not getattr(set_pmt, 'area_s2_fit_success', False):
+            ax.axis('off')
+            continue
+    
+        config = FinetuneConfig(**filtered_kwargs)
+        s2_areas = load_s2areas(set_pmt)
+        
+        # Reconstruct the fit_results dictionary required by the plotter
+        fit_results = {
+            'peak_position': set_pmt.area_s2_mean,
+            'result_composite': load_fit_result(get_fit_path(set_pmt, 's2_areas_finetune'), funcdefs={'v_crystalball_right': v_crystalball_right}),
+        }
+        
+        plot_finetune_s2area(ax=ax, data=s2_areas.areas, config=config, 
+                             fit_result=fit_results, set_name=set_pmt.source_dir.name, target_isotope=iso)
+
+    return run, {"histograms_finetune": fig_hist}

@@ -9,6 +9,10 @@ from scipy.signal import find_peaks
 from sklearn.mixture import GaussianMixture
 
 
+from lmfit.models import GaussianModel
+from RaTag.core.config import FinetuneConfig
+
+
 def v_crystalball_right(x, N, beta, m, x0, sigma):
     """Crystal Ball function with RIGHT tail for ionization signals."""
     absb = max(np.abs(beta), 1e-12) # Protect zero division
@@ -24,7 +28,7 @@ def _find_dynamic_lower_bound(cbins: np.ndarray, counts: np.ndarray, max_lower_b
     """Finds the 'valley' between the low-energy noise peak and the S2 signal peak."""
     
     # Smooth lightly to prevent false minima from statistical noise
-    n_smooth = np.convolve(counts, np.ones(2)/2, mode='same')
+    n_smooth = np.convolve(counts, np.ones(3)/3, mode='same')
     
     # Find local minima (invert the array to find peaks of the negative)
     minima_indices, _ = find_peaks(-n_smooth)
@@ -107,6 +111,65 @@ def fit_s2_crystalball(data: np.ndarray,
         'chi2': result.chisqr,
         'redchi': result.redchi,
         'result': result
+    }
+
+# ----------------------------------------------------------------
+# Fine Tune S2 Peak fitting with a two-stage approach (optional)
+# ----------------------------------------------------------------
+
+
+# Assuming v_crystalball_right is already defined in this file
+
+def _build_dual_peak_model(config: FinetuneConfig) -> tuple[lmfit.Model, lmfit.Parameters]:
+    """Helper Constructs the composite model and strictly maps YAML guesses."""
+    bg_model = GaussianModel(prefix='bg_')
+    sig_model = lmfit.Model(v_crystalball_right, prefix='sig_')
+    model = bg_model + sig_model
+    
+    params = model.make_params()
+    
+    # Background constraints (Prevent unphysical negatives)
+    params['bg_amplitude'].set(value=config.bg_amplitude, min=0.0)
+    params['bg_center'].set(value=config.bg_center, min=config.bin_cuts[0], max=config.sig_x0 - config.bg_sigma)
+    params['bg_sigma'].set(value=config.bg_sigma, min=0.01)
+    
+    # Signal constraints
+    params['sig_N'].set(value=config.sig_N, min=0.0)
+    params['sig_x0'].set(value=config.sig_x0, min=config.bg_center + config.bg_sigma, max=config.bin_cuts[1])
+    params['sig_sigma'].set(value=config.sig_sigma, min=0.01)
+    params['sig_beta'].set(min=0.1, max=10.0)                   # Tail onset must be positive
+    params['sig_m'].set(min=1.001, max=50.0)                    # Tail power strictly > 1 (Prevents NaN)
+    
+    return model, params
+
+
+
+def fit_finetune_s2area(data: np.ndarray, config: FinetuneConfig) -> dict:
+    """
+    Declarative composite fitter.
+    Strictly obeys the provided shape guesses from the YAML config.
+    """
+    # 1. Histogram Generation
+    filtered = data[(data >= config.bin_cuts[0]) & (data <= config.bin_cuts[1])]
+    counts, bins = np.histogram(filtered, bins=config.nbins, range=config.bin_cuts)
+    cbins = 0.5 * (bins[1:] + bins[:-1])
+    
+    # 2. Build Composite Model
+    model, params = _build_dual_peak_model(config)
+    
+    # 3. Execute Simultaneous Fit
+    composite_result = model.fit(counts, params=params, x=cbins)
+    
+    # 5. Extract Metadata
+    x0_param = composite_result.params['sig_x0']
+    sigma = composite_result.params['sig_sigma'].value
+    stderr = x0_param.stderr if x0_param.stderr is not None else sigma / np.sqrt(len(filtered))
+    
+    return {
+        'peak_position': x0_param.value,
+        'sigma': sigma,
+        'ci95': 1.96 * stderr,
+        'result_composite': composite_result
     }
 
 # ----------------------------------------------------------------
