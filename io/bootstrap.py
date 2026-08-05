@@ -9,6 +9,10 @@ from RaTag.io import file_ops
 from RaTag.core.datatypes import Run, SetPmt, SetAlpha
 from RaTag.core.paths import get_output_root
 
+# ============================================================================
+# DEPTH-1 HELPERS
+# ============================================================================
+
 def _sniff_fastframe_cache(dir_path: Path) -> tuple[Optional[bool], Optional[int]]:
     """
     Attempts to read fastframe properties from the metadata JSON.
@@ -89,6 +93,99 @@ def _detect_sensor_sets(dir_path: Path, pmt_pattern: str = "*_CH3.wfm", alpha_pa
     else: 
         return {'pmt': pmt_files or all_files, 'alpha': [], 'multiiso': False}
     
+def _find_cache_dir(config: dict, raw_dir: Path) -> Path:
+    """Determines the correct set_summaries directory based on output_base overrides."""
+    output_base = config.get('data', {}).get('output_base')
+    if output_base:
+        return Path(output_base) / "set_summaries"
+    return get_output_root(raw_dir) / "set_summaries"
+
+
+def _resolve_ghost_path(raw_dir: Path, json_filename: str) -> Tuple[Path, bool, str]:
+    """Parses the JSON filename to reconstruct the physical hardware directory and type."""
+    is_alpha = "alphas_metadata" in json_filename
+    set_name = json_filename.replace("_alphas_metadata.json", "").replace("_metadata.json", "")
+    ghost_source_dir = raw_dir / set_name
+    return ghost_source_dir, is_alpha, set_name
+
+
+def _hydrate_set(json_path: Path, ghost_path: Path, is_alpha: bool, is_multiiso: bool) -> Union[SetPmt, SetAlpha]:
+    """Loads the JSON payload, injects mandatory physical bypass fields, and instantiates."""
+    with open(json_path, 'r') as f:
+        cached_data = json.load(f)
+        
+    # Inject the fields that save_cache explicitly excluded
+    cached_data['source_dir'] = ghost_path
+    cached_data['filenames'] = []  # Empty, bypassing raw .wfm I/O
+    cached_data['multiiso'] = is_multiiso
+
+    if is_alpha:
+        return SetAlpha(**cached_data)
+    return SetPmt(**cached_data)
+
+# ============================================================================
+# DEPTH-2 ORCHESTRATORS
+# ============================================================================
+
+def bootstrap_from_cache(config: dict, allowed_sets: Optional[List[str]] = None) -> Run:
+    """
+    DECLARATIVE PIPELINE: Assembles a Run object strictly from processed JSON summaries.
+    Bypasses the raw data directory completely.
+    """
+    raw_dir = Path(config['data']['raw_data_path'])
+    exp_params = config.get('experiment', {})
+    
+    # 1. Resolve Base Parameters
+    run_id, el_field, target_isotope = _resolve_bootstrapping_params(
+        raw_dir, config.get('run_id'), exp_params.get('el_field'), exp_params.get('target_isotope')
+    )
+    is_multiiso = config.get('multi_isotope', {}).get('enabled', False)
+    
+    # 2. Find Cache Directory
+    summaries_dir = _find_cache_dir(config, raw_dir)
+    print(f"  🔹 Hydrating state from cache: {summaries_dir}")
+    
+    if not summaries_dir.exists():
+        raise FileNotFoundError(f"Cache directory not found: {summaries_dir}. Cannot hydrate run.")
+
+    # 3. Iterate & Hydrate
+    pmt_sets = []
+    alpha_sets = []
+    json_files = sorted(summaries_dir.glob("*_metadata.json"))
+    json_files = [f for f in json_files if not f.name.startswith('.')]  # Ignore hidden files
+    
+    for json_file in json_files:
+        ghost_path, is_alpha, set_name = _resolve_ghost_path(raw_dir, json_file.name)
+        
+        if allowed_sets and set_name not in allowed_sets:
+            continue
+            
+        hydrated_set = _hydrate_set(json_file, ghost_path, is_alpha, is_multiiso)
+        
+        if is_alpha:
+            alpha_sets.append(hydrated_set)
+        else:
+            pmt_sets.append(hydrated_set)
+
+    print(f"  → Hydrated {len(pmt_sets)} PMT Sets and {len(alpha_sets)} Alpha Sets. (Multi-Isotope: {is_multiiso})")
+
+    # 4. Instantiate & Enrich 
+    bare_run = Run(run_id=run_id, 
+                   root_directory=raw_dir, 
+                   el_field=el_field,
+                   target_isotope=target_isotope,
+                   multiiso=is_multiiso,
+                   sets=pmt_sets,
+                   alpha_sets=alpha_sets)
+                   
+    return replace(bare_run,
+                   pressure=exp_params.get('pressure', 1.0),
+                   temperature=exp_params.get('temperature', 297.0),
+                   sampling_rate=exp_params.get('sampling_rate', 5.0e9),
+                   el_gap=exp_params.get('el_gap', 0.04),
+                   drift_gap=exp_params.get('drift_gap', 0.48),
+                   recoil_energy=exp_params.get('recoil_energy', 96.8))
+
 def bootstrap_bare_pmt_set(dir_path: Path, filenames: List[Path], multiiso: bool) -> SetPmt:
     """Explicitly builds a SetPmt from a directory and a list of PMT waveform files."""
     voltage_dict = file_ops.parse_subdir_name(str(dir_path.name))
@@ -182,6 +279,9 @@ def bootstrap_from_config(config_path: Union[str, Path], allowed_sets: Optional[
     
     run_dir = Path(config['data']['raw_data_path'])
     exp_params = config['experiment']
+
+    if config.get('execution', {}).get('hydrate_only', False):
+        return bootstrap_from_cache(config, allowed_sets=allowed_sets)
 
     data_config = config.get('data', {})
     pmt_pattern = data_config.get('pmt_pattern', '*_Ch1.wfm')
