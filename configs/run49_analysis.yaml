@@ -1,10 +1,10 @@
-run_id: "RUN45"
+run_id: "RUN49"
 description: "Multi-isotope analysis, 30 kV/cm EL field"
 
 # Data location
 data:
-  raw_data_path: "\\\\Lab104con\\K\\AXO-RITA\\raw_data\\RUN45_EL30kVcm"
-  output_base: "\\\\Lab104con\\K\\AXO-RITA\\processed\\RUN45_EL30kVcm"  # Optional, defaults to raw_data_path
+  raw_data_path: "\\\\Lab104con\\K\\AXO-RITA\\raw_data\\RUN49_EL30kVcm"
+  output_base: "\\\\Lab104con\\K\\AXO-RITA\\processed\\RUN49_EL30kVcm"  # Optional, defaults to raw_data_path
   pmt_pattern: "*_CH3.wfm"
   alpha_pattern: "*_CH4.wfm"
 
@@ -44,7 +44,7 @@ energy_mapping:
   max_frames: null          # Number of frames to process (null = all)
   pattern: "*.wfm"       # Glob pattern for alpha channel files
   savgol_window: 501        # Savitzky-Golay window size (21-5001, must be odd, default: 501)
-  nbins: 200                # Number of bins for energy spectrum histograms
+  nbins: 120                # Number of bins for energy spectrum histograms
   energy_range: [4, 10.2]    # MeV - Energy range for spectrum fitting [SCA scale]
   n_sigma:
     Th228: [6.0, 2.0]
@@ -54,21 +54,21 @@ energy_mapping:
 
 # Preparation stage (S1/S2 timing estimation)
 preparation:
-  force: false
+  force: true
   max_frames: null       # Number of frames for S1 estimation
   n_pedestal: 200       # Samples for pedestal calculation
   bs_threshold: 0.02    # mV - Baseline subtraction threshold
 
   s2_margin: 0.7       # µs - Multiplier for drift time to set S2 window
-  s2_threshold: 230    # mV - Maximum for frame clipping detection
+  s2_threshold: 170    # mV - Maximum for frame clipping detection
   s2_fraction: 0.02     # Fractional threshold for S2 boundaries dynamic detection
   
-  s2_v_min: 15.0
+  s2_v_min: 10.0
   s2_window_ma: 1000
 
   s2_fallback_window: 1.5
   s2_fallback_window_left: 0.5
-
+  
 # Integration stage (S2 area calculation)
 integration:
   force: false
@@ -86,17 +86,3 @@ fit_config:
   bg_cutoff: 0.07          # mV·µs - Upper limit for background fitting
   n_sigma: 3.0            # Sigmas above background mean for signal region cutoff
   max_lower_bound: 10.0        # mV·µs - Upper limit for signal fitting range
-
-# X-ray classification
-xray_classification:
-  force: false
-  max_frames: null          # null = all frames, or specify number
-  bs_threshold: 0.5         # mV - Baseline threshold for signal detection
-  max_area_s1: 1.0e5        # mV·µs - Max allowed area before S1 (reject large pre-S1 signals)
-  max_area_s2: 1.0e5        # mV·µs - Max allowed area in S2 window (reject noise/pile-up)
-  min_xray_area: 0.0        # mV·µs - Min required X-ray area (reject low-quality events)
-  min_s2_sep: 1.0           # µs - Min required separation before S2 window
-  min_s1_sep: 0.5           # µs - Min required separation after S1
-  n_pedestal: 200           # Samples for pedestal calculation
-  ma_window: 10             # Moving average window size
-  dt: 0.0002                # µs - Integration timestep

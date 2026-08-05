@@ -36,7 +36,7 @@ def pipeline_alpha_calibration(run: Run, config: dict = None) -> Run:
     run = map_alpha_events(run, max_frames=max_frames, config=alpha_config, force=alpha_config.force)
     
     # 2. Pure Math & Calibration (Saves flat metadata and fits.json)
-    run = map_alpha_calibrations(run, energy_range=alpha_config.energy_range, force=fit_config.force)
+    run = map_alpha_calibrations(run, config=alpha_config, force=fit_config.force)
     
     # 3. Presentation (Saves plots)
     run = map_alpha_plots(run, force=fit_config.force)
