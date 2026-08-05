@@ -28,7 +28,7 @@ class EnergyCalibration:
             return 2 * self.a * E_SCA + self.b
         return np.full_like(E_SCA, self.a)
 
-def select_roi(energies: np.ndarray, E_min: float, E_max: float, bins: int = 200) -> Tuple[np.ndarray, np.ndarray]:
+def select_roi(energies: np.ndarray, E_min: float, E_max: float, bins: int = 300) -> Tuple[np.ndarray, np.ndarray]:
     """Pure array slicing and histogramming."""
     mask = (energies >= E_min) & (energies <= E_max)
     roi_energies = energies[mask]
@@ -84,6 +84,7 @@ def _select_fitting_window(energies: np.ndarray, counts: np.ndarray,
     y = counts[mask].astype(float)
     
     if len(x) < 10:
+        print(f"Warning: Insufficient data points ({len(x)}) in fitting window [{E_min:.2f}, {E_max:.2f}] MeV")
         raise ValueError(f"Insufficient data in window [{E_min:.2f}, {E_max:.2f}] MeV")
     
     return x, y, E_min, E_max
@@ -223,9 +224,8 @@ def refine_overlapping_pair(energies: np.ndarray, counts: np.ndarray,
 def derive_isotope_ranges(fit_results: dict[str, ModelResult],
                           calibration: EnergyCalibration,
                           n_sigma: Union[float, dict] = 2.0,
-                          crossover_V: Optional[float] = None,
-                          overlap_pair: tuple[str, str] = ('Th228', 'Ra224')) -> tuple[dict, dict, float]:
-    """Computes ranges in V and E scales. Applies an exact crossover boundary if provided."""
+                          crossovers: Optional[dict[tuple[str, str], float]] = None) -> tuple[dict, dict, float]:
+    """Computes ranges in V and E scales. Applies exact crossover boundaries if provided."""
     ranges_V, ranges_E, resolutions = {}, {}, []
     
     for name, fit in fit_results.items():
@@ -245,16 +245,17 @@ def derive_isotope_ranges(fit_results: dict[str, ModelResult],
         ranges_V[name] = (x0_SCA - (sig_left * sigma_SCA), x0_SCA + (sig_right * sigma_SCA))
         ranges_E[name] = (x0_true - (sig_left * sigma_true), x0_true + (sig_right * sigma_true))
         
-    # Apply the mathematical hard-clip if a crossover boundary was provided
-    if crossover_V is not None and overlap_pair[0] in ranges_V and overlap_pair[1] in ranges_V:
-        iso1, iso2 = overlap_pair
-        crossover_E = calibration.apply(np.array([crossover_V]))[0]
+    # Apply the mathematical hard-clip for any specified crossover boundaries
+    if crossovers:
+        for (iso1, iso2), crossover_V in crossovers.items():
+            if iso1 in ranges_V and iso2 in ranges_V:
+                crossover_E = calibration.apply(np.array([crossover_V]))[0]
 
-        ranges_V[iso1] = (ranges_V[iso1][0], min(ranges_V[iso1][1], crossover_V))
-        ranges_V[iso2] = (max(ranges_V[iso2][0], crossover_V), ranges_V[iso2][1])
-        
-        ranges_E[iso1] = (ranges_E[iso1][0], min(ranges_E[iso1][1], crossover_E))
-        ranges_E[iso2] = (max(ranges_E[iso2][0], crossover_E), ranges_E[iso2][1])
+                ranges_V[iso1] = (ranges_V[iso1][0], min(ranges_V[iso1][1], crossover_V))
+                ranges_V[iso2] = (max(ranges_V[iso2][0], crossover_V), ranges_V[iso2][1])
+                
+                ranges_E[iso1] = (ranges_E[iso1][0], min(ranges_E[iso1][1], crossover_E))
+                ranges_E[iso2] = (max(ranges_E[iso2][0], crossover_E), ranges_E[iso2][1])
 
     # Clean rounding for JSON
     ranges_V = {k: (round(float(v[0]), 3), round(float(v[1]), 3)) for k, v in ranges_V.items()}

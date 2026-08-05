@@ -24,21 +24,27 @@ def pipeline_alpha_calibration(run: Run, config: dict = None) -> Run:
         config = {}
         
     # Extract parameters from the YAML dictionary
-    
+    exec_cfg = config.get('execution', {})
     alpha_config = config.get('energy_mapping', AlphaCalibrationConfig())
     alpha_config = AlphaCalibrationConfig(**{k: v for k, v in alpha_config.items() if hasattr(AlphaCalibrationConfig, k)})
     
     max_frames = alpha_config.max_frames
     fit_config = config.get('fit_config', FitConfig())
     fit_config = FitConfig(**{k: v for k, v in fit_config.items() if hasattr(FitConfig, k)})
-    
+
+    alphas_state = exec_cfg.get('run_alphas', False)
+    force_alphas = (alphas_state == 'force')
+
+    fit_state = exec_cfg.get('run_fit', False)
+    force_fit = (fit_state == 'force')
+
     # 1. Extraction
-    run = map_alpha_events(run, max_frames=max_frames, config=alpha_config, force=alpha_config.force)
+    run = map_alpha_events(run, max_frames=max_frames, config=alpha_config, force=force_alphas)
     
     # 2. Pure Math & Calibration (Saves flat metadata and fits.json)
-    run = map_alpha_calibrations(run, energy_range=alpha_config.energy_range, force=fit_config.force)
+    run = map_alpha_calibrations(run, config=alpha_config, force=force_fit)
     
     # 3. Presentation (Saves plots)
-    run = map_alpha_plots(run, force=fit_config.force)
+    run = map_alpha_plots(run, force=force_fit)
     
     return run
