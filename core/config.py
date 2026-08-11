@@ -1,6 +1,6 @@
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Optional, Union
+from typing import Optional, Union, Dict, Any
 
 # -------------------------------
 # General analysis thresholds
@@ -111,7 +111,7 @@ class XRayConfig:
 ALPHA_PEAK_DEFINITIONS = [
     {'name': 'Th228', 'position': 4.3, 'window': (3.5, 4.4), 'sigma_init': 0.05, 'ref_energy': 5.42315},
     {'name': 'Ra224', 'position': 4.6, 'window': (4.4, 4.7), 'sigma_init': 0.05, 'ref_energy': 5.68537},
-    {'name': 'Bi212', 'position': 4.9, 'window': (4.6, 4.95), 'sigma_init': 0.05, 'ref_energy': 6.207},
+    {'name': 'Bi212', 'position': 4.9, 'window': (4.65, 4.95), 'sigma_init': 0.05, 'ref_energy': 6.207},
     {'name': 'Rn220', 'position': 5.1, 'window': (4.7, 5.2), 'sigma_init': 0.05, 'ref_energy': 6.40484},
     {'name': 'Po216', 'position': 5.9, 'window': (5.2, 5.6), 'sigma_init': 0.05, 'ref_energy': 6.90628},
     {'name': 'Po212', 'position': 7.2, 'window': (6.7, 8.0), 'sigma_init': 0.07, 'ref_energy': 8.785},
@@ -140,20 +140,19 @@ class AlphaCalibrationConfig:
 
 @dataclass(frozen=True)
 class FinetuneConfig:
+    bg_amplitude: Union[float, Dict[str, Any]]
+    bg_center: Union[float, Dict[str, Any]]
+    bg_sigma: Union[float, Dict[str, Any]]
+
+    sig_N: Union[float, Dict[str, Any]]
+    sig_x0: Union[float, Dict[str, Any]]
+    sig_sigma: Union[float, Dict[str, Any]]
+    sig_m: Union[float, Dict[str, Any]]
+    sig_beta: Union[float, Dict[str, Any]]
+
     bin_cuts: tuple[float, float]
-    nbins: int
-    
-    # Background Guesses
-    bg_amplitude: float
-    bg_center: float
-    bg_sigma: float
-    
-    # Signal (THGEM Avalanche) Guesses
-    sig_N: float
-    sig_x0: float
-    sig_sigma: float
-    sig_m: float
-    sig_beta: float
+    nbins: int = 100
+    smooth_window: int = 3
 
 @dataclass(frozen=True)
 class RunFineTuneConfig:

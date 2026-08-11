@@ -4,11 +4,11 @@ import warnings
 import numpy as np
 import lmfit
 from dataclasses import replace
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Union
 from scipy.signal import find_peaks
 from sklearn.mixture import GaussianMixture
 
-
+from RaTag.core.fitting import v_crystalball_left
 from lmfit.models import GaussianModel
 from RaTag.core.config import FinetuneConfig
 
@@ -41,14 +41,13 @@ def _find_dynamic_lower_bound(cbins: np.ndarray, counts: np.ndarray, max_lower_b
     
     return 0.0 # Safe fallback if no distinct valley exists
 
-def compute_fit_ci(param: lmfit.Parameter, bin_width: float, confidence_level: float = 1.96) -> float:
+def compute_fit_ci(stat_err: float, bin_width: float, confidence_level: float = 1.96) -> float:
     """
     Computes a robust Confidence Interval using the quadrature sum of the 
-    statistical fit error and the histogram binning resolution.
+    statistical fit error and the histogram uniform binning resolution.
     """
-    stderr = param.stderr or 0.0
     binning_err = bin_width / np.sqrt(12.0)
-    return confidence_level * np.sqrt(stderr**2 + binning_err**2)
+    return confidence_level * np.sqrt(stat_err**2 + binning_err**2)
 
 def fit_s2_crystalball(data: np.ndarray, 
                        bin_cuts: Tuple[float, float] = (0, 15), 
@@ -76,7 +75,9 @@ def fit_s2_crystalball(data: np.ndarray,
     cbins_fit = cbins[fit_mask]
     counts_fit = counts[fit_mask]
     counts_smooth = np.convolve(counts_fit, np.ones(smooth)/smooth, mode='same')
-    
+
+    weights = 1.0 / np.maximum(np.sqrt(counts_smooth), 1.0)
+
     # 4. Initial Guesses
     peak_idx = np.argmax(counts_smooth)
 
@@ -85,7 +86,7 @@ def fit_s2_crystalball(data: np.ndarray,
     # print(f"  Initial guess: N={guess_N:.1f}, x0={guess_x0:.2f}, lower_bound={lower_bound:.2f}")
     
     # 5. Execute Fit
-    model = lmfit.Model(v_crystalball_right, prefix='sig_')
+    model = lmfit.Model(v_crystalball_left, prefix='sig_')
     params = model.make_params(sig_N=guess_N, sig_x0=guess_x0,
                                sig_sigma=0.5, sig_beta=1.0, sig_m=2.0)
     
@@ -96,12 +97,13 @@ def fit_s2_crystalball(data: np.ndarray,
     params['sig_beta'].set(min=0.1, max=10.0)                   # Tail onset must be positive
     params['sig_m'].set(min=1.001, max=50.0)                    # Tail power strictly > 1 (Prevents NaN)
     
-    result = model.fit(counts_smooth, params, x=cbins_fit)
+    result = model.fit(counts_smooth, params, x=cbins_fit, weights=weights)
     print(f"  Fit success: {result.success}, χ²/DOF: {result.redchi:.2f}")
     # 6. Correct, Un-inflated CI Calculation (Stat Error + Binning Error)
     
+    stat_err = _extract_stat_error(result, 'sig_x0')
     bin_width = cbins[1] - cbins[0]
-    ci95 = compute_fit_ci(result.params['sig_x0'], bin_width)
+    ci95 = compute_fit_ci(stat_err, bin_width)
     
     return {
         'peak_position': result.params['sig_x0'].value,
@@ -116,33 +118,55 @@ def fit_s2_crystalball(data: np.ndarray,
 # ----------------------------------------------------------------
 # Fine Tune S2 Peak fitting with a two-stage approach (optional)
 # ----------------------------------------------------------------
-
-
-# Assuming v_crystalball_right is already defined in this file
+def _extract_stat_error(result: lmfit.model.ModelResult, param_name: str) -> float:
+    """Extracts statistical error from Hessian, falling back to Profile Likelihood if singular."""
+    param = result.params[param_name]
+    if param.stderr is not None and param.stderr > 0.0:
+        return param.stderr
+        
+    # Fallback to rigorous Profile Likelihood scan
+    try:
+        ci = result.conf_interval(p_names=[param_name], sigmas=[0.68])
+        vals = [val for sig, val in ci[param_name] if sig in (-0.68, 0.68)]
+        if len(vals) == 2:
+            return abs(vals[1] - vals[0]) / 2.0
+    except Exception:
+        print(f"    ⚠ Profile likelihood failed for {param_name}. Defaulting to bin error only.")
+        
+    return 0.0
 
 def _build_dual_peak_model(config: FinetuneConfig) -> tuple[lmfit.Model, lmfit.Parameters]:
     """Helper Constructs the composite model and strictly maps YAML guesses."""
+
     bg_model = GaussianModel(prefix='bg_')
-    sig_model = lmfit.Model(v_crystalball_right, prefix='sig_')
+    sig_model = lmfit.Model(v_crystalball_left, prefix='sig_')
     model = bg_model + sig_model
-    
     params = model.make_params()
     
-    # Background constraints (Prevent unphysical negatives)
-    params['bg_amplitude'].set(value=config.bg_amplitude, min=0.0)
-    params['bg_center'].set(value=config.bg_center, min=config.bin_cuts[0], max=config.sig_x0 - config.bg_sigma)
-    params['bg_sigma'].set(value=config.bg_sigma, min=0.01)
+    def apply_param(name: str, cfg_val: Union[float, dict], **defaults):
+        """Helper to apply either a flat float or a detailed dict to a Parameter."""
+        if isinstance(cfg_val, dict):
+            params[name].set(**{**defaults, **cfg_val})
+        else:
+            params[name].set(value=cfg_val, **defaults)
+
+    # Extract scalar values for interrelated bounds
+    sig_x0_val = config.sig_x0.get('value', config.sig_x0) if isinstance(config.sig_x0, dict) else config.sig_x0
+    bg_sigma_val = config.bg_sigma.get('value', config.bg_sigma) if isinstance(config.bg_sigma, dict) else config.bg_sigma
+    bg_center_val = config.bg_center.get('value', config.bg_center) if isinstance(config.bg_center, dict) else config.bg_center
+
+    # Apply parameters with physical fallback bounds
+    apply_param('bg_amplitude', config.bg_amplitude, min=0.0)
+    apply_param('bg_center', config.bg_center, min=config.bin_cuts[0], max=sig_x0_val - bg_sigma_val)
+    apply_param('bg_sigma', config.bg_sigma, min=0.01)
     
-    # Signal constraints
-    params['sig_N'].set(value=config.sig_N, min=0.0)
-    params['sig_x0'].set(value=config.sig_x0, min=config.bg_center + config.bg_sigma, max=config.bin_cuts[1])
-    params['sig_sigma'].set(value=config.sig_sigma, min=0.01)
-    params['sig_beta'].set(min=0.1, max=10.0)                   # Tail onset must be positive
-    params['sig_m'].set(min=1.001, max=50.0)                    # Tail power strictly > 1 (Prevents NaN)
-    
+    apply_param('sig_N', config.sig_N, min=0.0)
+    apply_param('sig_x0', config.sig_x0, min=bg_center_val + bg_sigma_val, max=config.bin_cuts[1])
+    apply_param('sig_sigma', config.sig_sigma, min=0.01)
+    apply_param('sig_beta', config.sig_beta, min=0.1, max=10.0)
+    apply_param('sig_m', config.sig_m, min=1.001, max=50.0)
+
     return model, params
-
-
 
 def fit_finetune_s2area(data: np.ndarray, config: FinetuneConfig) -> dict:
     """
@@ -153,22 +177,25 @@ def fit_finetune_s2area(data: np.ndarray, config: FinetuneConfig) -> dict:
     filtered = data[(data >= config.bin_cuts[0]) & (data <= config.bin_cuts[1])]
     counts, bins = np.histogram(filtered, bins=config.nbins, range=config.bin_cuts)
     cbins = 0.5 * (bins[1:] + bins[:-1])
+
+    counts_smooth = np.convolve(counts, np.ones(config.smooth_window)/config.smooth_window, mode='same')
+    # Calibrate chi-square space using Poisson statistics
+    weights = 1.0 / np.maximum(np.sqrt(counts_smooth), 1.0)
     
-    # 2. Build Composite Model
     model, params = _build_dual_peak_model(config)
+    composite_result = model.fit(counts_smooth, params=params, x=cbins, weights=weights)
     
-    # 3. Execute Simultaneous Fit
-    composite_result = model.fit(counts, params=params, x=cbins)
-    
-    # 5. Extract Metadata
     x0_param = composite_result.params['sig_x0']
     sigma = composite_result.params['sig_sigma'].value
-    stderr = x0_param.stderr if x0_param.stderr is not None else sigma / np.sqrt(len(filtered))
+    
+    stat_err = _extract_stat_error(composite_result, 'sig_x0')
+    bin_width = cbins[1] - cbins[0]
+    ci95 = compute_fit_ci(stat_err, bin_width)
     
     return {
         'peak_position': x0_param.value,
         'sigma': sigma,
-        'ci95': 1.96 * stderr,
+        'ci95': ci95,
         'result_composite': composite_result
     }
 
