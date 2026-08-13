@@ -414,26 +414,35 @@ def resolve_finetune_s2_fit(set_pmt: SetPmt, config: FinetuneConfig) -> tuple[Se
         print(f"  ✗ Fine-Tune Fit failed for {set_pmt.source_dir.name}: {e}")
         return replace(set_pmt, area_s2_fit_success=False), None
 
+def _resolve_finetune_kwargs(finetune_dict: dict, base_set_name: str, target_isotope: str = None) -> dict:
+    """
+    Cascades fine-tuning parameters: Global -> Set -> Isotope.
+    Right-most dictionaries silently overwrite the left.
+    """
+    global_cfg = finetune_dict.get('global', {})
+    set_cfg = finetune_dict.get(base_set_name, {})
+    
+    # Safely extract isotope-specific config without pulling unrelated set-level keys
+    iso_cfg = set_cfg.get(target_isotope, {}) if target_isotope and isinstance(set_cfg.get(target_isotope), dict) else {}
+    
+    merged = {**global_cfg, **set_cfg, **iso_cfg}
+    
+    # Filter strictly against the dataclass field registry to drop nested dicts (like 'Th228: {...}')
+    return {k: v for k, v in merged.items() if k in FinetuneConfig.__dataclass_fields__}
 
 def map_finetune_fits(run: Run, finetune_dict: dict, force: bool = False) -> Run:
-    """Routes explicit YAML parameters to specific sets and isotopes."""
+    """Routes cascading YAML parameters to specific sets and isotopes."""
     print("\n" + "="*60 + f"\nFINE-TUNING S2 AREA DISTRIBUTIONS: {run.run_id}\n" + "="*60)
     
     updated_sets = []
     for s in run.sets:
         iso = getattr(s, 'target_isotope', None)
-        set_dict = finetune_dict.get(s.source_dir.name, {})
+        base_name = s.source_dir.name
         
-        # Pull isotope specific config, or fall back
-        config_dict = set_dict.get(iso, set_dict) if iso else set_dict
-
-        # 1. Filter strictly against the dataclass field registry
-        filtered_kwargs = {k: v for k, v in config_dict.items() if k in FinetuneConfig.__dataclass_fields__}
+        filtered_kwargs = _resolve_finetune_kwargs(finetune_dict, base_name, iso)
         
-        # 2. Safely skip if no valid parameters exist for this pass (e.g., agnostic pass but only Ra224 defined)
         if not filtered_kwargs:
             updated_sets.append(s)
-            print(f"  [Skip] No fine-tuning parameters found for {s.source_dir.name} (Isotope: {iso})")
             continue
             
         config = FinetuneConfig(**filtered_kwargs)
@@ -441,8 +450,6 @@ def map_finetune_fits(run: Run, finetune_dict: dict, force: bool = False) -> Run
         updated_sets.append(updated_s)
         
     return replace(run, sets=updated_sets)
-
-
 @allow_force
 @load_cached_plots(subfolder="s2_areas", expected_suffixes=["histograms_finetune"])
 @write_plots(subfolder="s2_areas")
@@ -454,24 +461,20 @@ def map_finetuned_plots(run: Run, finetune_dict: dict, force: bool = False) -> t
     
     for set_pmt, ax in grid_cells:
         iso = getattr(set_pmt, 'target_isotope', None)
-        print(f"  Plotting {set_pmt.source_dir.name} (Isotope: {iso})")
-        set_dict = finetune_dict.get(set_pmt.source_dir.name, {})
-        config_dict = set_dict.get(iso, set_dict) if iso else set_dict
+        base_name = set_pmt.source_dir.name
         
-        # 1. Filter strictly against the dataclass field registry
-        filtered_kwargs = {k: v for k, v in config_dict.items() if k in FinetuneConfig.__dataclass_fields__}
+        filtered_kwargs = _resolve_finetune_kwargs(finetune_dict, base_name, iso)
             
         if not filtered_kwargs or not getattr(set_pmt, 'area_s2_fit_success', False):
             ax.axis('off')
             continue
     
         config = FinetuneConfig(**filtered_kwargs)
-        s2_areas = load_s2areas(set_pmt)
+        s2_areas = file_ops.load_s2areas(set_pmt)
         
-        # Reconstruct the fit_results dictionary required by the plotter
         fit_results = {
             'peak_position': set_pmt.area_s2_mean,
-            'result_composite': load_fit_result(get_fit_path(set_pmt, 's2_areas_finetune'), funcdefs={'v_crystalball_right': v_crystalball_right}),
+            'result_composite': file_ops.load_fit_result(get_fit_path(set_pmt, 's2_areas_finetune')),
         }
         
         plot_finetune_s2area(ax=ax, data=s2_areas.areas, config=config, 
