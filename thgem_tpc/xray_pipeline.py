@@ -1,3 +1,5 @@
+from logging import config
+
 from RaTag.thgem_tpc.xray_workflow import (
     map_xray_events,
     fit_xray_events,

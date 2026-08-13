@@ -12,7 +12,7 @@ from RaTag.io.bootstrap import bootstrap_from_config
 
 # Import our beautifully encapsulated high-level pipelines
 from RaTag.alphas.alphas_pipeline import pipeline_alpha_calibration
-from RaTag.el_tpc.xray_pipeline import pipeline_xray_calibration
+from RaTag.thgem_tpc.xray_pipeline import pipeline_xray_calibration
 from RaTag.thgem_tpc.recoil_pipeline import pipeline_recoil_analysis
 # from RaTag.thgem_tpc.coincidence_pipeline import pipeline_coincidence_recoil
 from RaTag.thgem_tpc.multiiso_pipeline import pipeline_multi_isotope

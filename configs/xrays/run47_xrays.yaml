@@ -37,7 +37,7 @@ fit_config:
   max_upper_bound: 10.0  # mV·µs - Max allowed upper bound for fitting range
 
 # X-ray classification
-xray_classification:
+xray_config:
   max_frames: null          # null = all frames, or specify number
   bs_threshold: 0.5         # mV - Baseline threshold for signal detection
   max_area_s1: 1.0e5        # mV·µs - Max allowed area before S1 (reject large pre-S1 signals)
@@ -48,7 +48,10 @@ xray_classification:
   n_pedestal: 200           # Samples for pedestal calculation
   ma_window: 10             # Moving average window size
   dt: 0.0002                # µs - Integration timestep
+
+  t_s1: -3.0
+  t_s2_start: 0.5
   max_v_clip: 150           # mV - Max voltage for clipping (reject saturated signals)  
   min_v_s2: 10             # mV - Min voltage for valid S2 peak
   min_v_xray: 10            # mV - Min voltage for valid X-ray peak
-  batch_size: 50             # Number of files to process in each parallel batch
+  batch_size: 500             # Number of files to process in each parallel batch
