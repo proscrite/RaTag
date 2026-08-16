@@ -129,7 +129,9 @@ ALPHA_SATELLITE_DEFINITIONS = [
 class AlphaCalibrationConfig:
     """Configuration for alpha spectrum calibration pipeline."""
     max_frames: Optional[int] = None   # Number of frames to process (None = all)
-    savgol_window: int = 501           # Savitzky-Golay window size (must be odd)
+    
+    window_ma: int = 1000                # Moving average window length (samples)
+    threshold_bs: float = 0.3          # (mV) Baseline threshold for signal detection
     pattern: str = "*Ch4.wfm"          # (Deprecated, now in bootstrap) Glob pattern for alpha channel files
     nbins: int = 120                   # Number of histogram bins for energy spectra
     n_sigma: Union[float, dict[str, tuple[float, float]]] = 2.0
@@ -147,9 +149,11 @@ class FinetuneConfig:
     sig_N: Union[float, Dict[str, Any]]
     sig_x0: Union[float, Dict[str, Any]]
     sig_sigma: Union[float, Dict[str, Any]]
-    sig_m: Union[float, Dict[str, Any]]
-    sig_beta: Union[float, Dict[str, Any]]
-
+    sig_beta_L: Union[float, Dict[str, Any]]
+    sig_m_L: Union[float, Dict[str, Any]]
+    sig_beta_R: Union[float, Dict[str, Any]]
+    sig_m_R: Union[float, Dict[str, Any]]
+    
     bin_cuts: tuple[float, float]
     nbins: int = 100
     smooth_window: int = 3

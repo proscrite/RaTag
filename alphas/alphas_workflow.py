@@ -4,48 +4,32 @@ from typing import Optional, Any
 from dataclasses import replace
 
 from RaTag.core.config import AlphaCalibrationConfig
-from RaTag.core.datatypes import Run, SetAlpha
+from RaTag.core.datatypes import Run, SetAlpha, Waveform
 from RaTag.core.decorators import *
 from RaTag.core.functional import map_over
+
+from RaTag.waveform.preprocessing import *
 from RaTag.io import file_ops
 
 # ============================================================================
 # 1. VECTORIZED WAVEFORM PROCESSING
 # ============================================================================
-def _compute_alpha_energies(v_batch: np.ndarray, 
+def _compute_alpha_energies(wf: Waveform,
                             threshold_bs: float = 0.3, 
-                            dither_amplitude: float = 0.02, 
-                            savgol_window: int = 501, 
-                            savgol_order: int = 3) -> np.ndarray:
+                            window_ma: int = 1000) -> np.ndarray:
     """
     Vectorized extraction of alpha peak energies using Savitzky-Golay filtering.
     """
-    n_wfms, _ = v_batch.shape
-    
-    # 1. Vectorized baseline correction
-    baselines = np.zeros(n_wfms, dtype=np.float32)
-    for i in range(n_wfms):
-        v_bs = v_batch[i, v_batch[i] < threshold_bs]
-        baselines[i] = np.mean(v_bs) if len(v_bs) >= 10 else np.median(v_batch[i, :200])
-    
-    v_corrected = v_batch - baselines[:, np.newaxis]
-    
-    # 2. Vectorized dithering
-    if dither_amplitude > 0:
-        dither = np.random.uniform(-dither_amplitude, dither_amplitude, size=v_batch.shape)
-        v_dithered = v_corrected + dither
-    else:
-        v_dithered = v_corrected
-    
-    # 3. Apply Savitzky-Golay filter along time axis (axis=1)
-    v_smooth = savgol_filter(v_dithered, savgol_window, savgol_order, axis=1)
-    
+
+    wf_sub = subtract_thresholded_pedestal(wf, threshold_bs=threshold_bs)
+    wf_smooth = moving_average(wf_sub, window=window_ma)
+
     # 4. Find maximum for each waveform
-    peak_values = v_smooth.max(axis=1)
-    
+    v_smooth = wf_smooth.v if wf_smooth.ff else wf_smooth.v[np.newaxis, :]
+    peak_values = np.max(v_smooth, axis=1) if wf_smooth.ff else np.max(v_smooth, axis=0)
+
     # 5. Apply instrumental calibration factor
     energies = peak_values / 1.058
-    
     return energies
 
 @allow_force
@@ -56,7 +40,7 @@ def _compute_alpha_energies(v_batch: np.ndarray,
 @limit_frames
 def resolve_alpha_energies(set_alpha: SetAlpha, 
                             max_files: Optional[int] = None, 
-                            savgol_window: int = 501,
+                            config: AlphaCalibrationConfig = AlphaCalibrationConfig(),
                             force: bool = False) -> tuple[Any, dict]:
     """Executes reconstruction and formats the standard .npz arrays."""
 
@@ -64,9 +48,9 @@ def resolve_alpha_energies(set_alpha: SetAlpha,
     out_uids, out_energies = [], []
     
     for wf in file_ops.iter_alpha_waveforms(set_alpha, max_files=max_files,  show_progress=True):
-        v_2d = wf.v if wf.ff else wf.v[np.newaxis, :]
 
-        energies = _compute_alpha_energies(v_2d, savgol_window=savgol_window)
+        energies = _compute_alpha_energies(wf, threshold_bs=config.threshold_bs, 
+                                            window_ma=config.window_ma)
         
         out_uids.append(wf.uids)
         out_energies.append(energies)
@@ -101,10 +85,10 @@ def map_alpha_events(run: Run,
         print("  ⚠ No alpha_sets found in Run. Bootstrap the run first.")
         return run
     print(f"Force flag: {force}")
-    savgol_window = getattr(config, 'savgol_window', 501) if config else 501
+    
 
     bound_alphas = lambda s: resolve_alpha_energies(s, max_frames=max_frames, 
-                                                    savgol_window=savgol_window, force=force)
+                                                    config=config, force=force)
     
     # Map over the independent alpha sets.
     updated_alpha_sets = map_over(run.alpha_sets, bound_alphas, catch_errors=True)

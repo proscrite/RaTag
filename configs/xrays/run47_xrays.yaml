@@ -49,8 +49,8 @@ xray_config:
   ma_window: 10             # Moving average window size
   dt: 0.0002                # µs - Integration timestep
 
-  t_s1: -3.0
-  t_s2_start: 0.5
+  t_s1: -3.3
+  t_s2_start: -0.5          # µs - Start of S2 window for Gate 288 V, +0.5 for Gate 60 V
   max_v_clip: 150           # mV - Max voltage for clipping (reject saturated signals)  
   min_v_s2: 10             # mV - Min voltage for valid S2 peak
   min_v_xray: 10            # mV - Min voltage for valid X-ray peak

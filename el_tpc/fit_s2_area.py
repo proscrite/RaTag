@@ -24,6 +24,37 @@ def v_crystalball_right(x, N, beta, m, x0, sigma):
     tail = A_tail / (denom_safe)**m
     return N * np.where(z < absb, gauss, tail)
 
+def v_crystalball_double(x, N, beta_L, m_L, beta_R, m_R, x0, sigma):
+    """
+    Double-Sided Crystal Ball function for modeling both low-energy straggling (left tail)
+    and high-energy avalanche fluctuations/pile-up (right tail).
+    """
+    abs_beta_L = max(np.abs(beta_L), 1e-12)
+    abs_beta_R = max(np.abs(beta_R), 1e-12)
+    
+    z = (x - x0) / sigma
+    
+    # Gaussian Core
+    gauss = np.exp(-0.5 * z**2)
+    
+    # LEFT Tail (z < -abs_beta_L)
+    A_L = (m_L / abs_beta_L)**m_L * np.exp(-0.5 * abs_beta_L**2)
+    B_L = m_L / abs_beta_L - abs_beta_L
+    denom_L = np.maximum(B_L - z, 1e-12)
+    tail_L = A_L / (denom_L)**m_L
+    
+    # RIGHT Tail (z > abs_beta_R)
+    A_R = (m_R / abs_beta_R)**m_R * np.exp(-0.5 * abs_beta_R**2)
+    B_R = m_R / abs_beta_R - abs_beta_R
+    denom_R = np.maximum(B_R + z, 1e-12)
+    tail_R = A_R / (denom_R)**m_R
+    
+    # Logical Stitching
+    cond_L = z < -abs_beta_L
+    cond_R = z > abs_beta_R
+    
+    return N * np.where(cond_L, tail_L, np.where(cond_R, tail_R, gauss))
+
 def _find_dynamic_lower_bound(cbins: np.ndarray, counts: np.ndarray, max_lower_bound: float) -> float:
     """Finds the 'valley' between the low-energy noise peak and the S2 signal peak."""
     
@@ -55,7 +86,7 @@ def fit_s2_crystalball(data: np.ndarray,
                        max_lower_bound: float = 1.5,
                        smooth: int = 3) -> Dict[str, Any]:
     """
-    Fits a right-tailed Crystal Ball to the S2 signal.
+    Fits a left-tailed Crystal Ball to the S2 signal.
     Dynamically finds the noise valley to exclude the low-energy peak.
     """
     # 1. Build Histogram
@@ -139,7 +170,7 @@ def _build_dual_peak_model(config: FinetuneConfig) -> tuple[lmfit.Model, lmfit.P
     """Helper Constructs the composite model and strictly maps YAML guesses."""
 
     bg_model = GaussianModel(prefix='bg_')
-    sig_model = lmfit.Model(v_crystalball_left, prefix='sig_')
+    sig_model = lmfit.Model(v_crystalball_double, prefix='sig_')
     model = bg_model + sig_model
     params = model.make_params()
     
@@ -163,8 +194,10 @@ def _build_dual_peak_model(config: FinetuneConfig) -> tuple[lmfit.Model, lmfit.P
     apply_param('sig_N', config.sig_N, min=0.0)
     apply_param('sig_x0', config.sig_x0, min=bg_center_val + bg_sigma_val, max=config.bin_cuts[1])
     apply_param('sig_sigma', config.sig_sigma, min=0.01)
-    apply_param('sig_beta', config.sig_beta, min=0.1, max=10.0)
-    apply_param('sig_m', config.sig_m, min=1.001, max=50.0)
+    apply_param('sig_beta_L', config.sig_beta_L, min=0.1, max=10.0)
+    apply_param('sig_m_L', config.sig_m_L, min=1.001, max=50.0)
+    apply_param('sig_beta_R', config.sig_beta_R, min=0.1, max=10.0)
+    apply_param('sig_m_R', config.sig_m_R, min=1.001, max=50.0)
 
     return model, params
 

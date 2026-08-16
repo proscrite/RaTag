@@ -28,7 +28,6 @@ def pipeline_xray_calibration(run: Run, config: dict = None) -> Run:
     fit_config_dict = config.get('fit_config', FitConfig())
     fit_config = FitConfig(**{k: v for k, v in fit_config_dict.items() if hasattr(FitConfig, k)})
 
-    xray_config = config.get('xray_config', XRayConfig())
     xray_state = exec_cfg.get('run_xrays', False)
     force_xrays = (xray_state == 'force')
 

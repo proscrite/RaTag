@@ -184,3 +184,6 @@ cython_debug/
 documentation_readmes/*.png
 documentation_readmes/Prompt recovery for Ra desorption probability.md
 configs/Connections.md
+simulations/*.txt
+simulations/*.in
+simulations/*.dat
