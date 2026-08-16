@@ -12,6 +12,14 @@ from RaTag.core.fitting import v_crystalball_left
 from lmfit.models import GaussianModel
 from RaTag.core.config import FinetuneConfig
 
+def v_gaussian_peak(x, amplitude, center, sigma):
+    """
+    Unnormalized Gaussian where 'amplitude' explicitly represents the physical peak height.
+    This prevents the optimizer from crushing the background peak to preserve area normalization.
+    """
+    sigma_safe = np.maximum(sigma, 1e-15)
+    z = (x - center) / sigma_safe
+    return amplitude * np.exp(-0.5 * z**2)
 
 def v_crystalball_right(x, N, beta, m, x0, sigma):
     """Crystal Ball function with RIGHT tail for ionization signals."""
@@ -169,7 +177,7 @@ def _extract_stat_error(result: lmfit.model.ModelResult, param_name: str) -> flo
 def _build_dual_peak_model(config: FinetuneConfig) -> tuple[lmfit.Model, lmfit.Parameters]:
     """Helper Constructs the composite model and strictly maps YAML guesses."""
 
-    bg_model = GaussianModel(prefix='bg_')
+    bg_model = lmfit.Model(v_gaussian_peak, prefix='bg_')
     sig_model = lmfit.Model(v_crystalball_double, prefix='sig_')
     model = bg_model + sig_model
     params = model.make_params()
