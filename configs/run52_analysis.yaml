@@ -1,0 +1,87 @@
+run_id: "RUN52"
+description: "Multi-isotope analysis, 22.5 kV/cm EL field"
+
+# Data location
+data:
+  raw_data_path: "\\\\Lab104con\\K\\AXO-RITA\\raw_data\\RUN52_EL22p5kVcm"
+  output_base: "\\\\Lab104con\\K\\AXO-RITA\\processed\\RUN52_EL22p5kVcm"  # Optional, defaults to raw_data_path
+  pmt_pattern: "*_CH3.wfm"
+  alpha_pattern: "*_CH4.wfm"
+
+# Run parameters
+experiment:
+  el_field: 22500.0          # V/cm - EL field
+  target_isotope: "multi"   # Isotope being studied
+  pressure: 1.0             # bar - Gas pressure
+  temperature: 297.0        # K - Temperature
+  sampling_rate: 5.0e9      # Hz - Oscilloscope sampling rate
+  el_gap: 0.04               # cm - EL gap distance
+  drift_gap: 0.48            # cm - Drift gap distance
+  width_s2: 1.1             # µs - S2 signal width
+  W_value: 22.0             # eV - Mean energy per ion pair
+  E_gamma_xray: 12300.0     # eV - X-ray energy
+
+execution:
+  run_alphas: true
+  run_xrays: false
+  run_recoils: true
+  run_multiiso: true
+  
+#  Multi-isotope configuration (optional)
+multi_isotope:
+  enabled: true
+  isotope_ranges:
+    Th228: [4.0, 4.7]       # V
+    Ra224: [4.7, 5.0]       # V
+    Rn220: [5.2, 5.5]       # V
+    Po216: [5.5, 6.0]       # V
+    Po212: [6.0, 10.0]      # V
+
+# Energy mapping and calibration configuration
+energy_mapping:
+  generate: true            # Set to false to skip regeneration if maps exist
+  max_frames: null          # Number of frames to process (null = all)
+  pattern: "*.wfm"       # Glob pattern for alpha channel files
+  savgol_window: 501        # Savitzky-Golay window size (21-5001, must be odd, default: 501)
+  nbins: 120                # Number of bins for energy spectrum histograms
+  energy_range: [4, 10.2]    # MeV - Energy range for spectrum fitting [SCA scale]
+  n_sigma:
+    Th228: [6.0, 2.0]
+    Ra224: [2.0, 3.0]
+    Bi212: [1.0, 1.0]
+    Rn220: [2.0, 2.0]
+    default: [3.0, 3.0]
+  use_quadratic: true       # Use quadratic (vs linear) energy calibration
+
+# Preparation stage (S1/S2 timing estimation)
+preparation:
+  max_frames: null       # Number of frames for S1 estimation
+  n_pedestal: 200       # Samples for pedestal calculation
+  bs_threshold: 0.02    # mV - Baseline subtraction threshold
+
+  s2_margin: 0.9       # µs - Multiplier for drift time to set S2 window
+  s2_threshold: 230    # mV - Maximum for frame clipping detection
+  s2_fraction: 0.02     # Fractional threshold for S2 boundaries dynamic detection
+  
+  s2_v_min: 7.0
+  s2_window_ma: 1000
+
+  s2_fallback_window: 1.5
+  s2_fallback_window_left: 0.5
+  
+# Integration stage (S2 area calculation)
+integration:
+
+  max_frames: null          # null = all frames, or specify number
+  n_pedestal: 100         # Samples for pedestal calculation
+  ma_window: 9            # Moving average window size
+  bs_threshold: 0.8      # mV - Baseline subtraction threshold
+  dt: 0.0002              # µs - Time step for integration (0.2 ns for 5 GS/s)
+
+fit_config:
+  bin_cuts: [0, 50]       # mV·µs - Histogram range
+  nbins: 100              # Number of histogram bins
+  bg_threshold: 0.5       # Background fraction threshold for two-stage fitting (0-1)
+  bg_cutoff: 0.07          # mV·µs - Upper limit for background fitting
+  n_sigma: 3.0            # Sigmas above background mean for signal region cutoff
+  max_lower_bound: 10.0        # mV·µs - Upper limit for signal fitting range
