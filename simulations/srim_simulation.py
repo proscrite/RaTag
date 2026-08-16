@@ -4,10 +4,11 @@ import subprocess
 import numpy as np
 import pandas as pd
 
-def parse_final_positions(exyz_filepath):
+def parse_final_positions(exyz_filepath, target_thickness=100020):
     """
     Parses the SRIM EXYZ.txt file and returns a DataFrame of the 
     final stopping coordinates (X, Y, Z) for each ion.
+    Filters out ions that escaped the target boundaries.
     """
     skip_lines = 0
     with open(exyz_filepath, 'r') as f:
@@ -20,7 +21,14 @@ def parse_final_positions(exyz_filepath):
     df = pd.read_csv(exyz_filepath, delim_whitespace=True, skiprows=skip_lines, header=None, names=col_names)
     
     final_positions = df.groupby('Ion').last().reset_index()
-    return final_positions[['X_Ang', 'Y_Ang', 'Z_Ang']]
+    
+    # BUG FIX: Actively filter out ions that escaped into the vacuum/gas
+    embedded_ions = final_positions[
+        (final_positions['X_Ang'] > 0) & 
+        (final_positions['X_Ang'] < target_thickness)
+    ]
+    
+    return embedded_ions[['X_Ang', 'Y_Ang', 'Z_Ang']]
 
 def parse_escaped_ions(backscat_filepath):
     """
@@ -65,8 +73,7 @@ def generate_trim_dat(output_path, num_ions, ion_z, ion_mass, energy_ev, coords_
     mode='full': CosX between -1 and 1 (for implanted isotopes)
     """
     with open(output_path, 'w') as f:
-        f.write(f"Isotropic emission: {mode}\n")
-        f.write(f"{num_ions}\n")
+        # BUG FIX: Removed the text headers. SRIM requires purely numeric data from line 1.
         
         # Calculate random trajectory vectors
         if mode == 'forward':
@@ -182,26 +189,26 @@ if __name__ == "__main__":
     # ------------------------------------------
     # GEN 1: Ra-224 -> Rn-220 Recoil
     # ------------------------------------------
-    # print("\n--- Starting Generation 1 (Rn-220) ---")
-    # coords_gen0 = parse_final_positions(os.path.join(work_dir, "EXYZ_GEN0_Ra224.txt"))
-    # gen1_ions = len(coords_gen0)
-    # print(f"Implanted ions available for decay: {gen1_ions}")
+    print("\n--- Starting Generation 1 (Rn-220) ---")
+    coords_gen0 = parse_final_positions(os.path.join(work_dir, "EXYZ_GEN0_Ra224.txt"))
+    gen1_ions = len(coords_gen0)
+    print(f"Implanted ions available for decay: {gen1_ions}")
     
-    # generate_trim_in(trim_in_path, ion_z=86, ion_mass=220, energy_kev=103.4, num_ions=gen1_ions, title="Rn-220 from Ra-224")
-    # generate_trim_dat(trim_dat_path, gen1_ions, ion_z=86, ion_mass=220, energy_ev=103400.0, coords_df=coords_gen0, mode='full')
-    # run_srim(srim_dir, work_dir, gen_prefix="GEN1_Rn220")
+    generate_trim_in(trim_in_path, ion_z=86, ion_mass=220, energy_kev=103.4, num_ions=gen1_ions, title="Rn-220 from Ra-224")
+    generate_trim_dat(trim_dat_path, gen1_ions, ion_z=86, ion_mass=220, energy_ev=103400.0, coords_df=coords_gen0, mode='full')
+    run_srim(srim_dir, work_dir, gen_prefix="GEN1_Rn220")
 
     # ------------------------------------------
     # GEN 2: Rn-220 -> Po-216 Recoil
     # ------------------------------------------
-    # print("\n--- Starting Generation 2 (Po-216) ---")
-    # coords_gen1 = parse_final_positions(os.path.join(work_dir, "EXYZ_GEN1_Rn220.txt"))
-    # gen2_ions = len(coords_gen1)
-    # print(f"Implanted ions available for decay: {gen2_ions}")
+    print("\n--- Starting Generation 2 (Po-216) ---")
+    coords_gen1 = parse_final_positions(os.path.join(work_dir, "EXYZ_GEN1_Rn220.txt"))
+    gen2_ions = len(coords_gen1)
+    print(f"Implanted ions available for decay: {gen2_ions}")
     
-    # generate_trim_in(trim_in_path, ion_z=84, ion_mass=216, energy_kev=116.5, num_ions=gen2_ions, title="Po-216 from Rn-220")
-    # generate_trim_dat(trim_dat_path, gen2_ions, ion_z=84, ion_mass=216, energy_ev=116500.0, coords_df=coords_gen1, mode='full')
-    # run_srim(srim_dir, work_dir, gen_prefix="GEN2_Po216")
+    generate_trim_in(trim_in_path, ion_z=84, ion_mass=216, energy_kev=116.5, num_ions=gen2_ions, title="Po-216 from Rn-220")
+    generate_trim_dat(trim_dat_path, gen2_ions, ion_z=84, ion_mass=216, energy_ev=116500.0, coords_df=coords_gen1, mode='full')
+    run_srim(srim_dir, work_dir, gen_prefix="GEN2_Po216")
 
     # ------------------------------------------
     # GEN 3: Po-216 -> Pb-212 Recoil

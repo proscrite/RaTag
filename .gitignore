@@ -187,3 +187,4 @@ configs/Connections.md
 simulations/*.txt
 simulations/*.in
 simulations/*.dat
+simulations/buggy_results/*
