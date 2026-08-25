@@ -68,14 +68,12 @@ def parse_escaped_ions(backscat_filepath):
 
 def generate_trim_dat(output_path, num_ions, ion_z, ion_mass, energy_ev, coords_df=None, mode='forward'):
     """
-    Generates TRIM.DAT for isotropic emission.
-    mode='forward': CosX > 0 (for flat source at interface)
-    mode='full': CosX between -1 and 1 (for implanted isotopes)
+    Generates TRIM.DAT for isotropic emission using strict SRIM legacy formatting.
     """
-    with open(output_path, 'w') as f:
-        # BUG FIX: Removed the text headers. SRIM requires purely numeric data from line 1.
+    # Open in binary mode ('wb') to strictly control the carriage returns, 
+    # preventing Python from auto-converting them based on the OS.
+    with open(output_path, 'wb') as f:
         
-        # Calculate random trajectory vectors
         if mode == 'forward':
             cos_x = np.random.uniform(0.0001, 1.0, num_ions) 
         else:
@@ -87,12 +85,16 @@ def generate_trim_dat(output_path, num_ions, ion_z, ion_mass, energy_ev, coords_
         cos_z = sin_theta * np.sin(phi)
         
         for i in range(num_ions):
-            # If coordinates are provided, use them; otherwise default to 0,0,0
             x = coords_df['X_Ang'].iloc[i] if coords_df is not None else 0.0
             y = coords_df['Y_Ang'].iloc[i] if coords_df is not None else 0.0
             z = coords_df['Z_Ang'].iloc[i] if coords_df is not None else 0.0
             
-            f.write(f"{ion_z} {ion_mass:.3f} {energy_ev:.1f} {x:.3f} {y:.3f} {z:.3f} {cos_x[i]:.5f} {cos_y[i]:.5f} {cos_z[i]:.5f}\n")
+            # FIX: Added a dummy EventName ('ION  ') and removed ion_mass
+            line = f"ION   {ion_z} {energy_ev:.1f} {x:.3f} {y:.3f} {z:.3f} {cos_x[i]:.5f} {cos_y[i]:.5f} {cos_z[i]:.5f}\r\n"
+            f.write(line.encode('ascii'))
+            
+        # Append the explicit EOF character (ASCII 26) required by SRIM
+        f.write(chr(26).encode('ascii'))
 
 def generate_trim_in(output_path, ion_z, ion_mass, energy_kev, num_ions, title):
     """Writes a perfectly formatted TRIM.IN file matching SRIM-2013 column matrix requirements."""
@@ -101,7 +103,7 @@ def generate_trim_in(output_path, ion_z, ion_mass, energy_kev, num_ions, title):
 Ion: Z1 ,  M1,  Energy (keV), Angle,Number,Bragg Corr,AutoSave Number.
     {ion_z:<2}     {ion_mass:<3}        {energy_kev:<8.1f}   0   {num_ions:<5}        1    10000
 Cascades(1=No;2=Full;3=Sputt;4-5=Ions;6-7=Neutrons), Random Number Seed, Reminders
-                      2                                   0       0
+                      5                                   0       0
 Diskfiles (0=no,1=yes): Ranges, Backscatt, Transmit, Sputtered, Collisions(1=Ion;2=Ion+Recoils), Special EXYZ.txt file
                           0       1           1       0               0                               1
 Target material : Number of Elements & Layers
@@ -153,7 +155,7 @@ def run_srim(srim_dir, work_dir, gen_prefix):
                 print(f"Saved {dest_name}")
 
         # 2. Save the output data files (Move)
-        for output_file in ["EXYZ.txt", "BACKSCAT.txt"]:
+        for output_file in ["EXYZ.txt", "BACKSCAT.txt", "TRIMOUT.txt"]:
             source = os.path.join(srim_dir, 'SRIM Outputs', output_file)
             if os.path.exists(source):
                 # Formats to something like EXYZ_GEN0_Ra224.txt
@@ -181,7 +183,7 @@ if __name__ == "__main__":
     # GEN 0: Th-228 -> Ra-224 Recoil
     # ------------------------------------------
     # print("\n--- Starting Generation 0 (Ra-224) ---")
-    # gen0_ions = 10000
+    gen0_ions = 10000
     # generate_trim_in(trim_in_path, ion_z=88, ion_mass=224, energy_kev=96.8, num_ions=gen0_ions, title="Ra-224 into SiO2/Si")
     # generate_trim_dat(trim_dat_path, gen0_ions, ion_z=88, ion_mass=224, energy_ev=96800.0, coords_df=None, mode='forward')
     # run_srim(srim_dir, work_dir, gen_prefix="GEN0_Ra224")
