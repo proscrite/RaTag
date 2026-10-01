@@ -173,73 +173,106 @@ def _extract_stat_error(result: lmfit.model.ModelResult, param_name: str) -> flo
         print(f"    ⚠ Profile likelihood failed for {param_name}. Defaulting to bin error only.")
         
     return 0.0
+# Registry to map YAML strings to pure functions
+FUNC_MAP = {
+    'v_crystalball_left': v_crystalball_left,
+    'v_crystalball_right': v_crystalball_right,
+    'v_crystalball_double': v_crystalball_double
+}
 
-def _build_dual_peak_model(config: FinetuneConfig) -> tuple[lmfit.Model, lmfit.Parameters]:
-    """Helper Constructs the composite model and strictly maps YAML guesses."""
-
+def _build_dual_peak_model(config: FinetuneConfig) -> tuple[lmfit.Model, lmfit.Model, lmfit.Model, lmfit.Parameters]:
+    """Helper constructs the models and strictly maps YAML parameters based on the chosen function."""
     bg_model = lmfit.Model(v_gaussian_peak, prefix='bg_')
-    sig_model = lmfit.Model(v_crystalball_double, prefix='sig_')
-    model = bg_model + sig_model
-    params = model.make_params()
     
-    def apply_param(name: str, cfg_val: Union[float, dict], **defaults):
-        """Helper to apply either a flat float or a detailed dict to a Parameter."""
+    # Inject the user-defined callable
+    sig_func = FUNC_MAP.get(config.sig_model_func, v_crystalball_left)
+    sig_model = lmfit.Model(sig_func, prefix='sig_')
+    
+    comp_model = bg_model + sig_model
+    params = comp_model.make_params()
+    
+    def apply_param(name: str, cfg_val: Union[float, dict, None], **defaults):
+        if cfg_val is None: return
         if isinstance(cfg_val, dict):
             params[name].set(**{**defaults, **cfg_val})
         else:
             params[name].set(value=cfg_val, **defaults)
 
-    # Extract scalar values for interrelated bounds
+    bg_c_val = config.bg_center.get('value', config.bg_center) if isinstance(config.bg_center, dict) else config.bg_center
     sig_x0_val = config.sig_x0.get('value', config.sig_x0) if isinstance(config.sig_x0, dict) else config.sig_x0
-    bg_sigma_val = config.bg_sigma.get('value', config.bg_sigma) if isinstance(config.bg_sigma, dict) else config.bg_sigma
-    bg_center_val = config.bg_center.get('value', config.bg_center) if isinstance(config.bg_center, dict) else config.bg_center
+    bg_sig_val = config.bg_sigma.get('value', config.bg_sigma) if isinstance(config.bg_sigma, dict) else config.bg_sigma
 
-    # Apply parameters with physical fallback bounds
     apply_param('bg_amplitude', config.bg_amplitude, min=0.0)
-    apply_param('bg_center', config.bg_center, min=config.bin_cuts[0], max=sig_x0_val - bg_sigma_val)
+    apply_param('bg_center', config.bg_center, min=config.bin_cuts[0], max=sig_x0_val - bg_sig_val)
     apply_param('bg_sigma', config.bg_sigma, min=0.01)
     
     apply_param('sig_N', config.sig_N, min=0.0)
-    apply_param('sig_x0', config.sig_x0, min=bg_center_val + bg_sigma_val, max=config.bin_cuts[1])
+    apply_param('sig_x0', config.sig_x0, min=bg_c_val + bg_sig_val, max=config.bin_cuts[1])
     apply_param('sig_sigma', config.sig_sigma, min=0.01)
-    apply_param('sig_beta_L', config.sig_beta_L, min=0.1, max=10.0)
-    apply_param('sig_m_L', config.sig_m_L, min=1.001, max=50.0)
-    apply_param('sig_beta_R', config.sig_beta_R, min=0.1, max=10.0)
-    apply_param('sig_m_R', config.sig_m_R, min=1.001, max=50.0)
 
-    return model, params
+    # Dynamic mapping: Map L/R YAML values to the function's expected signature
+    if 'sig_beta' in params:  # The function is single-tailed
+        if 'left' in config.sig_model_func:
+            apply_param('sig_beta', config.sig_beta_L, min=0.05, max=10.0)
+            apply_param('sig_m', config.sig_m_L, min=1.001, max=50.0)
+        elif 'right' in config.sig_model_func:
+            apply_param('sig_beta', config.sig_beta_R, min=0.05, max=10.0)
+            apply_param('sig_m', config.sig_m_R, min=1.001, max=50.0)
+
+    if 'sig_beta_L' in params: # The function is double-tailed
+        apply_param('sig_beta_L', config.sig_beta_L, min=0.05, max=10.0)
+        apply_param('sig_m_L', config.sig_m_L, min=1.001, max=50.0)
+    if 'sig_beta_R' in params:
+        apply_param('sig_beta_R', config.sig_beta_R, min=0.05, max=10.0)
+        apply_param('sig_m_R', config.sig_m_R, min=1.001, max=50.0)
+        
+    return bg_model, sig_model, comp_model, params
+
 
 def fit_finetune_s2area(data: np.ndarray, config: FinetuneConfig) -> dict:
-    """
-    Declarative composite fitter.
-    Strictly obeys the provided shape guesses from the YAML config.
-    """
-    # 1. Histogram Generation
+    """Declarative 3-stage sequential fitter."""
     filtered = data[(data >= config.bin_cuts[0]) & (data <= config.bin_cuts[1])]
     counts, bins = np.histogram(filtered, bins=config.nbins, range=config.bin_cuts)
     cbins = 0.5 * (bins[1:] + bins[:-1])
+    weights = 1.0 / np.maximum(np.sqrt(counts), 1.0)
+    
+    # 1. Build models and map parameters
+    bg_model, sig_model, comp_model, params = _build_dual_peak_model(config)
+    
+    sig_x0_val = params['sig_x0'].value
+    bg_c_val = params['bg_center'].value
 
-    counts_smooth = np.convolve(counts, np.ones(config.smooth_window)/config.smooth_window, mode='same')
-    # Calibrate chi-square space using Poisson statistics
-    weights = 1.0 / np.maximum(np.sqrt(counts_smooth), 1.0)
+    # STAGE A: The Split
+    lower_bound = _find_dynamic_lower_bound(cbins, counts, max_lower_bound=sig_x0_val)
+    print(f"  Dynamic lower bound for S2 area: {lower_bound:.3f} (bg_c={bg_c_val:.3f}, sig_x0={sig_x0_val:.3f})")
+    if lower_bound <= bg_c_val or lower_bound >= sig_x0_val:
+        lower_bound = (bg_c_val + sig_x0_val) / 2.0
+
+    bg_mask = cbins < lower_bound
+    sig_mask = cbins >= lower_bound
+
+    # STAGE B: Isolated Independent Fits
+    # Note: model.fit ignores parameters in the dict that don't belong to its prefix
+    if np.sum(bg_mask) > 3:
+        bg_res = bg_model.fit(counts[bg_mask], params, x=cbins[bg_mask], weights=weights[bg_mask])
+        params.update(bg_res.params)
+
+    if np.sum(sig_mask) > 3:
+        sig_res = sig_model.fit(counts[sig_mask], params, x=cbins[sig_mask], weights=weights[sig_mask])
+        params.update(sig_res.params)
+
+    # STAGE C: Simultaneous Polish
+    comp_result = comp_model.fit(counts, params, x=cbins, weights=weights)
     
-    model, params = _build_dual_peak_model(config)
-    composite_result = model.fit(counts_smooth, params=params, x=cbins, weights=weights)
-    
-    x0_param = composite_result.params['sig_x0']
-    sigma = composite_result.params['sig_sigma'].value
-    
-    stat_err = _extract_stat_error(composite_result, 'sig_x0')
-    bin_width = cbins[1] - cbins[0]
-    ci95 = compute_fit_ci(stat_err, bin_width)
+    stat_err = _extract_stat_error(comp_result, 'sig_x0')
+    ci95 = compute_fit_ci(stat_err, cbins[1] - cbins[0])
     
     return {
-        'peak_position': x0_param.value,
-        'sigma': sigma,
+        'peak_position': comp_result.params['sig_x0'].value,
+        'sigma': comp_result.params['sig_sigma'].value,
         'ci95': ci95,
-        'result_composite': composite_result
+        'result_composite': comp_result
     }
-
 # ----------------------------------------------------------------
 # THGEM S1 cut optimization: 2 components in S1 area distribution
 # ----------------------------------------------------------------

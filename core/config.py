@@ -149,12 +149,14 @@ class FinetuneConfig:
     sig_N: Union[float, Dict[str, Any]]
     sig_x0: Union[float, Dict[str, Any]]
     sig_sigma: Union[float, Dict[str, Any]]
+    
     sig_beta_L: Union[float, Dict[str, Any]]
     sig_m_L: Union[float, Dict[str, Any]]
     sig_beta_R: Union[float, Dict[str, Any]]
     sig_m_R: Union[float, Dict[str, Any]]
     
     bin_cuts: tuple[float, float]
+    sig_model_func: str = "v_crystalball_left"
     nbins: int = 100
     smooth_window: int = 3
 
